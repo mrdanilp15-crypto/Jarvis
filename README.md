@@ -109,6 +109,17 @@ python -m jarvis.demo              # spielt Fast-Path, Tool-Use, Bestätigungen,
 Voraussetzung: Docker mit Compose v2; für flüssige Antworten 32 GB RAM oder eine GPU (siehe
 [Hardware-Tabelle](docs/06-integrationsplan.md#65-lokale-ki-modelle)).
 
+**Ein Befehl** (macOS, Linux, Windows über WSL/Git Bash) – legt `deploy/.env` mit zufälligem Passwort und API-Token
+an, startet Kern, Postgres, Redis und Ollama, lädt die Modelle und zeigt Token und Beispielaufrufe:
+
+```bash
+git clone https://github.com/mrdanilp15-crypto/Jarvis.git
+cd Jarvis
+./deploy/start.sh          # stoppen: ./deploy/start.sh stop
+```
+
+Dasselbe Schritt für Schritt:
+
 ```bash
 cd Jarvis/deploy
 cp .env.example .env               # POSTGRES_PASSWORD und den Dev-Token in JARVIS_DEV_TOKENS ändern;

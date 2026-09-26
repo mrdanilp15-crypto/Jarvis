@@ -83,3 +83,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: POSTGRES_PASSWORD=ci docker compose -f deploy/docker-compose.yml config -q
+      - run: bash -n deploy/start.sh

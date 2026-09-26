@@ -204,7 +204,8 @@ nachgeprüft.
 ## 6.10 Inbetriebnahme (Referenz-Deployment)
 
 1. **Server vorbereiten:** Docker, optional NVIDIA Container Toolkit; VLANs für Geräte.
-2. **Kern starten:** `cd deploy && cp .env.example .env` (Passwort und Dev-Token ändern), dann
+2. **Kern starten:** `./deploy/start.sh` erledigt Schritt 2 und 3 automatisch. Manuell:
+   `cd deploy && cp .env.example .env` (Passwort und Dev-Token ändern), dann
    `docker compose up -d --build jarvis-core` – startet Postgres, Redis, Ollama und den Kern; das Datenbankschema wird
    beim ersten Start importiert. Test: `curl http://127.0.0.1:8080/v1/system/health`.
 3. **Modelle laden:** `docker compose exec ollama ollama pull <modell>` für LLM und Embeddings (siehe 6.5). Fehlt
