@@ -310,7 +310,7 @@ mosquitto_pub … -u jarvis-core -t jarvis/v1/cmd/airsensor_buero -m '{"command"
 
 ```bash
 cd reference/python && pip install -e ".[dev]"
-pytest                      # 111 Tests: Policy, Orchestrator, Automationen, Memory, API, LLM-Adapter …
+pytest                      # 115 Tests: Policy, Orchestrator, Automationen, Memory, API, LLM-Adapter …
 python -m jarvis.demo       # Offline-Demo ohne LLM/Home Assistant
 cd ../node && node --test   # Webhook-Signatur, Retry-Verhalten
 python ../../tools/validate.py

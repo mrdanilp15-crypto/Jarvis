@@ -145,3 +145,17 @@ def test_ollama_streaming_tool_calls():
     assert response.stop_reason == "tool_use"
     assert response.tool_calls[0].arguments == {"entity_ids": ["light.kueche"], "on": True}
     assert response.usage == {"input_tokens": 900, "output_tokens": 30}
+
+
+def test_ollama_missing_model_gives_actionable_error():
+    from jarvis.errors import JarvisError
+
+    def handler(request):
+        return httpx.Response(404, json={"error": "model 'qwen2.5:14b-instruct' not found"})
+
+    client = httpx.AsyncClient(base_url="http://ollama:11434", transport=httpx.MockTransport(handler))
+    provider = OllamaProvider(client=client, model="qwen2.5:14b-instruct")
+    with pytest.raises(JarvisError) as exc:
+        asyncio.run(provider.complete(system=SystemPrompt("R"), transcript=[UserTurn("hi")], tools=[]))
+    assert exc.value.code == "JRV-LLM-001"
+    assert "ollama pull qwen2.5:14b-instruct" in exc.value.user_message

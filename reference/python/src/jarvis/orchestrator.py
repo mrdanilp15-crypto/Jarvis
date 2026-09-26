@@ -247,9 +247,13 @@ class Orchestrator:
         memories: list[str] = []
         if self.memory is not None:
             user_id = req.principal.actor.split(":", 1)[1] if req.principal.actor.startswith("user:") else None
-            # Sensible Erinnerungen nur für lokale Modelle
-            memories = await self.memory.recall(req.text, user_id=user_id,
-                                                include_sensitive=getattr(provider, "is_local", False))
+            try:
+                # Sensible Erinnerungen nur für lokale Modelle
+                memories = await self.memory.recall(req.text, user_id=user_id,
+                                                    include_sensitive=getattr(provider, "is_local", False))
+            except Exception:  # degradierter Modus: ohne Erinnerungen weiterarbeiten
+                log.warning("memory recall failed; continuing without memories", exc_info=True,
+                            extra={"correlation_id": req.correlation_id})
         system = self.context.system_prompt(situation, memories)
         session.transcript.append(UserTurn(req.text))
         tools = self.registry.tool_specs(req.allowed_domains)

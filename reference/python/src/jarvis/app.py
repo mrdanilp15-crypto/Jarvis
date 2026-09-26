@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import re
 from collections.abc import AsyncIterator, Coroutine
@@ -37,6 +38,7 @@ from .persona import Persona
 from .policy import PolicyEngine, Principal
 from .tools import ToolRegistry
 
+log = logging.getLogger(__name__)
 
 def resolve_ref(value: Any) -> Any:
     if not isinstance(value, str):
@@ -89,12 +91,15 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
                            num_ctx=local_cfg["num_ctx"], timeout_s=local_cfg["timeout_s"])
     cloud = None
     cloud_cfg = providers.get(cfg["llm"]["default_cloud"])
-    if cloud_cfg and cloud_cfg["type"] == "anthropic":
+    api_key = resolve_ref(cloud_cfg.get("api_key")) if cloud_cfg else None
+    if cloud_cfg and cloud_cfg["type"] == "anthropic" and api_key:
         from .llm.claude import ClaudeProvider
 
         cloud = ClaudeProvider(model=cloud_cfg["model"], max_tokens=cloud_cfg["max_tokens"],
-                               default_effort=cloud_cfg["effort"]["dialog"],
+                               default_effort=cloud_cfg["effort"]["dialog"], api_key=api_key,
                                server_side_fallbacks=cloud_cfg.get("server_side_fallbacks") == "default")
+    elif cloud_cfg:
+        log.info("Cloud-LLM deaktiviert (kein API-Schlüssel) – JARVIS arbeitet nur mit dem lokalen Modell")
     breaker = CircuitBreaker(**{k: v for k, v in cfg["router"]["cloud_circuit_breaker"].items()
                                 if k in ("failure_threshold", "window_s", "cooldown_s")})
     router = ModelRouter(local=local, cloud=cloud, cloud_breaker=breaker,

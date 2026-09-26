@@ -89,6 +89,57 @@ flowchart LR
 └── tools/validate.py         Validiert Schemas, Beispiele, YAML/JSON-Artefakte
 ```
 
+## Schnellstart
+
+### Variante A – Offline-Demo (ohne Docker, ohne KI-Modell)
+
+Voraussetzung: Python ≥ 3.11.
+
+```bash
+git clone https://github.com/mrdanilp15-crypto/Jarvis.git
+cd Jarvis/reference/python
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+python -m jarvis.demo              # spielt Fast-Path, Tool-Use, Bestätigungen, Injection-Abwehr durch
+```
+
+### Variante B – JARVIS-Server mit Docker (lokales KI-Modell)
+
+Voraussetzung: Docker mit Compose v2; für flüssige Antworten 32 GB RAM oder eine GPU (siehe
+[Hardware-Tabelle](docs/06-integrationsplan.md#65-lokale-ki-modelle)).
+
+```bash
+cd Jarvis/deploy
+cp .env.example .env               # POSTGRES_PASSWORD und den Dev-Token in JARVIS_DEV_TOKENS ändern;
+                                   # optional ANTHROPIC_API_KEY für komplexe Anfragen über Claude
+docker compose up -d --build jarvis-core      # startet auch Postgres, Redis und Ollama
+
+# Modelle einmalig laden (Name muss zu llm.providers.local.model in config/jarvis.example.yaml passen)
+docker compose exec ollama ollama pull qwen2.5:14b-instruct
+docker compose exec ollama ollama pull bge-m3
+
+curl http://127.0.0.1:8080/v1/system/health
+curl -X POST http://127.0.0.1:8080/v1/conversations/test/messages \
+  -H "Authorization: Bearer dev-alex-token" -H "Content-Type: application/json" \
+  -d '{"text": "Hallo Jarvis, was kannst du?"}'
+```
+
+Chatten im Terminal (Node ≥ 22):
+
+```bash
+cd Jarvis/reference/node
+JARVIS_URL=ws://127.0.0.1:8080 JARVIS_TOKEN=dev-alex-token node jarvis-client.mjs
+```
+
+- Schwächere Hardware: ein kleineres Modell laden (z. B. `qwen2.5:3b`) und in `config/jarvis.example.yaml` unter
+  `llm.providers.local.model` eintragen, dann `docker compose restart jarvis-core`.
+- Ohne `ANTHROPIC_API_KEY` arbeitet JARVIS rein lokal; mit Schlüssel gehen komplexe, nicht-sensible Anfragen an Claude.
+- Home Assistant verbinden: Token als `JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN` in `.env` eintragen
+  ([Anleitung](docs/06-integrationsplan.md#61-home-assistant)).
+- Sprache, MQTT, Node-RED und Plugins kommen schrittweise dazu: [Inbetriebnahme](docs/06-integrationsplan.md#610-inbetriebnahme-referenz-deployment).
+- Stoppen: `docker compose down` (Daten bleiben in Docker-Volumes erhalten).
+
 ## Prüfen & Ausprobieren
 
 ```bash
@@ -99,7 +150,7 @@ python tools/validate.py
 # Kernlogik des Python-Skeletts testen (läuft offline, ohne LLM/Home Assistant)
 cd reference/python
 pip install -e ".[dev]"
-pytest                    # 111 Tests
+pytest                    # 115 Tests
 python -m jarvis.demo     # Fast-Path, Tool-Use, R3-Bestätigung, Prompt-Injection-Abwehr, Gastrechte
 
 # Node-Beispiele (Node >= 22)

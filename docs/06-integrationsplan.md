@@ -204,11 +204,15 @@ nachgeprüft.
 ## 6.10 Inbetriebnahme (Referenz-Deployment)
 
 1. **Server vorbereiten:** Docker, optional NVIDIA Container Toolkit; VLANs für Geräte.
-2. **Secrets:** `deploy/.env` aus `.env.example`; TLS-Zertifikate nach `deploy/secrets/certs`, Mosquitto-Passwörter
-   mit `mosquitto_passwd` nach `deploy/secrets/mosquitto/passwd`.
-3. **Starten:** `cd deploy && docker compose up -d` (optional `--profile homeassistant --profile nodered
-   --profile plugins --profile observability`). Das Datenbankschema wird beim ersten Start importiert.
-4. **Modelle laden:** `ollama pull` (siehe 6.5); Wyoming-Dienste laden ihre Modelle beim ersten Start.
+2. **Kern starten:** `cd deploy && cp .env.example .env` (Passwort und Dev-Token ändern), dann
+   `docker compose up -d --build jarvis-core` – startet Postgres, Redis, Ollama und den Kern; das Datenbankschema wird
+   beim ersten Start importiert. Test: `curl http://127.0.0.1:8080/v1/system/health`.
+3. **Modelle laden:** `docker compose exec ollama ollama pull <modell>` für LLM und Embeddings (siehe 6.5). Fehlt
+   das Modell, antwortet die API mit `JRV-LLM-001` und nennt den nötigen `ollama pull`-Befehl.
+4. **Weitere Dienste:** für MQTT zuerst TLS-Zertifikate nach `deploy/secrets/certs` und Mosquitto-Passwörter
+   (`mosquitto_passwd`) nach `deploy/secrets/mosquitto/passwd`, dann `docker compose up -d` für den Gesamt-Stack
+   (Wyoming-Dienste laden ihre Modelle beim ersten Start); optional `--profile homeassistant --profile nodered
+   --profile plugins --profile observability`.
 5. **Home Assistant verbinden:** Token im Vault/`.env`, Package einbinden (6.1).
 6. **Personen einrichten:** Nutzer + Rollen, Stimm-Enrollment (5 Sätze je Person), App-Geräte koppeln.
 7. **Policies prüfen:** [`config/policies.yaml`](../config/policies.yaml) an den Haushalt anpassen (Kinderprofile,

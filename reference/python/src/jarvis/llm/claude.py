@@ -39,12 +39,14 @@ class ClaudeProvider:
         max_tokens: int = 64000,
         default_effort: str = "medium",
         server_side_fallbacks: bool = True,
+        api_key: str | None = None,
         client: Any = None,
     ) -> None:
         import anthropic  # optionale Abhängigkeit
 
         self._anthropic = anthropic
-        self._client = client or anthropic.AsyncAnthropic()  # Credentials aus Umgebung / ant-Profil
+        # Ohne expliziten Schlüssel: Credentials aus Umgebung bzw. ant-Profil
+        self._client = client or (anthropic.AsyncAnthropic(api_key=api_key) if api_key else anthropic.AsyncAnthropic())
         self.model = model
         self.max_tokens = max_tokens
         self.default_effort = default_effort

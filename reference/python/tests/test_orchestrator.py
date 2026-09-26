@@ -184,3 +184,13 @@ def test_action_results_match_schema(orchestrator, situation, validator):
     check = validator("action-result")
     for record in result.actions + fast.actions:
         check.validate(record.to_result_dict())
+
+
+def test_memory_outage_degrades_gracefully(orchestrator, situation):
+    class BrokenMemory:
+        async def recall(self, *args, **kwargs):
+            raise ConnectionError("embedding model not available")
+
+    orchestrator.memory = BrokenMemory()
+    result = turn(orchestrator, "Guten Abend", provider=ScriptedProvider([say("Guten Abend.")]), situation=situation)
+    assert result.text == "Guten Abend."

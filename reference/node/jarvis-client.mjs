@@ -85,7 +85,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 
   for (;;) {
-    const line = (await rl.question("> ")).trim();
+    let line;
+    try {
+      line = (await rl.question("> ")).trim();
+    } catch {
+      break; // Eingabe beendet (Strg+D / Pipe-Ende)
+    }
     if (!line) continue;
     if (line === "/quit") break;
     const done = new Promise((resolve) => (turnDone = resolve));

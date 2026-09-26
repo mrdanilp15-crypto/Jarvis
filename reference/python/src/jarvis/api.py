@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -20,6 +21,7 @@ from .orchestrator import Orchestrator, TurnRequest, TurnResult
 from .policy import Principal
 from .webhooks import ReplayCache, verify
 
+log = logging.getLogger(__name__)
 
 @dataclass
 class Container:
@@ -88,6 +90,13 @@ def create_app(container: Container) -> FastAPI:
     async def problem_handler(request: Request, exc: JarvisError) -> JSONResponse:
         return JSONResponse(exc.to_problem(instance=request.url.path), status_code=exc.status,
                             media_type="application/problem+json")
+
+    @app.exception_handler(Exception)
+    async def unexpected_handler(request: Request, exc: Exception) -> JSONResponse:
+        log.exception("unhandled error", extra={"path": request.url.path})
+        problem = JarvisError("JRV-SYS-001", type(exc).__name__,
+                              user_message="Da ist bei mir etwas schiefgegangen.").to_problem(instance=request.url.path)
+        return JSONResponse(problem, status_code=500, media_type="application/problem+json")
 
     def principal(authorization: str | None = Header(default=None)) -> Principal:
         token = authorization.removeprefix("Bearer ").strip() if authorization else ""

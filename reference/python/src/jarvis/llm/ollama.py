@@ -112,6 +112,11 @@ class OllamaProvider:
                             "input_tokens": chunk.get("prompt_eval_count", 0),
                             "output_tokens": chunk.get("eval_count", 0),
                         }
+        except self._httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise JarvisError("JRV-LLM-001", f"Modell {self.model} ist nicht geladen",
+                                  user_message=f"Das lokale Modell fehlt noch: 'ollama pull {self.model}' ausführen.") from exc
+            raise JarvisError("JRV-LLM-001", f"Lokales Modell antwortet mit HTTP {exc.response.status_code}") from exc
         except self._httpx.HTTPError as exc:
             raise JarvisError("JRV-LLM-001", f"Lokales Modell nicht erreichbar: {exc}") from exc
 
