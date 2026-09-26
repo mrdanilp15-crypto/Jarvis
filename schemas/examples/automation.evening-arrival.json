@@ -1,0 +1,24 @@
+{
+  "id": "aut_evening_arrival",
+  "name": "Abendliche Ankunft",
+  "description": "Kommt Alex nach 22 Uhr nach Hause, nur gedimmtes, warmes Licht im Flur und Wohnzimmer.",
+  "enabled": true,
+  "mode": "single",
+  "origin": "jarvis_suggested",
+  "owner": "user:alex",
+  "tags": ["licht", "anwesenheit"],
+  "approval": { "status": "approved", "approved_by": "user:alex", "approved_at": "2026-09-21T08:00:00Z" },
+  "triggers": [
+    { "type": "presence", "person": "alex", "event": "arrives", "zone": "home" }
+  ],
+  "conditions": [
+    { "type": "or", "conditions": [
+      { "type": "time", "after": "22:00" },
+      { "type": "time", "before": "05:00" }
+    ] },
+    { "type": "not", "condition": { "type": "mode", "mode": "party" } }
+  ],
+  "actions": [
+    { "type": "capability", "capability": "home.set_light", "arguments": { "entity_ids": ["light.flur", "light.wohnzimmer_stehlampe"], "on": true, "brightness_pct": 25, "color_temp_kelvin": 2700 } }
+  ]
+}

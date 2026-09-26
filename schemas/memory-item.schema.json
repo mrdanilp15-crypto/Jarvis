@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.jarvis.local/v1/memory-item.schema.json",
+  "title": "MemoryItem",
+  "description": "Ein Eintrag im Langzeitgedächtnis (episodisch, semantisch, prozedural oder Präferenz).",
+  "type": "object",
+  "required": ["id", "kind", "content", "importance", "confidence", "sensitivity", "source", "created_at"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^mem_[A-Za-z0-9]{6,40}$" },
+    "user_id": { "type": ["string", "null"], "description": "null = Haushaltswissen, für alle Mitglieder sichtbar." },
+    "kind": { "enum": ["episodic", "semantic", "procedural", "preference"] },
+    "content": { "type": "string", "minLength": 1, "maxLength": 4000, "description": "Natürlichsprachliche Aussage, die in den Kontext eingefügt wird." },
+    "triple": {
+      "type": "object",
+      "description": "Strukturierte Form für semantische Fakten (Konflikterkennung).",
+      "required": ["subject", "predicate", "object"],
+      "properties": {
+        "subject": { "type": "string" },
+        "predicate": { "type": "string" },
+        "object": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "importance": { "type": "number", "minimum": 0, "maximum": 1 },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "sensitivity": { "enum": ["public", "personal", "sensitive"], "description": "secret wird nie als Memory gespeichert." },
+    "source": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["user_explicit", "conversation", "observation", "import", "consolidation"] },
+        "ref": { "type": "string", "description": "z. B. conversation/c_123#turn-7" }
+      },
+      "additionalProperties": false
+    },
+    "tags": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "valid_from": { "type": "string", "format": "date-time" },
+    "valid_until": { "type": ["string", "null"], "format": "date-time" },
+    "expires_at": { "type": ["string", "null"], "format": "date-time" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "last_accessed_at": { "type": ["string", "null"], "format": "date-time" },
+    "access_count": { "type": "integer", "minimum": 0 },
+    "embedding_model": { "type": "string" }
+  },
+  "additionalProperties": false
+}

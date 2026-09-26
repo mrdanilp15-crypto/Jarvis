@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.jarvis.local/v1/intent.schema.json",
+  "title": "Intent",
+  "description": "Ergebnis von Intent-Klassifikation und Routing für eine Eingabe.",
+  "type": "object",
+  "required": ["intent", "confidence", "route", "sensitivity", "complexity", "language"],
+  "properties": {
+    "intent": {
+      "type": "string",
+      "pattern": "^[a-z_]+(\\.[a-z_]+)*$",
+      "description": "Capability-ID (Fast-Path) oder Domänen-Intent (z. B. chat, research, home.control)."
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "slots": {
+      "type": "object",
+      "description": "Aufgelöste Parameter, z. B. {\"area\": \"kueche\", \"brightness_pct\": 40}.",
+      "additionalProperties": true
+    },
+    "route": { "enum": ["fast_path", "confirmation_resolver", "local_llm", "cloud_llm", "reject"] },
+    "route_reason": { "type": "string" },
+    "sensitivity": { "enum": ["public", "personal", "sensitive", "secret"] },
+    "complexity": { "enum": ["trivial", "simple", "complex"] },
+    "domains": {
+      "type": "array",
+      "items": { "enum": ["home", "info", "web", "pim", "comms", "memory", "system", "code", "automation", "chat"] },
+      "uniqueItems": true,
+      "description": "Erlaubte Tool-Domänen für diesen Turn (Intent-Bindung gegen Prompt-Injection)."
+    },
+    "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+    "ambiguities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["slot", "candidates"],
+        "properties": {
+          "slot": { "type": "string" },
+          "candidates": { "type": "array", "items": { "type": "string" }, "minItems": 2 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

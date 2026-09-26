@@ -1,0 +1,11 @@
+{
+  "intent": "research",
+  "confidence": 0.88,
+  "slots": { "topic": "Wärmepumpen-Förderung 2026" },
+  "route": "cloud_llm",
+  "route_reason": "complexity=complex, sensitivity=public",
+  "sensitivity": "public",
+  "complexity": "complex",
+  "domains": ["web", "info", "memory"],
+  "language": "de"
+}

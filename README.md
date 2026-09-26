@@ -1,0 +1,120 @@
+# JARVIS – Modulares KI-Assistenzsystem
+
+> **J**ust **A** **R**ather **V**ery **I**ntelligent **S**ystem – als echtes, implementierbares System definiert,
+> nicht als Film-Imitation.
+
+JARVIS ist eine Referenzarchitektur für einen persönlichen KI-Assistenten, der Sprache, Text, API-Events und
+Sensordaten versteht, über mehrere Schritte planen kann, das Smart Home steuert, recherchiert, kommuniziert,
+Systeme diagnostiziert und proaktiv handelt – abgesichert durch eine Policy-Engine mit Risikoklassen,
+Bestätigungs-Workflows und lückenlosem Audit-Log. Die Jarvis-Persona (höflich, britisch-präzise, subtil humorvoll)
+ist eine optional aktivierbare Schicht über dem technischen Kern.
+
+Dieses Repository enthält das **vollständige technische Konzept**, maschinenlesbare **Schemas und API-Blueprints**
+sowie ein **Referenz-Skelett** in Python und Node.js, dessen Kernlogik offline getestet wird.
+
+## Architektur auf einen Blick
+
+```mermaid
+flowchart LR
+    subgraph IN["Input-Layer"]
+        V["Sprache<br/>Wake-Word · VAD · STT"]
+        T["Text<br/>App · Desktop · Messenger"]
+        E["API-Events<br/>REST · Webhooks"]
+        S["Sensoren<br/>Home Assistant · MQTT"]
+    end
+
+    subgraph CORE["KI-Kern"]
+        N["Normalisierung<br/>CloudEvents + Trust-Tagging"]
+        R["Router<br/>Fast-Path · lokales LLM · Cloud-LLM"]
+        O["Orchestrator<br/>Agent-Loop · Planner"]
+        C["Kontext-Manager"]
+        M[("Memory<br/>kurz · episodisch · semantisch · prozedural")]
+    end
+
+    subgraph SEC["Sicherheits-Layer"]
+        P["Policy-Engine<br/>RBAC/ABAC · Risikoklassen R0–R4"]
+        A["Audit-Log<br/>hash-verkettet"]
+    end
+
+    subgraph EXEC["Ausführung"]
+        AE["Automations-Engine"]
+        TM["Task-Manager"]
+        PL["Plugin-Host<br/>Tools · MCP"]
+    end
+
+    subgraph OUT["Output-Layer"]
+        TTS["Sprache (TTS)"]
+        UI["Text · Push · Dashboard"]
+        HA["Smart-Home-Befehle"]
+        SYS["System-Tasks"]
+    end
+
+    V & T & E & S --> N --> R --> O
+    O <--> C <--> M
+    O -- "Tool-Aufruf" --> P
+    P -- "erlaubt" --> PL & AE & TM
+    P --> A
+    PL & AE & TM --> HA & SYS
+    O --> TTS & UI
+```
+
+## Dokumentation
+
+| # | Abschnitt | Inhalt |
+|---|-----------|--------|
+| 1 | [Kurze Zusammenfassung](docs/01-zusammenfassung.md) | Vision, Designprinzipien, Kennzahlen, Technologie-Stack |
+| 2 | [Komplette Architektur](docs/02-architektur.md) | KI-Kern, Input/Output, Automations-Engine, Entscheidungslogik, Sicherheit, Plugins, APIs, Deployment |
+| 3 | [Module & Funktionen](docs/03-module-und-funktionen.md) | Vollständiger Funktionsumfang, Modul-Design mit Schnittstellen und Datenfluss |
+| 4 | [Technische Umsetzung](docs/04-technische-umsetzung.md) | API-Blueprints, JSON-Schemas, Requests/Responses, Datenbank, Event-Flow, Error-Handling, Logging |
+| 5 | [Code-Beispiele](docs/05-code-beispiele.md) | Python, JavaScript/Node, Home Assistant, MQTT, Node-RED – geführte Tour durch den Referenzcode |
+| 6 | [Integrationsplan](docs/06-integrationsplan.md) | Home Assistant, Node-RED, MQTT, REST, Webhooks, lokale & Cloud-Modelle, Apps, Voice-Frontend, Roadmap |
+| 7 | [Jarvis-Persona (optional)](docs/07-jarvis-persona.md) | Persona-Parameter, Voice-Style-Guide, Antwort-Beispiele |
+| 8 | [Erweiterungen & Zukunft](docs/08-erweiterungen.md) | Ausbaustufen, Forschungsthemen, Risiken |
+
+## Repository-Struktur
+
+```
+.
+├── docs/                     Konzept in 8 Abschnitten
+├── api/openapi.yaml          REST/WebSocket-Blueprint (OpenAPI 3.1)
+├── schemas/                  JSON-Schemas (Draft 2020-12) + validierte Beispiel-Payloads
+├── config/                   Systemkonfiguration, Policies, Persona
+├── db/schema.sql             PostgreSQL 16 + pgvector
+├── reference/
+│   ├── python/               Kern-Skelett: Orchestrator, LLM-Gateway, Policy, Memory, Automationen, Connectoren
+│   ├── node/                 WebSocket-Client, Webhook-Relay, MQTT-Geräteadapter, Plugin-Beispiel
+│   └── web/                  Browser-Voice-Widget
+├── integrations/             Home Assistant, MQTT (Mosquitto), Node-RED
+├── deploy/                   docker-compose Referenz-Deployment
+└── tools/validate.py         Validiert Schemas, Beispiele, YAML/JSON-Artefakte
+```
+
+## Prüfen & Ausprobieren
+
+```bash
+# Artefakte validieren (Schemas, Beispiel-Payloads, Konfiguration, Flows)
+pip install jsonschema pyyaml
+python tools/validate.py
+
+# Kernlogik des Python-Skeletts testen (läuft offline, ohne LLM/Home Assistant)
+cd reference/python
+pip install -e ".[dev]"
+pytest                    # 111 Tests
+python -m jarvis.demo     # Fast-Path, Tool-Use, R3-Bestätigung, Prompt-Injection-Abwehr, Gastrechte
+
+# Node-Beispiele (Node >= 22)
+cd ../node && node --test
+```
+
+Dieselben Prüfungen laufen in der CI ([`.github/workflows/validate.yml`](.github/workflows/validate.yml)),
+zusätzlich der Import von `db/schema.sql` in PostgreSQL 16 + pgvector und `docker compose config`.
+
+Das Referenz-Deployment (`deploy/docker-compose.yml`) startet Postgres/pgvector, Redis, Mosquitto, Ollama,
+Wyoming-STT/TTS/Wake-Word, SearXNG und optional Home Assistant und Node-RED; siehe
+[Integrationsplan](docs/06-integrationsplan.md#65-lokale-ki-modelle).
+
+## Status
+
+Konzept vollständig; der Referenzcode deckt die sicherheitskritische Kernlogik ab (Policy-Engine,
+Tool-Validierung, Bestätigungen, Taint-Tracking, Automations-Bedingungen, Memory-Ranking, Event-Schemas) und
+dient als Ausgangspunkt der Implementierung gemäß Roadmap in [Abschnitt 6](docs/06-integrationsplan.md#611-roadmap).

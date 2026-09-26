@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.jarvis.local/v1/plugin-manifest.schema.json",
+  "title": "PluginManifest",
+  "description": "Beschreibt ein JARVIS-Plugin: Laufzeit, bereitgestellte Capabilities, Event-Abos und benötigte Berechtigungen.",
+  "type": "object",
+  "required": ["id", "name", "version", "jarvis_api", "runtime", "capabilities", "permissions"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+){2,}$", "description": "Reverse-DNS, z. B. org.example.weather." },
+    "name": { "type": "string" },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$"
+    },
+    "description": { "type": "string" },
+    "author": { "type": "string" },
+    "license": { "type": "string" },
+    "homepage": { "type": "string", "format": "uri" },
+    "jarvis_api": { "type": "string", "description": "Kompatible Kern-API-Versionen als SemVer-Range, z. B. >=1.0 <2.0." },
+    "runtime": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["python", "node", "container", "mcp"] },
+        "command": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "image": { "type": "string", "description": "Container-Image mit Digest (Pflicht bei type=container)." },
+        "transport": { "enum": ["http", "stdio"], "default": "http" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "container" } } }, "then": { "required": ["image"] } },
+        { "if": { "properties": { "type": { "enum": ["python", "node"] } } }, "then": { "required": ["command"] } }
+      ]
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Capability" }
+    },
+    "events": {
+      "type": "object",
+      "properties": {
+        "subscribe": { "type": "array", "items": { "type": "string" } },
+        "publish": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "network": {
+          "type": "object",
+          "properties": {
+            "allow_hosts": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "filesystem": {
+          "type": "object",
+          "properties": {
+            "read": { "type": "array", "items": { "type": "string" } },
+            "write": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "secrets": { "type": "array", "items": { "type": "string" }, "description": "Vault-Pfade, die per Referenz injiziert werden." },
+        "home_entities": { "type": "array", "items": { "type": "string" }, "description": "Glob-Muster, z. B. light.* oder sensor.garten_*." },
+        "memory": { "enum": ["none", "read", "write"], "default": "none" },
+        "user_data": { "enum": ["none", "profile", "calendar", "contacts", "mail"] }
+      },
+      "additionalProperties": false
+    },
+    "config_schema": { "type": "object", "description": "JSON-Schema der Plugin-Konfiguration." },
+    "signature": {
+      "type": "object",
+      "required": ["alg", "key_id", "value"],
+      "properties": {
+        "alg": { "enum": ["ed25519"] },
+        "key_id": { "type": "string" },
+        "value": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Capability": {
+      "type": "object",
+      "required": ["name", "description", "input_schema", "risk_class", "side_effects"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" },
+        "description": { "type": "string", "minLength": 10, "description": "Wird dem LLM als Tool-Beschreibung gezeigt – präzise formulieren." },
+        "input_schema": { "type": "object", "required": ["type"], "properties": { "type": { "const": "object" } } },
+        "output_schema": { "type": "object" },
+        "risk_class": { "enum": ["R0", "R1", "R2", "R3", "R4"] },
+        "risk_rules": {
+          "type": "array",
+          "description": "Argumentabhängige Hochstufung, z. B. lock mit state=unlocked -> R3.",
+          "items": {
+            "type": "object",
+            "required": ["when", "risk_class"],
+            "properties": {
+              "when": { "type": "object", "description": "Gleichheitsbedingungen auf Top-Level-Argumente." },
+              "risk_class": { "enum": ["R0", "R1", "R2", "R3", "R4"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "side_effects": { "enum": ["none", "reversible", "irreversible"] },
+        "output_trust": { "enum": ["trusted", "untrusted"], "default": "trusted", "description": "untrusted = Ergebnis enthält Fremdinhalte (Web, Mail) und setzt das Taint-Flag." },
+        "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 600000, "default": 10000 },
+        "idempotent": { "type": "boolean", "default": false },
+        "domain": { "type": "string", "description": "Tool-Domäne für Intent-Bindung (home, info, web, …)." }
+      },
+      "additionalProperties": false
+    }
+  }
+}

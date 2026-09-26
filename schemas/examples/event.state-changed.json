@@ -1,0 +1,16 @@
+{
+  "specversion": "1.0",
+  "id": "evt_01J8Z3M0R2S3T4U5V6W7X8Y9Z0",
+  "source": "/connector/homeassistant",
+  "type": "jarvis.sensor.state_changed",
+  "subject": "binary_sensor.fenster_bad",
+  "time": "2026-09-26T19:40:11.004Z",
+  "trust": "system",
+  "actor": "system:homeassistant",
+  "data": {
+    "entity_id": "binary_sensor.fenster_bad",
+    "area": "bad",
+    "old_state": { "state": "off", "last_changed": "2026-09-26T07:12:40Z" },
+    "new_state": { "state": "on", "attributes": { "device_class": "window", "friendly_name": "Fenster Bad" }, "last_changed": "2026-09-26T19:40:11Z" }
+  }
+}

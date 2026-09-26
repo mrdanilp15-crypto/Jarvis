@@ -1,0 +1,378 @@
+openapi: 3.1.0
+info:
+  title: JARVIS API
+  version: 1.0.0
+  summary: REST-Schnittstelle des JARVIS-Kerns (jarvis-core)
+  description: |
+    Authentifizierung: `Authorization: Bearer <token>` (OIDC-Access-Token oder Geräte-Token).
+    Trust-Stufe und Actor werden **immer serverseitig** aus dem Token bestimmt.
+    Fehler folgen RFC 9457 (`application/problem+json`, Schema `error.schema.json`).
+    Streaming (Token-Deltas, Audio) läuft über den WebSocket `/v1/stream`, siehe docs/04 Abschnitt 4.2.3.
+servers:
+  - url: https://jarvis.home.example
+security:
+  - bearer: []
+
+tags:
+  - name: Konversation
+  - name: Events
+  - name: Aktionen
+  - name: Automationen
+  - name: Aufgaben
+  - name: Memory
+  - name: Plugins
+  - name: System
+
+paths:
+  /v1/conversations/{conversation_id}/messages:
+    post:
+      tags: [Konversation]
+      summary: Nachricht senden und Antwort erhalten (nicht gestreamt)
+      operationId: postMessage
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              additionalProperties: false
+              properties:
+                text: { type: string, minLength: 1, maxLength: 32000 }
+                mode: { enum: [normal, night, away, guest, party, vacation], default: normal }
+                channel: { enum: [app, desktop, web, api], default: app }
+            example: { text: "Wie warm ist es im Wohnzimmer?" }
+      responses:
+        "200":
+          description: Antwort des Assistenten inkl. ausgelöster Aktionen
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TurnResult" }
+              example:
+                text: "Im Wohnzimmer sind es 20,5 Grad, Sir."
+                route: "llm:ollama"
+                stop_reason: end_turn
+                tainted: false
+                actions: []
+        "401": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /v1/events:
+    post:
+      tags: [Events]
+      summary: Event einspeisen (CloudEvents 1.0)
+      description: |
+        `trust` und `actor` im Payload werden ignoriert und aus dem Token gesetzt.
+        Erlaubte Event-Typen hängen vom Token-Scope ab (z. B. Plugins nur ihre deklarierten Typen).
+      operationId: ingestEvent
+      requestBody:
+        required: true
+        content:
+          application/cloudevents+json:
+            schema: { $ref: "../schemas/event.schema.json" }
+          application/json:
+            schema: { $ref: "../schemas/event.schema.json" }
+      responses:
+        "202":
+          description: Angenommen
+          content:
+            application/json:
+              schema: { type: object, properties: { accepted: { type: string } } }
+        "401": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /v1/webhooks/{hook_id}:
+    post:
+      tags: [Events]
+      summary: Eingehender, HMAC-signierter Webhook
+      security: []
+      operationId: receiveWebhook
+      parameters:
+        - { name: hook_id, in: path, required: true, schema: { type: string, pattern: "^whk_[a-z0-9_]+$" } }
+        - { name: X-Jarvis-Timestamp, in: header, required: true, schema: { type: string } }
+        - { name: X-Jarvis-Signature, in: header, required: true, schema: { type: string, pattern: "^sha256=[0-9a-f]{64}$" } }
+        - { name: X-Jarvis-Delivery, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202": { description: "Angenommen – erzeugt jarvis.webhook.received (Trust external_untrusted)" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/actions:
+    post:
+      tags: [Aktionen]
+      summary: Capability direkt ausführen (läuft durch die Policy-Engine)
+      operationId: requestAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [capability, arguments]
+              properties:
+                capability: { type: string, examples: ["home.set_light"] }
+                arguments: { type: object }
+                idempotency_key: { type: string }
+                dry_run: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Ergebnis (auch pending_confirmation oder denied)
+          content:
+            application/json:
+              schema: { $ref: "../schemas/action-result.schema.json" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /v1/actions/{action_id}:
+    get:
+      tags: [Aktionen]
+      summary: Status einer Aktion
+      operationId: getAction
+      parameters:
+        - { name: action_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Aktion
+          content:
+            application/json:
+              schema: { $ref: "../schemas/action-result.schema.json" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/confirmations/{confirmation_id}:
+    post:
+      tags: [Aktionen]
+      summary: Offene Bestätigung freigeben oder ablehnen
+      description: Nur die anfragende Person oder ein Admin. R3 verlangt `app_biometric` oder `pin` (signierte Geräte-Challenge).
+      operationId: resolveConfirmation
+      parameters:
+        - { name: confirmation_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, method]
+              properties:
+                decision: { enum: [approve, reject] }
+                method: { enum: [app, app_biometric, pin] }
+                attestation: { type: string, description: "Signierte Challenge des Geräts (Betrieb)" }
+      responses:
+        "200":
+          description: Aktualisierte Aktion
+          content:
+            application/json:
+              schema: { $ref: "../schemas/action-result.schema.json" }
+        "403": { $ref: "#/components/responses/Problem" }
+
+  /v1/automations:
+    get:
+      tags: [Automationen]
+      summary: Automationen auflisten
+      operationId: listAutomations
+      responses:
+        "200":
+          description: Liste
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "../schemas/automation.schema.json" } }
+    post:
+      tags: [Automationen]
+      summary: Automation anlegen (vorgeschlagene Automationen starten deaktiviert)
+      operationId: createAutomation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/automation.schema.json" }
+      responses:
+        "201": { description: Angelegt }
+        "422": { $ref: "#/components/responses/Problem" }
+  /v1/automations/{automation_id}:dry-run:
+    post:
+      tags: [Automationen]
+      summary: Automation gegen die Event-Historie simulieren
+      operationId: dryRunAutomation
+      parameters:
+        - { name: automation_id, in: path, required: true, schema: { type: string } }
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 90, default: 14 } }
+      responses:
+        "200":
+          description: Simulationsergebnis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  would_have_run: { type: integer }
+                  conflicts: { type: array, items: { type: string } }
+                  sample_traces: { type: array, items: { type: object } }
+
+  /v1/tasks:
+    get:
+      tags: [Aufgaben]
+      summary: Aufgaben, Erinnerungen, Timer und Jobs
+      operationId: listTasks
+      parameters:
+        - { name: type, in: query, schema: { enum: [todo, reminder, timer, job, plan] } }
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        "200": { description: Liste }
+    post:
+      tags: [Aufgaben]
+      summary: Aufgabe anlegen
+      operationId: createTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, title]
+              properties:
+                type: { enum: [todo, reminder, timer, job, plan] }
+                title: { type: string }
+                due_at: { type: string, format: date-time }
+                trigger: { type: object }
+                list_name: { type: string }
+      responses:
+        "201": { description: Angelegt }
+
+  /v1/memory:
+    get:
+      tags: [Memory]
+      summary: Gedächtnis durchsuchen („Was weißt du über mich?“)
+      operationId: searchMemory
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: kind, in: query, schema: { enum: [episodic, semantic, procedural, preference] } }
+      responses:
+        "200":
+          description: Treffer
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "../schemas/memory-item.schema.json" } }
+  /v1/memory/{memory_id}:
+    delete:
+      tags: [Memory]
+      summary: Erinnerung vergessen
+      operationId: forgetMemory
+      parameters:
+        - { name: memory_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Gelöscht }
+  /v1/memory/export:
+    get:
+      tags: [Memory]
+      summary: Alle eigenen Erinnerungen exportieren (DSGVO Art. 20)
+      operationId: exportMemory
+      responses:
+        "200": { description: JSON-Export }
+
+  /v1/plugins:
+    get:
+      tags: [Plugins]
+      summary: Installierte Plugins
+      operationId: listPlugins
+      responses:
+        "200":
+          description: Liste
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "../schemas/plugin-manifest.schema.json" } }
+    post:
+      tags: [Plugins]
+      summary: Plugin installieren (Admin; Berechtigungen müssen danach freigegeben werden)
+      operationId: installPlugin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/plugin-manifest.schema.json" }
+      responses:
+        "202": { description: "Installiert, wartet auf Freigabe" }
+
+  /v1/persona:
+    get:
+      tags: [System]
+      summary: Aktive Persona
+      operationId: getPersona
+      responses:
+        "200":
+          description: Persona
+          content:
+            application/json:
+              schema: { $ref: "../schemas/persona.schema.json" }
+    put:
+      tags: [System]
+      summary: Persona wechseln oder anpassen
+      operationId: setPersona
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/persona.schema.json" }
+      responses:
+        "200": { description: Aktualisiert }
+
+  /v1/system/health:
+    get:
+      tags: [System]
+      summary: Gesundheitszustand
+      security: []
+      operationId: health
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { enum: [ok, degraded, down] }
+                  cloud_llm: { enum: [closed, open, half_open] }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ConversationId:
+      name: conversation_id
+      in: path
+      required: true
+      schema: { type: string, maxLength: 128 }
+  responses:
+    Problem:
+      description: Fehler (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: "../schemas/error.schema.json" }
+  schemas:
+    TurnResult:
+      type: object
+      required: [text, route, stop_reason, tainted, actions]
+      properties:
+        text: { type: string }
+        route: { type: string, description: "fast_path | confirmation_resolver | llm:<provider>" }
+        stop_reason: { enum: [end_turn, tool_use, max_tokens, refusal, max_iterations, timeout] }
+        tainted: { type: boolean }
+        actions:
+          type: array
+          items: { $ref: "../schemas/action-result.schema.json" }
+        pending_confirmation:
+          type: object
+          properties:
+            confirmation_id: { type: string }
+            method: { enum: [voice, app, app_biometric, pin] }
+            prompt: { type: string }
+            expires_at: { type: string, format: date-time }

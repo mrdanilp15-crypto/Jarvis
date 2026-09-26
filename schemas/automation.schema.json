@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.jarvis.local/v1/automation.schema.json",
+  "title": "Automation",
+  "description": "Regel nach dem Muster Trigger -> Bedingungen -> Aktionen. Aktionen laufen immer durch die Policy-Engine (Actor automation:<id>).",
+  "type": "object",
+  "required": ["id", "name", "enabled", "origin", "triggers", "actions"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^aut_[A-Za-z0-9_]{2,40}$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "description": { "type": "string" },
+    "enabled": { "type": "boolean" },
+    "mode": { "enum": ["single", "restart", "queued", "parallel"], "default": "single" },
+    "origin": { "enum": ["user", "jarvis_suggested", "imported"] },
+    "owner": { "type": "string", "description": "user:<id> – bestimmt die Rechte der Aktionen." },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "approval": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["not_required", "pending", "approved", "rejected"] },
+        "approved_by": { "type": "string" },
+        "approved_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "triggers": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Trigger" } },
+    "conditions": { "type": "array", "items": { "$ref": "#/$defs/Condition" } },
+    "actions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Action" } }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Duration": {
+      "type": "string",
+      "pattern": "^([0-9]+h)?([0-9]+m)?([0-9]+s)?$",
+      "minLength": 2,
+      "description": "z. B. 10m, 1h30m, 45s"
+    },
+    "Trigger": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "entity_id"],
+          "properties": {
+            "type": { "const": "state" },
+            "entity_id": { "type": "string" },
+            "from": { "type": "string" },
+            "to": { "type": "string" },
+            "for": { "$ref": "#/$defs/Duration" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "event_type"],
+          "properties": {
+            "type": { "const": "event" },
+            "event_type": { "type": "string", "pattern": "^jarvis(\\.[a-z][a-z0-9_]*){2,4}$" },
+            "match": { "type": "object", "description": "Gleichheitsfilter auf data-Felder (Punktnotation)." }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "at"],
+          "properties": {
+            "type": { "const": "time" },
+            "at": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+            "weekdays": { "$ref": "#/$defs/Weekdays" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "cron"],
+          "properties": {
+            "type": { "const": "cron" },
+            "cron": { "type": "string", "description": "5-Feld-Cron-Ausdruck, Zeitzone laut Systemkonfiguration." }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "event"],
+          "properties": {
+            "type": { "const": "sun" },
+            "event": { "enum": ["sunrise", "sunset"] },
+            "offset": { "type": "string", "pattern": "^[+-]([0-9]+h)?([0-9]+m)?$" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "person", "event"],
+          "properties": {
+            "type": { "const": "presence" },
+            "person": { "type": "string" },
+            "event": { "enum": ["arrives", "leaves"] },
+            "zone": { "type": "string", "default": "home" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "webhook_id"],
+          "properties": {
+            "type": { "const": "webhook" },
+            "webhook_id": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Weekdays": {
+      "type": "array",
+      "items": { "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "Condition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "entity_id", "state"],
+          "properties": {
+            "type": { "const": "state" },
+            "entity_id": { "type": "string" },
+            "state": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" }, "minItems": 1 }] },
+            "attribute": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "entity_id"],
+          "properties": {
+            "type": { "const": "numeric_state" },
+            "entity_id": { "type": "string" },
+            "attribute": { "type": "string" },
+            "above": { "type": "number" },
+            "below": { "type": "number" }
+          },
+          "anyOf": [{ "required": ["above"] }, { "required": ["below"] }],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "time" },
+            "after": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+            "before": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+            "weekdays": { "$ref": "#/$defs/Weekdays" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "person", "state"],
+          "properties": {
+            "type": { "const": "presence" },
+            "person": { "type": "string", "description": "Person oder 'anyone'. Niemand zu Hause = anyone + not_home." },
+            "state": { "enum": ["home", "not_home"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "mode"],
+          "properties": {
+            "type": { "const": "mode" },
+            "mode": { "enum": ["normal", "night", "away", "guest", "party", "vacation"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "conditions"],
+          "properties": {
+            "type": { "enum": ["and", "or"] },
+            "conditions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Condition" } }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "condition"],
+          "properties": {
+            "type": { "const": "not" },
+            "condition": { "$ref": "#/$defs/Condition" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "capability", "arguments"],
+          "properties": {
+            "type": { "const": "capability" },
+            "capability": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" },
+            "arguments": { "type": "object" },
+            "continue_on_error": { "type": "boolean", "default": false }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "duration"],
+          "properties": {
+            "type": { "const": "delay" },
+            "duration": { "$ref": "#/$defs/Duration" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "message"],
+          "properties": {
+            "type": { "const": "notify" },
+            "message": { "type": "string" },
+            "channels": { "type": "array", "items": { "enum": ["voice", "push", "dashboard", "text"] } },
+            "target": { "type": "string", "description": "user:<id>, area:<name> oder household" },
+            "priority": { "enum": ["low", "normal", "high", "critical"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "choices"],
+          "properties": {
+            "type": { "const": "choose" },
+            "choices": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["conditions", "actions"],
+                "properties": {
+                  "conditions": { "type": "array", "items": { "$ref": "#/$defs/Condition" } },
+                  "actions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Action" } }
+                },
+                "additionalProperties": false
+              }
+            },
+            "default": { "type": "array", "items": { "$ref": "#/$defs/Action" } }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "prompt"],
+          "properties": {
+            "type": { "const": "llm_step" },
+            "prompt": { "type": "string", "description": "Anweisung an das LLM, z. B. eine Zusammenfassung der Nacht-Events erzeugen." },
+            "route": { "enum": ["local_llm", "cloud_llm"], "default": "local_llm" },
+            "output_var": { "type": "string", "pattern": "^[a-z_][a-z0-9_]*$" },
+            "allow_tools": { "type": "array", "items": { "type": "string" }, "description": "Leere Liste = LLM darf keine Tools nutzen." }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

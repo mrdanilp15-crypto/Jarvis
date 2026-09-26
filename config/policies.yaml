@@ -1,0 +1,87 @@
+# JARVIS Policy-Konfiguration
+# Wird von der Policy-Engine (reference/python/src/jarvis/policy.py) geladen.
+# Entscheidungsreihenfolge:
+#   1. R4 -> immer deny
+#   2. Rolle: Capability erlaubt? (allow/deny-Globs)
+#   3. Rolle: Raum erlaubt? (areas)
+#   4. Intent-Bindung: Capability-Domäne muss zum Turn passen
+#   5. Obergrenze aus Rolle und Trust-Stufe (inkl. Stimmkonfidenz)
+#   6. explizite Regeln (rules), erste passende gewinnt: deny | confirm | allow (allow ab R3 wird zu confirm)
+#   7. Risikoklassen-Standard (R3 -> confirm, R2 -> confirm bei Taint/Modus, sonst allow)
+# Explizite Regeln entscheiden damit nur innerhalb dessen, was Rolle und Trust ohnehin erlauben.
+
+version: 1
+
+confirmation:
+  timeout_s: 60
+  # Methode je Risikoklasse, wenn eine Bestätigung nötig ist
+  methods:
+    R1: voice
+    R2: voice
+    R3: app_biometric
+
+risk_classes:
+  R2:
+    # R2 wird bestätigungspflichtig, wenn einer dieser Umstände vorliegt
+    confirm_when:
+      tainted: true
+      modes: [away, vacation, guest]
+
+trust_levels:
+  system:             { max_risk: R2 }
+  trusted_user:       { max_risk: R3 }
+  household:          { max_risk: R3, min_voice_confidence: 0.8, max_risk_below_confidence: R1 }
+  guest:              { max_risk: R1 }
+  external_untrusted: { max_risk: R0 }
+
+roles:
+  admin:
+    max_risk: R3
+    allow: ["*"]
+  adult:
+    max_risk: R3
+    allow: ["home.*", "info.*", "web.*", "calendar.*", "task.*", "reminder.*", "timer.*",
+            "mail.*", "message.*", "call.*", "contacts.*", "memory.*", "automation.*",
+            "system.diagnose", "system.logs_query", "code.run_sandbox", "energy.*", "events.*", "persona.set"]
+    deny: ["system.run_script", "system.container_update"]
+  child:
+    max_risk: R1
+    allow: ["home.set_light", "home.set_cover", "home.media_control", "home.activate_scene", "home.get_state",
+            "info.weather", "timer.*", "reminder.*", "task.*", "memory.search"]
+  guest:
+    max_risk: R1
+    allow: ["home.set_light", "home.set_cover", "home.media_control", "home.get_state", "info.weather", "timer.start"]
+    areas: [wohnzimmer, gaestezimmer, kueche, bad]
+  service:
+    max_risk: R2
+    allow: ["home.*", "info.*", "task.*", "reminder.*", "timer.*", "events.*"]
+
+# Explizite Regeln – werden vor den Rollen-Standards geprüft.
+# match-Felder: capability (Glob), actor (Glob), trust, arguments (Gleichheit), hours ("HH:MM-HH:MM"), mode
+rules:
+  - id: child.no_media_at_night
+    match: { capability: "home.media_control", role: child, hours: "20:30-07:00" }
+    effect: deny
+    reason: "Nachtruhe für Kinderprofile"
+
+  - id: guest.no_unlock
+    match: { capability: "home.lock", trust: guest }
+    effect: deny
+    reason: "Gäste dürfen Schlösser nicht bedienen"
+
+  - id: automation.lock_at_night
+    match: { capability: "home.lock", actor: "automation:*", arguments: { state: locked } }
+    effect: allow
+    reason: "Automationen dürfen nachts verriegeln (R1)"
+
+  - id: mail.new_recipient
+    match: { capability: "mail.send", arguments: { recipient_known: false } }
+    effect: confirm
+    method: app
+    reason: "E-Mail an unbekannte Empfänger"
+
+  - id: away.no_appliances
+    match: { capability: "home.set_switch", mode: away, arguments: { on: true } }
+    effect: confirm
+    method: app
+    reason: "Geräte bei Abwesenheit einschalten"

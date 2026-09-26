@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.jarvis.local/v1/action.schema.json",
+  "title": "ActionRequest",
+  "description": "Antrag auf Ausführung einer Capability. Wird von Orchestrator, Fast-Path, Automationen und Plugins erzeugt und immer von der Policy-Engine bewertet.",
+  "type": "object",
+  "required": ["action_id", "capability", "arguments", "requested_by", "created_at"],
+  "properties": {
+    "action_id": { "type": "string", "pattern": "^act_[A-Za-z0-9]{6,40}$" },
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "description": "Kanonische Capability-ID, z. B. home.set_light."
+    },
+    "arguments": { "type": "object", "description": "Parameter gemäß input_schema der Capability." },
+    "requested_by": {
+      "type": "object",
+      "required": ["actor", "trust", "via"],
+      "properties": {
+        "actor": { "type": "string", "pattern": "^(user|automation|system|plugin|service|guest):[A-Za-z0-9_.@-]+$" },
+        "trust": { "enum": ["system", "trusted_user", "household", "guest", "external_untrusted"] },
+        "via": { "enum": ["voice", "text", "fast_path", "llm", "automation", "api", "plugin", "proactive"] },
+        "session_id": { "type": "string" },
+        "voice_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "area": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "risk_class": { "$ref": "#/$defs/RiskClass", "description": "Wird von der Tool-Registry aus Capability und Argumenten bestimmt, nie vom LLM." },
+    "context": {
+      "type": "object",
+      "properties": {
+        "tainted": { "type": "boolean", "default": false },
+        "allowed_domains": { "type": "array", "items": { "type": "string" } },
+        "mode": { "enum": ["normal", "night", "away", "guest", "party", "vacation"] }
+      },
+      "additionalProperties": false
+    },
+    "confirmation": {
+      "type": "object",
+      "properties": {
+        "required": { "type": "boolean" },
+        "method": { "$ref": "#/$defs/ConfirmationMethod" },
+        "confirmation_id": { "type": "string" },
+        "expires_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "idempotency_key": { "type": "string", "maxLength": 128 },
+    "dry_run": { "type": "boolean", "default": false },
+    "deadline": { "type": "string", "format": "date-time" },
+    "correlation_id": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "RiskClass": { "enum": ["R0", "R1", "R2", "R3", "R4"] },
+    "ConfirmationMethod": { "enum": ["none", "voice", "app", "app_biometric", "pin"] }
+  }
+}

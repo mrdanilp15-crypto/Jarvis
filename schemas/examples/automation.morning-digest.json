@@ -1,0 +1,14 @@
+{
+  "id": "aut_morning_digest",
+  "name": "Morgendliche Zusammenfassung",
+  "enabled": true,
+  "mode": "single",
+  "origin": "user",
+  "owner": "user:alex",
+  "approval": { "status": "not_required" },
+  "triggers": [ { "type": "time", "at": "06:45", "weekdays": ["mon", "tue", "wed", "thu", "fri"] } ],
+  "actions": [
+    { "type": "llm_step", "prompt": "Fasse die Ereignisse der Nacht (Sensoren, Warnungen, verpasste Nachrichten) in maximal drei Sätzen zusammen.", "route": "local_llm", "output_var": "digest", "allow_tools": ["events.query", "home.get_state"] },
+    { "type": "notify", "message": "{{ digest }}", "channels": ["dashboard", "push"], "target": "user:alex" }
+  ]
+}

@@ -1,0 +1,174 @@
+# JARVIS Systemkonfiguration (Beispiel)
+# Secrets werden nie im Klartext abgelegt, sondern referenziert:
+#   env:NAME            -> Umgebungsvariable
+#   vault:<pfad>#<feld> -> HashiCorp Vault (KV v2)
+
+system:
+  name: jarvis
+  timezone: Europe/Berlin
+  locale: de-DE
+  units: metric
+  location: { latitude: 52.52, longitude: 13.40 }   # grob, für Wetter/Sonnenstand
+
+api:
+  host: 0.0.0.0
+  port: 8080
+  public_base_url: https://jarvis.home.example
+  cors_origins: ["https://jarvis.home.example"]
+  auth:
+    oidc_issuer: https://auth.home.example
+    audience: jarvis-api
+    device_tokens: vault:kv/jarvis/device_tokens
+  rate_limits:
+    per_user_per_minute: 60
+    per_webhook_per_minute: 30
+
+bus:
+  backend: redis_streams
+  url: redis://redis:6379/0
+  stream_prefix: "jarvis:events"
+  max_len: 200000              # ungefähre Obergrenze je Stream (XADD MAXLEN ~)
+  consumer_group: jarvis-core
+
+database:
+  dsn: env:JARVIS_DATABASE_URL  # postgresql://jarvis:***@postgres:5432/jarvis
+
+mqtt:
+  host: mosquitto
+  port: 8883
+  tls: true
+  username: jarvis-core
+  password: vault:kv/jarvis/mqtt#password
+  topic_prefix: jarvis/v1
+  ha_discovery_prefix: homeassistant
+
+homeassistant:
+  websocket_url: ws://homeassistant:8123/api/websocket
+  token: vault:kv/jarvis/homeassistant#token
+  sync_registry_interval_s: 300
+  forward_domains: [light, switch, climate, cover, media_player, lock, alarm_control_panel,
+                    binary_sensor, sensor, person, weather, scene]
+  debounce_ms: 250
+
+llm:
+  default_cloud: claude
+  default_local: local
+  providers:
+    claude:
+      type: anthropic
+      model: claude-opus-5
+      api_key: env:ANTHROPIC_API_KEY
+      max_tokens: 64000
+      effort:                  # output_config.effort je Route/Aufgabe
+        dialog: medium
+        research: high
+        code: high
+        background_job: high
+      thinking: adaptive
+      server_side_fallbacks: default   # Refusal-Fallback serverseitig (Beta server-side-fallback-2026-07-01)
+      prompt_cache: true
+      timeout_s: 120
+    local:
+      type: ollama
+      base_url: http://ollama:11434
+      model: qwen2.5:14b-instruct
+      num_ctx: 32768
+      timeout_s: 60
+  embeddings:
+    type: ollama
+    base_url: http://ollama:11434
+    model: bge-m3
+    dimensions: 1024
+
+router:
+  fast_path_min_confidence: 0.9
+  sensitive_to_local: true
+  complexity_classifier: local
+  cloud_circuit_breaker: { failure_threshold: 5, window_s: 30, cooldown_s: 60 }
+
+orchestrator:
+  max_tool_iterations: 8
+  turn_timeout_s: 60
+  tool_default_timeout_s: 10
+  verify_state_changes: true
+
+context:
+  budgets_tokens:              # lokal / cloud
+    tools:      { local: 3000, cloud: 8000 }
+    system:     { local: 2000, cloud: 2000 }
+    situation:  { local: 1000, cloud: 3000 }
+    memories:   { local: 2000, cloud: 10000 }
+    summary:    { local: 1000, cloud: 4000 }
+  session_idle_timeout_s: 300
+
+memory:
+  retrieval:
+    top_k: 8
+    candidate_pool: 50
+    weights: { similarity: 0.6, recency: 0.25, importance: 0.15 }
+    half_life_days: 30
+  extraction: { route: local_llm, min_importance: 0.3 }
+  dedup_similarity: 0.92
+  consolidation_cron: "30 3 * * *"
+  default_retention_days:
+    episodic: 365
+    observation: 90
+
+voice:
+  wake_word: { model: hey_jarvis, threshold: 0.5, server_verify_threshold: 0.7 }
+  vad: { end_silence_ms: 700, min_speech_ms: 250 }
+  stt: { uri: tcp://wyoming-whisper:10300, language: de, initial_prompt_from_entities: true }
+  tts: { uri: tcp://wyoming-piper:10200 }
+  speaker_id: { model: ecapa-tdnn, threshold: 0.75 }
+  follow_up_window_s: 5
+  barge_in: true
+
+persona:
+  active: jarvis               # jarvis | neutral
+  files:
+    jarvis: config/persona.jarvis.yaml
+    neutral: config/persona.neutral.yaml
+
+proactive:
+  enabled: true
+  quiet_hours: "22:00-07:00"
+  max_voice_per_hour: 3
+  thresholds: { voice: 0.75, push: 0.6, dashboard: 0.3 }
+
+automation:
+  dry_run_history_days: 14
+  suggestion_min_occurrences: 5
+
+security:
+  policies_file: config/policies.yaml
+  webhooks:
+    max_clock_skew_s: 300
+    replay_cache_ttl_s: 600
+  audit:
+    hash_chain: true
+    export_cron: "0 4 * * *"
+  egress_allowlist:
+    - api.anthropic.com
+    - api.open-meteo.com
+    - "*.home.example"
+  sandbox:
+    runtime: gvisor
+    network: none
+    cpu: 1
+    memory_mb: 512
+    timeout_s: 30
+
+plugins:
+  directory: /opt/jarvis/plugins
+  trusted_signing_keys: [vault:kv/jarvis/plugin_keys#primary]
+  installed:
+    - id: org.example.weather
+      enabled: true
+
+logging:
+  level: INFO
+  format: json
+  redact_keys: [authorization, token, password, api_key, access_token, secret, alarm_code, pin]
+  otel:
+    endpoint: http://otel-collector:4317
+    service_name: jarvis-core
