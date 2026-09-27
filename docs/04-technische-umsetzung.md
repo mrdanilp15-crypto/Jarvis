@@ -41,7 +41,7 @@ Vollständige Spezifikation: [`api/openapi.yaml`](../api/openapi.yaml) (OpenAPI 
 | `POST /v1/confirmations/{id}` | Bestätigung freigeben/ablehnen | Bearer | ✔ |
 | `GET /v1/system/health` | Zustand, Circuit-Breaker, Status des lokalen Modells (`local_llm`) | – | ✔ |
 | `POST /v1/tts` | JARVIS-Stimme: ein Satz → WAV (Azure Speech „Conrad“, falls eingerichtet, mit Rückfall auf Piper über Wyoming) | Bearer | ✔ |
-| `WS /v1/agent` | PC-Agent verbindet sich, meldet Programme/Ordner (`agent.hello`), erhält `agent.invoke`, antwortet `agent.result` | Token (Query) | ✔ |
+| `WS /v1/agent` | PC-Agent verbindet sich, meldet Version, Aktionen, Programme, Startmenü-Einträge und Ordner (`agent.hello`, Änderungen per `agent.apps`), erhält `agent.invoke`, antwortet `agent.result` | Token (Query) | ✔ |
 | `GET /` | Browser-Oberfläche (HUD, Sprache, Chat) über `WS /v1/stream` | Token im Link-Fragment (`#token=…`) | ✔ |
 | `GET /docs` | interaktive API-Beschreibung (Swagger UI, **Authorize** für das Bearer-Token) | – | ✔ |
 | `POST /v1/actions` · `GET /v1/actions/{id}` | Capability direkt ausführen / Status | Bearer | Blueprint |

@@ -100,7 +100,8 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         ))
 
     agents = AgentHub()
-    if (cfg.get("pc_agent") or {}).get("enabled", True):
+    pc_enabled = (cfg.get("pc_agent") or {}).get("enabled", True)
+    if pc_enabled:
         register_pc_capabilities(registry, agents, search_url=(cfg.get("pc_agent") or {}).get(
             "search_url", "https://www.google.com/search?q={query}"))
 
@@ -140,6 +141,7 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         bus=bus,
         # Sofortbefehle ohne LLM („Öffne den Explorer“, Timer); Licht-Grammatiken brauchen Räume aus Home Assistant
         fast_path=FastPath({}, {}),
+        app_resolver=agents.find_app if pc_enabled else None,
         max_iterations=cfg["orchestrator"]["max_tool_iterations"],
         turn_timeout_s=cfg["orchestrator"]["turn_timeout_s"],
         session_idle_timeout_s=cfg["context"]["session_idle_timeout_s"],

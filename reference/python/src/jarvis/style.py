@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.0.0"
+STYLE_VERSION = "2.1.0"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -49,12 +49,15 @@ APP_LABELS = {
     "explorer": "Der Datei-Explorer ist", "browser": "Der Browser ist", "editor": "Der Editor ist",
     "rechner": "Der Rechner ist", "paint": "Paint ist", "einstellungen": "Die Einstellungen sind",
     "taskmanager": "Der Task-Manager ist", "spotify": "Spotify ist", "word": "Word ist", "excel": "Excel ist",
-    "powerpoint": "PowerPoint ist", "outlook": "Outlook ist",
+    "powerpoint": "PowerPoint ist", "outlook": "Outlook ist", "systemsteuerung": "Die Systemsteuerung ist",
+    "kamera": "Die Kamera ist", "uhr": "Die Uhr ist", "store": "Der Microsoft Store ist",
+    "snipping": "Das Ausschneidewerkzeug ist",
 }
 FOLDER_LABELS = {
     "downloads": "Downloads", "documents": "Dokumente", "desktop": "Desktop", "pictures": "Bilder",
     "music": "Musik", "videos": "Videos", "home": "Benutzerordner", "pc": "Dieser PC",
 }
+SEARCH_LABELS = {"youtube": "YouTube", "amazon": "Amazon", "wikipedia": "Wikipedia", "ebay": "eBay"}  # google: „Die Suche“
 SITE_LABELS = {"youtube.com": "YouTube", "google.de": "Google", "google.com": "Google", "netflix.com": "Netflix",
                "amazon.de": "Amazon", "de.wikipedia.org": "Wikipedia", "mail.google.com": "Gmail",
                "twitch.tv": "Twitch", "ebay.de": "eBay", "web.whatsapp.com": "WhatsApp",
@@ -304,8 +307,10 @@ class JarvisStyle(PlainStyle):
             return very_well, (f"Der Timer läuft: {format_duration(args.get('duration_s', 0))}. "
                                f"{self.phrase('on_it')}")
         if capability == "pc.open_app":
-            app = str(args.get("app", ""))
-            label = APP_LABELS.get(app, f"{_cap(app)} ist")
+            # Der Agent meldet, was er tatsächlich gestartet hat („Steam“, „Minecraft Launcher“)
+            opened = result.get("opened") if isinstance(result, dict) else None
+            app = str(opened or args.get("app", ""))
+            label = APP_LABELS.get(app.lower(), f"{_cap(app)} ist")
             return very_well, f"{label} geöffnet."
         if capability == "pc.open_folder":
             return very_well, f"Der Ordner „{FOLDER_LABELS.get(args.get('folder'), args.get('folder'))}“ ist geöffnet."
@@ -313,7 +318,10 @@ class JarvisStyle(PlainStyle):
             host = (urlsplit(str(args.get("url", ""))).hostname or "").removeprefix("www.")
             return very_well, f"{SITE_LABELS.get(host, host or 'Die Seite')} ist geöffnet."
         if capability == "pc.search_web":
-            return very_well, f"Die Suche nach „{args.get('query', '')}“ ist geöffnet."
+            site = SEARCH_LABELS.get(args.get("site") or "google", "")
+            return very_well, f"Die {site + '-' if site else ''}Suche nach „{args.get('query', '')}“ ist geöffnet."
+        if capability == "pc.search_files":
+            return very_well, f"Die Dateisuche nach „{args.get('query', '')}“ ist geöffnet."
         if capability == "memory.remember":
             return very_well, "Ich habe es mir notiert."
         if capability == "system.status":
@@ -435,7 +443,8 @@ class JarvisStyle(PlainStyle):
         skills = []
         domains = {name.split(".", 1)[0] for name in names}
         if "pc" in domains:
-            skills.append("Programme, Ordner und Webseiten auf Ihrem PC öffnen")
+            skills.append("Programme und Spiele auf Ihrem PC starten, Ordner und Webseiten öffnen")
+            skills.append("im Internet, auf YouTube oder in Ihren Dateien suchen")
         if "home" in domains:
             skills.append("Licht, Heizung und Geräte im Haus steuern")
         if domains & {"info"}:

@@ -1,5 +1,40 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.1.0 – 2026-09-27
+
+PC-Befehle zuverlässig gemacht. Vorher klappten die meisten Befehle nicht, aus drei Gründen:
+1. **Nur die Befehlsform wurde erkannt.** „Öffne den Explorer“ ging, „Kannst du den Explorer öffnen?“ oder „Explorer
+   öffnen“ landeten beim Sprachmodell, das das Werkzeug oft nicht aufrief (15 von 22 geprüften Formulierungen).
+2. **Nur 12 fest eingetragene Programme.** Steam, Discord, Spiele usw. lehnte der PC-Agent ab.
+3. **Keine Datei- und Seitensuche.** „Such die Datei …“ und „… auf YouTube“ gab es nicht.
+
+### Neu
+- **Natürliche Formulierungen** für PC-Befehle: Fragen („Kannst du …?“, „Könnten Sie …?“), Wünsche („Ich möchte
+  Minecraft spielen“), Verb am Ende („Steam starten“), Füllwörter („bitte“, „mal“). Suchbegriffe behalten ihre
+  Schreibweise.
+- **Jedes installierte Programm**: Der PC-Agent liest das Windows-Startmenü (`Get-StartApps`) und startet Programme
+  und Spiele per Name (exakter Name vor Namensanfang vor ganzem Wort: „Minecraft“ → „Minecraft Launcher“). Er
+  überspringt Deinstallations-, Setup- und Hilfe-Einträge. JARVIS kennt die Liste (`agent.hello`/`agent.apps`) und
+  startet „Öffne Steam“ ohne Sprachmodell. Für unbekannte Namen („Öffne die Einkaufsliste“) übernimmt weiter das
+  Sprachmodell, statt zu raten.
+- **Suchen**: `pc.search_web` mit `site` (Google, YouTube, Amazon, Wikipedia, eBay); neue Capability
+  `pc.search_files` öffnet die Explorer-Suche im Benutzerordner.
+- Weitere feste Programme: Systemsteuerung, Kamera, Uhr, Microsoft Store, Ausschneidewerkzeug.
+- `./deploy/start.sh autostart` ersetzt einen laufenden älteren PC-Agenten sofort. Mit einem veralteten Agenten
+  sagt JARVIS, dass ein Update nötig ist, statt nur „unbekannte Aktion“ zu melden.
+- Antworten nennen, was tatsächlich gestartet wurde („Sehr wohl. Steam ist geöffnet.“, „Die YouTube-Suche nach
+  „Katzenvideos“ ist geöffnet.“).
+- README: Übersicht „Was JARVIS kann – und was (noch) nicht“.
+
+### Sicherheit
+- Der Kern schickt dem Agenten nur Namen und Suchbegriffe. `pc.open_app` lehnt Pfade, Pipes und Steuerzeichen schon
+  im Schema ab; was gestartet wird, entscheidet der Agent anhand seiner Liste und des Startmenüs.
+
+### Tests
+- 55 neue Tests: Formulierungen, Programmauflösung, Weiterleitung unbekannter Namen an das Sprachmodell, Such-URLs,
+  Dateisuche, veralteter Agent, Weg „Kannst du Steam starten?“ über die API bis zum Agenten. Die Suchlogik des
+  PowerShell-Agenten wurde mit einem nachgebildeten Startmenü geprüft.
+
 ## Jarvis-Modul 2.0.0 – 2026-09-27
 
 Neukalibrierung des Antwortsystems auf den Jarvis-Ton (Details und Fehleranalyse:

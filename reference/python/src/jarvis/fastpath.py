@@ -36,14 +36,104 @@ TIMER = re.compile(
 )
 
 
-# PC-Befehle („Öffne den Explorer“, „Starte Spotify“, „Öffne YouTube“, „Such im Internet nach …“)
-PC_OPEN = re.compile(r"^(?:öffne|öffnen|starte|start|mach|zeig)\s+(?:mir\s+)?(?:mal\s+)?"
-                     r"(?:den|die|das|einen|eine|ein|meine|meinen|mein)?\s*(?P<target>[a-zäöüß0-9 .\-]+?)(?:\s+auf)?$",
+# PC-Befehle. Natürliche Formen werden erst auf die Befehlsform zurückgeführt („Kannst du bitte Steam starten?“
+# -> „öffne Steam“), dann gegen Programme, Ordner, Webseiten und Suchen geprüft. Groß-/Kleinschreibung bleibt
+# erhalten (Suchbegriffe), verglichen wird ohne Rücksicht darauf.
+_OPEN_VERBS = r"öffnen|starten|aufmachen|aufrufen|anmachen|hochfahren|laden"
+_SHOW_VERBS = r"zeigen|anzeigen"
+_PLAY_VERBS = r"spielen|abspielen|zocken"
+_SEARCH_VERBS = r"suchen|googeln|finden|nachschauen|nachsehen|raussuchen|heraussuchen"
+_ANY_VERB = rf"{_OPEN_VERBS}|{_SHOW_VERBS}|{_PLAY_VERBS}|{_SEARCH_VERBS}"
+_FILLER = re.compile(r"\b(?:bitte|mal|doch|kurz|schnell|einmal|jetzt|gerade|eben|für mich|gleich|eventuell|"
+                     r"vielleicht)\b", re.I)
+_ASK = re.compile(rf"^(?:(?:kannst|könntest|würdest) du|(?:können|könnten|würden) sie|ich (?:möchte|will|würde gerne?|"
+                  rf"hätte gerne?|muss)|lass uns|wir (?:müssen|sollten))\s+(?P<rest>.+?)\s+(?P<verb>{_ANY_VERB})$", re.I)
+_VERB_LAST = re.compile(rf"^(?P<rest>.+?)\s+(?P<verb>{_ANY_VERB})$", re.I)
+PC_OPEN = re.compile(r"^(?P<verb>öffne|starte|start|ruf|rufe|mach|zeig|zeige|spiel|spiele)\s+(?:mir\s+)?"
+                     r"(?:den|die|das|einen|eine|ein|meine|meinen|mein)?\s*(?P<target>[\wäöüß .+&'-]+?)(?P<auf>\s+auf)?$",
                      re.I)
-PC_SEARCH = re.compile(r"^(?:such(?:e)?|google)\s+(?:mal\s+)?(?:im internet|online|im web|bei google|in google)?\s*"
-                       r"nach\s+(?P<query>.+)$", re.I)
-PC_GOOGLE = re.compile(r"^google\s+(?P<query>.+)$", re.I)
+_SITES = r"youtube|google|amazon|wikipedia|ebay"
+_ON_PC = r"(?:auf (?:dem|meinem) (?:pc|computer|rechner|laptop)|am (?:pc|computer|rechner)|in meinen dateien|" \
+         r"auf der festplatte)"
+PC_SEARCH_FILES = [
+    re.compile(rf"^(?:such|suche|finde|find)\s+{_ON_PC}\s+(?:nach\s+)?(?P<query>.+)$", re.I),
+    re.compile(rf"^(?:such|suche|finde|find)\s+(?:nach\s+)?(?:der|die|meine|meiner|meinen|eine|einer|den|dem|das)?\s*"
+               rf"(?:datei|dateien|ordner|dokument|dokumente)\s+(?:namens\s+|mit dem namen\s+)?(?P<query>.+?)"
+               rf"(?:\s+{_ON_PC})?$", re.I),
+    re.compile(rf"^(?:such|suche|finde|find)\s+(?:nach\s+)?(?P<query>.+?)\s+{_ON_PC}$", re.I),
+]
+PC_SEARCH_SITE = [
+    re.compile(rf"^(?:such|suche|google|googel)\s+(?:auf|bei|in)\s+(?P<site>{_SITES})\s+(?:nach\s+)?(?P<query>.+)$",
+               re.I),
+    re.compile(rf"^(?:such|suche)\s+(?:nach\s+)?(?P<query>.+?)\s+(?:auf|bei|in)\s+(?P<site>{_SITES})$", re.I),
+    re.compile(r"^(?:zeig|zeige|spiel|spiele|öffne|starte)\s+(?:mir\s+)?(?P<query>.+?)\s+(?:auf|bei|in)\s+"
+               r"(?P<site>youtube)$", re.I),
+]
+PC_SEARCH = [
+    re.compile(r"^(?:such|suche|google|googel|googeln)\s+(?:im internet\s+|online\s+|im web\s+)?nach\s+(?P<query>.+?)"
+               r"(?:\s+im internet|\s+online|\s+im web)?$", re.I),
+    re.compile(r"^(?:such|suche)\s+(?:im internet|online|im web)\s+(?P<query>.+)$", re.I),
+    re.compile(r"^google\s+(?P<query>.+)$", re.I),
+]
 _PREFIX = re.compile(r"^(?:(?:hey|hallo|ok|okay)\s+)?jarvis\s*[,:]?\s*|^bitte\s+", re.I)
+_DOMAIN = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:de|com|org|net|io|eu|at|ch|tv|info)$")
+# Diese Ziele gehören zum Haus, nicht zum PC – sie gehen an Home Assistant bzw. das LLM
+_HOME_WORDS = re.compile(r"\b(?:licht|lampe|tür|haustür|fenster|rollladen|rollo|jalousie|garage|garagentor|tor|heizung|"
+                         r"klima|steckdose|schloss|kühlschrank|waschmaschine|musik|radio|fernseher|tv)\b")
+
+PC_APPS = {
+    "explorer": "explorer", "datei explorer": "explorer", "dateiexplorer": "explorer", "datei-explorer": "explorer",
+    "windows explorer": "explorer", "file explorer": "explorer", "dateimanager": "explorer",
+    "browser": "browser", "webbrowser": "browser", "internetbrowser": "browser", "internet": "browser",
+    "editor": "editor", "texteditor": "editor", "notepad": "editor", "notizblock": "editor",
+    "rechner": "rechner", "taschenrechner": "rechner", "paint": "paint",
+    "einstellungen": "einstellungen", "windows einstellungen": "einstellungen", "systemeinstellungen": "einstellungen",
+    "taskmanager": "taskmanager", "task manager": "taskmanager", "task-manager": "taskmanager",
+    "systemsteuerung": "systemsteuerung", "kamera": "kamera", "uhr": "uhr", "wecker": "uhr", "store": "store",
+    "microsoft store": "store", "snipping tool": "snipping", "bildschirmfoto": "snipping", "screenshot": "snipping",
+    "spotify": "spotify", "word": "word", "excel": "excel", "powerpoint": "powerpoint", "outlook": "outlook",
+}
+PC_FOLDERS = {
+    "downloads": "downloads", "download": "downloads", "dokumente": "documents", "dokumentenordner": "documents",
+    "desktop": "desktop", "schreibtisch": "desktop", "bilder": "pictures", "fotos": "pictures", "musik": "music",
+    "videos": "videos", "benutzerordner": "home", "dieser pc": "pc", "arbeitsplatz": "pc", "computer": "pc",
+}
+PC_SITES = {
+    "youtube": "https://www.youtube.com", "google": "https://www.google.de", "netflix": "https://www.netflix.com",
+    "amazon": "https://www.amazon.de", "wikipedia": "https://de.wikipedia.org", "gmail": "https://mail.google.com",
+    "twitch": "https://www.twitch.tv", "ebay": "https://www.ebay.de", "whatsapp web": "https://web.whatsapp.com",
+    "instagram": "https://www.instagram.com", "facebook": "https://www.facebook.com",
+}
+
+
+def _pc_target(raw: str) -> str:
+    target = re.sub(r"\s+", " ", raw.lower()).strip(" .-")
+    target = re.sub(rf"\s+{_ON_PC}$", "", target)
+    target = re.sub(r"^(?:ordner|programm|app|webseite|seite|anwendung|spiel)\s+", "", target)
+    return re.sub(r"[\s-]*(?:ordner|programm|app|anwendung)$", "", target)
+
+
+def canonical_command(text: str) -> str:
+    """„Kannst du mir bitte mal den Explorer öffnen?“ -> „öffne den Explorer“; „Steam starten“ -> „öffne Steam“."""
+    text = re.sub(r"[,!?;:„“\"]+", " ", text)
+    text = re.sub(r"\.(?=\s|$)", " ", text)  # Satzpunkte weg, Punkte in Adressen („heise.de“) bleiben
+    text = _PREFIX.sub("", re.sub(r"\s+", " ", text).strip())
+    text = re.sub(r"\s+", " ", _FILLER.sub(" ", text)).strip()
+    text = re.sub(r"\s+(?:jarvis|sir)$", "", text, flags=re.I)
+    for pattern in (_ASK, _VERB_LAST):
+        if m := pattern.match(text):
+            rest, verb = re.sub(r"^mir\s+", "", m["rest"], flags=re.I), m["verb"].lower()
+            if re.fullmatch(_SEARCH_VERBS, verb):
+                keep = rest.lower().startswith(("nach ", "auf ", "bei ", "im ", "in ", "die ", "meine ", "der ",
+                                                "den ", "das "))
+                return f"such {rest}" if keep else f"such nach {rest}"
+            if re.fullmatch(_SHOW_VERBS, verb):
+                return f"zeig {rest}"
+            if re.fullmatch(_PLAY_VERBS, verb):
+                return f"spiel {rest}"
+            return f"öffne {rest}"
+    return text
+
 
 # Status und Tagesplan (Skills mit Capability) sowie Gesprächs-Intents ohne Aktion. Verglichen wird die ganze,
 # normalisierte Äußerung – „Status?“ ja, „Wie ist der Status der Waschmaschine?“ nein (geht an das LLM).
@@ -82,36 +172,6 @@ def conversation_intent(text: str) -> str | None:
         if pattern.match(normalized):
             return name
     return None
-_DOMAIN = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:de|com|org|net|io|eu|at|ch|tv|info)$")
-
-PC_APPS = {
-    "explorer": "explorer", "datei explorer": "explorer", "dateiexplorer": "explorer", "datei-explorer": "explorer",
-    "windows explorer": "explorer", "file explorer": "explorer",
-    "browser": "browser", "webbrowser": "browser", "internetbrowser": "browser", "internet": "browser",
-    "chrome": "browser", "edge": "browser", "firefox": "browser",
-    "editor": "editor", "texteditor": "editor", "notepad": "editor", "notizblock": "editor",
-    "rechner": "rechner", "taschenrechner": "rechner", "paint": "paint",
-    "einstellungen": "einstellungen", "windows einstellungen": "einstellungen", "systemeinstellungen": "einstellungen",
-    "taskmanager": "taskmanager", "task manager": "taskmanager", "task-manager": "taskmanager",
-    "spotify": "spotify", "word": "word", "excel": "excel", "powerpoint": "powerpoint", "outlook": "outlook",
-}
-PC_FOLDERS = {
-    "downloads": "downloads", "download": "downloads", "dokumente": "documents", "dokumentenordner": "documents",
-    "desktop": "desktop", "schreibtisch": "desktop", "bilder": "pictures", "fotos": "pictures", "musik": "music",
-    "videos": "videos", "benutzerordner": "home", "dieser pc": "pc", "arbeitsplatz": "pc", "computer": "pc",
-}
-PC_SITES = {
-    "youtube": "https://www.youtube.com", "google": "https://www.google.de", "netflix": "https://www.netflix.com",
-    "amazon": "https://www.amazon.de", "wikipedia": "https://de.wikipedia.org", "gmail": "https://mail.google.com",
-    "twitch": "https://www.twitch.tv", "ebay": "https://www.ebay.de", "whatsapp": "https://web.whatsapp.com",
-    "instagram": "https://www.instagram.com", "facebook": "https://www.facebook.com",
-}
-
-
-def _pc_target(raw: str) -> str:
-    target = re.sub(r"\s+", " ", raw.lower()).strip(" .-")
-    target = re.sub(r"^(?:ordner|programm|app|webseite|seite)\s+", "", target)
-    return re.sub(r"[\s-]*(?:ordner|programm|app)$", "", target)
 
 
 @dataclass
@@ -190,20 +250,35 @@ class FastPath:
                     "s" if m["unit"].lower().startswith("sek") else "h" if m["unit"].lower().startswith("st") else "m"
                 ]
                 return FastPathMatch("timer.start", {"duration_s": n * factor}, 0.95, "timer", {"seconds": n * factor})
-        return self._match_pc(_PREFIX.sub("", normalized).strip())
+        return self._match_pc(canonical_command(text))
 
     def _match_pc(self, text: str) -> FastPathMatch | None:
-        if m := PC_SEARCH.match(text) or PC_GOOGLE.match(text):
-            query = m["query"].strip()
-            return FastPathMatch("pc.search_web", {"query": query}, 0.93, "pc_search", {"query": query})
+        for pattern in PC_SEARCH_FILES:
+            if m := pattern.match(text):
+                query = m["query"].strip()
+                return FastPathMatch("pc.search_files", {"query": query}, 0.92, "pc_search_files", {"query": query})
+        for pattern in PC_SEARCH_SITE:
+            if m := pattern.match(text):
+                query, site = m["query"].strip(), m["site"].lower()
+                return FastPathMatch("pc.search_web", {"query": query, "site": site}, 0.93, "pc_search_site",
+                                     {"query": query, "site": site})
+        for pattern in PC_SEARCH:
+            if m := pattern.match(text):
+                query = m["query"].strip()
+                return FastPathMatch("pc.search_web", {"query": query}, 0.93, "pc_search", {"query": query})
         if m := PC_OPEN.match(text):
-            target = _pc_target(m["target"])
-            if target in PC_APPS:
+            target, verb = _pc_target(m["target"]), m["verb"].lower()
+            playing = verb.startswith("spiel")  # „Spiel Minecraft“: nur Programme, nie Ordner („Spiel Musik“)
+            if target in PC_APPS and not playing:
                 return FastPathMatch("pc.open_app", {"app": PC_APPS[target]}, 0.95, "pc_open_app", {"target": target})
-            if target in PC_FOLDERS:
+            if target in PC_FOLDERS and not playing:
                 return FastPathMatch("pc.open_folder", {"folder": PC_FOLDERS[target]}, 0.95, "pc_open_folder",
                                      {"target": target})
             url = PC_SITES.get(target) or (f"https://{target}" if _DOMAIN.match(target) else None)
-            if url:
+            if url and not playing:
                 return FastPathMatch("pc.open_url", {"url": url}, 0.94, "pc_open_url", {"target": target})
+            # Unbekannter Name („Steam“, „Discord“): installiertes Programm? Prüft der Orchestrator beim PC-Agenten.
+            guessable = playing or verb in ("öffne", "starte", "start", "ruf", "rufe") or (verb == "mach" and m["auf"])
+            if guessable and 2 <= len(target) <= 60 and not _HOME_WORDS.search(target):
+                return FastPathMatch("pc.open_app", {"app": target}, 0.8, "pc_open_guess", {"target": target})
         return None

@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -177,6 +178,7 @@ class Orchestrator:
         turn_timeout_s: float = 60.0,
         session_idle_timeout_s: float = 300.0,
         style: PlainStyle | None = None,
+        app_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         self.registry = registry
         self.policy = policy
@@ -192,6 +194,8 @@ class Orchestrator:
         self.sessions: dict[str, Session] = {}
         # Formatter: aktive Persona bestimmt den Ton (Jarvis-Stil-Engine oder neutral)
         self.style = style or JarvisStyle.from_persona(context.persona)
+        # Welches installierte Programm meint „Öffne Steam“? (PC-Agent: eigene Liste + Windows-Startmenü)
+        self.app_resolver = app_resolver
 
     # ------------------------------------------------------------------
     # Einstieg für Sprache/Text
@@ -248,6 +252,13 @@ class Orchestrator:
             if self.registry.get(match.capability) is None:
                 return TurnResult(text=self.style.unavailable(match.capability), route="fast_path")
             match = None  # Haus verbunden, aber ohne Raumzuordnung: das LLM klärt, welches Gerät gemeint ist
+        if match is not None and match.grammar == "pc_open_guess":
+            # Unbekannter Name („Öffne Steam“): nur direkt starten, wenn der PC ein passendes Programm hat –
+            # sonst ist womöglich gar kein Programm gemeint („Öffne die Einkaufsliste“), das klärt das LLM.
+            app = None
+            if self.registry.get(match.capability) is not None:
+                app = self.app_resolver(match.arguments["app"]) if self.app_resolver else match.arguments["app"]
+            match = replace(match, arguments={"app": app}) if app else None
         if match is not None:
             # 3) Kontext-Interpretation: fehlende Angaben aus der Situation ergänzen (Ort fürs Wetter usw.)
             arguments = self._interpret(match, situation)

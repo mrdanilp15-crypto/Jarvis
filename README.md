@@ -148,11 +148,26 @@ Umgangssprache; Alltagsfragen („Status?“, „Wie spät ist es?“, „Kannst
 Sprachmodell. Ihren Namen fragt `./deploy/start.sh` ab (oder `JARVIS_USER_NAME` in `deploy/.env`). Details:
 [Abschnitt 7.9](docs/07-jarvis-persona.md#79-stil-engine-20--neukalibrierung), Änderungen: [CHANGELOG](CHANGELOG.md).
 
-**PC-Steuerung (Windows):** „Öffne den Explorer“, „Öffne meine Downloads“, „Öffne YouTube“, „Such im Internet nach …“,
-„Starte Spotify“. Das übernimmt ein kleiner PC-Agent (`deploy/windows/jarvis-pc-agent.ps1`), der mit der
-Desktop-Verknüpfung startet, sich selbst mit JARVIS verbindet (kein offener Port) und nur freigegebene Aktionen
-ausführt – eigene Programme in `%LOCALAPPDATA%\JARVIS\apps.json`, z. B. `{"steam": "steam:"}`. Oben rechts zeigt
-„PC“, ob er verbunden ist.
+**PC-Steuerung (Windows):** Ein kleiner PC-Agent (`deploy/windows/jarvis-pc-agent.ps1`) startet mit der
+Desktop-Verknüpfung, verbindet sich selbst mit JARVIS (kein offener Port) und führt nur freigegebene Aktionen aus.
+Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, also Steam, Discord, Minecraft usw.
+(ohne Deinstallations- oder Setup-Einträge). Zusätzliche eigene Einträge kommen in
+`%LOCALAPPDATA%\JARVIS\apps.json`. Oben rechts zeigt „PC“, ob er verbunden ist.
+
+**Was JARVIS kann – und was (noch) nicht:**
+
+| Bereich | Beispiele (auch als Frage: „Kannst du …?“) | Voraussetzung |
+|---|---|---|
+| Programme & Spiele | „Öffne den Explorer“, „Kannst du Steam starten?“, „Ich möchte Minecraft spielen“ | PC-Agent verbunden |
+| Ordner | „Öffne meine Downloads“, „Zeig mir die Bilder“ | PC-Agent |
+| Webseiten | „Öffne YouTube“, „Öffne heise.de“ | PC-Agent |
+| Suchen | „Such nach Pizza“, „Zeig mir Katzenvideos auf YouTube“, „Such auf Amazon nach Kopfhörern“, „Such die Datei Rechnung“ | PC-Agent |
+| Wissen | „Wie wird das Wetter morgen?“, „Was gibt es Neues?“, „Wer war Ada Lovelace?“ | Internet |
+| Assistenz | „Status?“, „Plan für morgen?“, „Wie spät ist es?“, „Was kannst du?“ | – |
+| Haus | „Mach das Licht in der Küche an“ | Home Assistant |
+| Noch nicht | Kalender/Termine, E-Mails, Timer und Wecker, Musik direkt abspielen, Programme schließen, Tippen/Klicken am PC | – |
+
+Befehle für den PC erkennt JARVIS ohne Sprachmodell (sofort). Freie Fragen beantwortet das Sprachmodell.
 
 **Automatisch beim Anmelden starten (Windows):** `./deploy/start.sh autostart` (oder `… autostart edge`) – danach startet Windows Docker
 Desktop, den PC-Agenten und JARVIS als eigenes Fenster, ohne Konsole; zusätzlich liegt eine Verknüpfung „JARVIS“ auf

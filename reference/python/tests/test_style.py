@@ -14,7 +14,7 @@ from jarvis.context import ContextBuilder, Situation
 from jarvis.demo import initial_states
 from jarvis.fastpath import FastPath
 from jarvis.orchestrator import ConfirmationStore, MemoryAuditSink, Orchestrator, TurnRequest
-from jarvis.pc import AgentHub, register_pc_capabilities
+from jarvis.pc import DEFAULT_APPS, AgentHub, register_pc_capabilities
 from jarvis.persona import Persona
 from jarvis.policy import PolicyEngine, Principal
 from jarvis.skills import register_assistant_capabilities
@@ -45,9 +45,13 @@ def make_orchestrator(*, components=None, fast_path=None, pc_connected=True, hom
     hub = AgentHub()
     if pc_connected:
         async def send(message):
-            hub.resolve({"id": message["id"], "ok": True, "result": {}})
+            # Wie der echte Agent: meldet das tatsächlich gestartete Programm zurück
+            result = {"opened": message["arguments"]["app"]} if message["action"] == "open_app" else {}
+            hub.resolve({"id": message["id"], "ok": True, "result": result})
 
-        hub.attach(send, {"name": "PC"})
+        hub.attach(send, {"name": "PC", "apps": DEFAULT_APPS, "actions": ["open_url", "open_app", "open_folder",
+                                                                          "search_files"],
+                          "start_apps": ["Steam", "Minecraft Launcher", "Google Chrome", "Discord"]})
     register_pc_capabilities(registry, hub)
     state = components or {"sprachmodell": "ok", "pc_steuerung": "ok"}
     register_assistant_capabilities(registry, probes=lambda: dict(state), weather=fake_weather)
@@ -57,6 +61,7 @@ def make_orchestrator(*, components=None, fast_path=None, pc_connected=True, hom
         audit=MemoryAuditSink(), confirmations=ConfirmationStore(),
         fast_path=fast_path or FastPath({"wohnzimmer": ["light.wohnzimmer_stehlampe"], "kueche": ["light.kueche"]},
                                         {"küche": "kueche"}),
+        app_resolver=hub.find_app,
     )
 
 
@@ -91,6 +96,14 @@ EXPECTED = [
     ("Öffne meine Downloads", "Sehr wohl. Der Ordner „Downloads“ ist geöffnet."),
     ("Öffne YouTube", "Sehr wohl. YouTube ist geöffnet."),
     ("Such im Internet nach Kürbissuppe", "Sehr wohl. Die Suche nach „Kürbissuppe“ ist geöffnet."),
+    ("Kannst du Steam starten?", "Sehr wohl. Steam ist geöffnet."),
+    ("Ich möchte Minecraft spielen", "Sehr wohl. Minecraft Launcher ist geöffnet."),
+    ("Kannst du mir Katzenvideos auf YouTube zeigen?",
+     "Sehr wohl. Die YouTube-Suche nach „Katzenvideos“ ist geöffnet."),
+    ("Such die Datei Steuererklärung", "Sehr wohl. Die Dateisuche nach „Steuererklärung“ ist geöffnet."),
+    ("Was kannst du?", "Ich kann Programme und Spiele auf Ihrem PC starten, Ordner und Webseiten öffnen, im "
+                       "Internet, auf YouTube oder in Ihren Dateien suchen, Licht, Heizung und Geräte im Haus "
+                       "steuern und Ihnen den Systemstatus melden. Sagen Sie einfach, was Sie benötigen, Sir."),
     ("Stell einen Timer auf 5 Minuten", "Verzeihung, Sir. Timer stehen mir derzeit nicht zur Verfügung."),
     ("Gute Nacht", "Gute Nacht, Sir."),
     ("Tschüss", "Sehr wohl. Ich bleibe in Bereitschaft."),
@@ -186,7 +199,7 @@ def test_persona_selects_style_and_version():
     jarvis = Persona.load(REPO / "config" / "persona.jarvis.yaml", schema_path=REPO / "schemas" / "persona.schema.json")
     neutral = Persona.load(REPO / "config" / "persona.neutral.yaml")
     assert isinstance(JarvisStyle.from_persona(jarvis), JarvisStyle)
-    assert jarvis.config["version"] == STYLE_VERSION == "2.0.0"
+    assert jarvis.config["version"] == STYLE_VERSION == "2.1.0"
     assert type(JarvisStyle.from_persona(neutral)) is PlainStyle
 
 

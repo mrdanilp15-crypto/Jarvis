@@ -1,7 +1,9 @@
-﻿# JARVIS PC-Agent: öffnet auf diesem PC Webseiten, Programme und Ordner, wenn JARVIS darum bittet.
+﻿# JARVIS PC-Agent: öffnet auf diesem PC Programme, Spiele, Ordner, Webseiten und die Dateisuche, wenn JARVIS darum bittet.
 # Verbindet sich selbst mit JARVIS (ws://127.0.0.1:8080/v1/agent) – auf dem PC wird kein Port geöffnet.
 # Ausgeführt wird nur, was hier freigegeben ist: Webseiten (nur http/https), Programme aus der Liste unten
-# (erweiterbar über %LOCALAPPDATA%\JARVIS\apps.json, z. B. {"steam": "steam:"}) und bekannte Ordner.
+# (erweiterbar über %LOCALAPPDATA%\JARVIS\apps.json, z. B. {"mein tool": "C:\\Tools\\tool.exe"}), Programme aus dem
+# Windows-Startmenü (per Name, ohne Deinstallations- und Setup-Einträge), bekannte Ordner und die Explorer-Suche.
+# JARVIS schickt nur Namen und Suchbegriffe – nie Pfade oder Befehle.
 # Wird vom Startskript (jarvis-launch.ps1) unsichtbar gestartet. Protokoll: %LOCALAPPDATA%\JARVIS\pc-agent.log
 # Kompatibel mit Windows PowerShell 5.1.
 
@@ -10,8 +12,10 @@ $jarvisHome = Join-Path $env:LOCALAPPDATA 'JARVIS'
 $logFile = Join-Path $jarvisHome 'pc-agent.log'
 $config = Get-Content -Raw -Encoding UTF8 (Join-Path $jarvisHome 'config.json') | ConvertFrom-Json
 
+$agentVersion = '2.1.0'
 $mutex = New-Object System.Threading.Mutex($false, 'Local\JarvisPcAgent')
-if (-not $mutex.WaitOne(0)) { exit 0 }   # läuft bereits
+try { $owned = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }   # Vorgänger beendet
+if (-not $owned) { exit 0 }   # läuft bereits
 
 function Write-Log([string]$message) {
     if ((Test-Path $logFile) -and (Get-Item $logFile).Length -gt 1MB) { Remove-Item $logFile }
@@ -28,6 +32,11 @@ $apps = [ordered]@{
     'paint'         = 'mspaint.exe'
     'einstellungen' = 'ms-settings:'
     'taskmanager'   = 'taskmgr.exe'
+    'systemsteuerung' = 'control.exe'
+    'kamera'        = 'microsoft.windows.camera:'
+    'uhr'           = 'ms-clock:'
+    'store'         = 'ms-windows-store:'
+    'snipping'      = 'ms-screenclip:'
     'spotify'       = 'spotify:'
     'word'          = 'winword.exe'
     'excel'         = 'excel.exe'
@@ -55,6 +64,66 @@ $folders = @{
     'pc'        = 'shell:MyComputerFolder'
 }
 
+# Startmenü: alle installierten Programme und Spiele (Steam, Discord, Minecraft …) mit Namen und App-ID.
+# Deinstallations-, Setup- und Hilfe-Einträge werden nie gestartet.
+$skipApps = '(?i)uninstall|deinstall|entfernen|setup|installer|readme|liesmich|release notes|handbuch|manual|' +
+            'dokumentation|documentation|support|website|lizenz|license'
+$script:startApps = @()
+$script:startAppsAt = [datetime]::MinValue
+$script:appsChanged = $false
+
+function Get-StartAppNames { return @($script:startApps | ForEach-Object { [string]$_.Name }) }
+
+function Update-StartApps([switch]$Force) {
+    $age = ((Get-Date) - $script:startAppsAt).TotalMinutes
+    if (-not $Force -and $script:startApps.Count -gt 0 -and $age -lt 10) { return }
+    $before = (Get-StartAppNames) -join '|'
+    try {
+        $script:startApps = @(Get-StartApps | Where-Object { $_.Name -and $_.AppID -and $_.Name -notmatch $skipApps } |
+            Sort-Object -Property Name -Unique)
+    } catch {
+        Write-Log "Startmenü nicht lesbar: $($_.Exception.Message)"
+    }
+    $script:startAppsAt = Get-Date
+    if ($before -and ((Get-StartAppNames) -join '|') -ne $before) { $script:appsChanged = $true }
+}
+
+function ConvertTo-AppKey([string]$text) {
+    # „Counter-Strike 2“ -> „counter strike 2“ (gleiche Regel wie im JARVIS-Kern)
+    return (($text.ToLower() -replace '[^\p{L}\p{Nd}]+', ' ').Trim())
+}
+
+function Find-StartApp([string]$name) {
+    # exakter Name vor Namensanfang („minecraft“ -> „Minecraft Launcher“) vor ganzem Wort („chrome“ -> „Google Chrome“)
+    $wanted = ConvertTo-AppKey $name
+    if (-not $wanted) { return $null }
+    $best = $null
+    $bestRank = 9
+    foreach ($entry in $script:startApps) {
+        $key = ConvertTo-AppKey $entry.Name
+        $rank = 9
+        if ($key -eq $wanted -or $key.Replace(' ', '') -eq $wanted.Replace(' ', '')) { $rank = 0 }
+        elseif ($key.StartsWith($wanted + ' ')) { $rank = 1 }
+        elseif ((' ' + $key + ' ').Contains(' ' + $wanted + ' ')) { $rank = 2 }
+        if ($rank -eq 9) { continue }
+        if ($rank -lt $bestRank -or ($rank -eq $bestRank -and $entry.Name.Length -lt $best.Name.Length)) {
+            $best = $entry
+            $bestRank = $rank
+        }
+    }
+    return $best
+}
+
+function Start-StartApp($entry) {
+    $id = [string]$entry.AppID
+    if ($id -match '^[a-z][a-z0-9+.-]+://') {
+        Start-Process $id -ErrorAction Stop   # Verknüpfung auf eine Adresse, z. B. steam://rungameid/…
+    } else {
+        # Startet Desktop-Programme und Store-Apps gleichermaßen über ihre App-ID
+        Start-Process explorer.exe -ArgumentList ('"shell:AppsFolder\' + $id + '"') -ErrorAction Stop
+    }
+}
+
 function Invoke-Action([string]$action, $arguments) {
     switch ($action) {
         'open_url' {
@@ -65,16 +134,39 @@ function Invoke-Action([string]$action, $arguments) {
             return @{ opened = $uri.AbsoluteUri }
         }
         'open_app' {
-            $name = ([string]$arguments.app).Trim().ToLower()
-            if (-not $apps.Contains($name)) {
-                throw "Das Programm '$name' ist nicht freigegeben. Verfügbar: $(@($apps.Keys) -join ', ')."
+            $name = ([string]$arguments.app).Trim()
+            $key = $name.ToLower()
+            if ($apps.Contains($key)) {
+                try {
+                    Start-Process $apps[$key] -ErrorAction Stop
+                    return @{ opened = $key }
+                } catch {
+                    Write-Log "open_app $key über die Liste fehlgeschlagen – versuche das Startmenü"
+                }
             }
+            Update-StartApps
+            $entry = Find-StartApp $name
+            if ($null -eq $entry) {
+                Update-StartApps -Force   # vielleicht gerade erst installiert
+                $entry = Find-StartApp $name
+            }
+            # Strings mit „…“ nur in einfachen Anführungszeichen: PowerShell liest „ und “ sonst als Stringende
+            if ($null -eq $entry) { throw ('Ein Programm namens „' + $name + '“ finde ich auf diesem PC nicht.') }
             try {
-                Start-Process $apps[$name] -ErrorAction Stop
+                Start-StartApp $entry
             } catch {
-                throw "'$name' ließ sich nicht starten – ist es auf diesem PC installiert?"
+                throw ('„' + $entry.Name + '“ ließ sich nicht starten.')
             }
-            return @{ opened = $name }
+            return @{ opened = [string]$entry.Name }
+        }
+        'search_files' {
+            $query = ([string]$arguments.query).Trim()
+            if (-not $query) { throw 'Wonach soll ich suchen?' }
+            $location = [Uri]::EscapeDataString([Environment]::GetFolderPath('UserProfile'))
+            $search = 'search-ms:displayname=' + [Uri]::EscapeDataString('Suche nach ' + $query) +
+                      '&query=' + [Uri]::EscapeDataString($query) + '&crumb=location:' + $location
+            Start-Process explorer.exe -ArgumentList ('"' + $search + '"') -ErrorAction Stop
+            return @{ searched = $query }
         }
         'open_folder' {
             $key = [string]$arguments.folder
@@ -113,7 +205,13 @@ while ($true) {
     $socket.Options.Proxy = $null   # 127.0.0.1 nie über einen Proxy
     try {
         $socket.ConnectAsync([Uri]$url, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
-        Send-Json $socket @{ type = 'agent.hello'; name = $env:COMPUTERNAME; apps = @($apps.Keys); folders = @($folders.Keys) }
+        Update-StartApps
+        Send-Json $socket @{
+            type = 'agent.hello'; name = $env:COMPUTERNAME; version = $agentVersion; apps = @($apps.Keys)
+            start_apps = @(Get-StartAppNames); folders = @($folders.Keys)
+            actions = @('open_url', 'open_app', 'open_folder', 'search_files')
+        }
+        $script:appsChanged = $false
         Write-Log 'Mit JARVIS verbunden'
         $delay = 5
         while ($socket.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
@@ -127,6 +225,11 @@ while ($true) {
             } catch {
                 Send-Json $socket @{ type = 'agent.result'; id = $message.id; ok = $false; error = $_.Exception.Message }
                 Write-Log "$($message.action): $($_.Exception.Message)"
+            }
+            if ($script:appsChanged) {
+                # Neu installierte oder entfernte Programme an JARVIS melden
+                Send-Json $socket @{ type = 'agent.apps'; start_apps = @(Get-StartAppNames) }
+                $script:appsChanged = $false
             }
         }
     } catch {

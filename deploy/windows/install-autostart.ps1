@@ -63,7 +63,20 @@ foreach ($link in $links) {
     $shortcut.Save()
 }
 
+# Einen laufenden (älteren) PC-Agenten durch die eben kopierte Fassung ersetzen – sonst gilt das Update erst nach
+# dem nächsten Anmelden
+try {
+    Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction Stop |
+        Where-Object { $_.CommandLine -like '*jarvis-pc-agent.ps1*' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+} catch {
+    Write-Host "Hinweis: Laufender PC-Agent konnte nicht geprüft werden ($($_.Exception.Message))."
+}
+$agent = Join-Path $jarvisHome 'jarvis-pc-agent.ps1'
+Start-Process -FilePath $powershell -WindowStyle Hidden -ArgumentList @(
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$agent`"")
+
 Write-Host 'Fertig: JARVIS startet ab jetzt beim Anmelden automatisch.'
 Write-Host 'Zusätzlich liegt eine Verknüpfung "JARVIS" auf dem Desktop.'
-Write-Host 'Die PC-Steuerung (Programme, Ordner, Webseiten öffnen) startet mit JARVIS mit.'
+Write-Host 'Die PC-Steuerung (Programme und Spiele aus dem Startmenü, Ordner, Webseiten, Suche) läuft und startet mit JARVIS mit.'
 Write-Host 'Entfernen: ./deploy/start.sh autostart-remove'

@@ -270,12 +270,15 @@ def create_app(container: Container) -> FastAPI:
             if hello.get("type") != "agent.hello":
                 await ws.close(code=4400)
                 return
-            handle = hub.attach(ws.send_json, {k: hello.get(k) for k in ("name", "apps", "folders")})
+            handle = hub.attach(ws.send_json, {k: hello[k] for k in ("name", "version", "apps", "start_apps", "folders",
+                                                                     "actions") if k in hello})
             log.info("PC-Agent verbunden", extra={"agent": hello.get("name"), "actor": who.actor})
             while True:
                 message = await ws.receive_json()
                 if message.get("type") == "agent.result":
                     hub.resolve(message)
+                elif message.get("type") == "agent.apps":  # Programmliste geändert (Installation, Deinstallation)
+                    hub.update(message)
         except WebSocketDisconnect:
             pass
         finally:
