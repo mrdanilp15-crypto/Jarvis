@@ -73,8 +73,11 @@ function Start-Jarvis {
 }
 
 function Find-Browser {
+    # Edge bringt die natürliche Stimme „Microsoft Conrad“ kostenlos mit; Chrome ist Standard
+    $order = @('Google\Chrome\Application\chrome.exe', 'Microsoft\Edge\Application\msedge.exe')
+    if ($config.browser -eq 'edge') { [array]::Reverse($order) }
     $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA) | Where-Object { $_ }
-    foreach ($relative in @('Google\Chrome\Application\chrome.exe', 'Microsoft\Edge\Application\msedge.exe')) {
+    foreach ($relative in $order) {
         foreach ($root in $roots) {
             $candidate = Join-Path $root $relative
             if (Test-Path $candidate) { return $candidate }
@@ -85,12 +88,14 @@ function Find-Browser {
 
 function Open-Jarvis {
     $url = $config.url
+    $browser = Find-Browser
+    # Eigenes Browserprofil je Browser (Chrome und Edge dürfen sich keinen Profilordner teilen)
+    $profileDir = if ($browser -and $browser -like '*msedge.exe') { "$profileDir-edge" } else { $profileDir }
     if (Test-Path $profileDir) {
         # Das eigene Browserprofil kennt Token und Einstellungen schon – „wake=1“ nur beim ersten Start setzen,
         # damit ein späteres Ausschalten der „Jarvis“-Aktivierung erhalten bleibt
         $url = $url -replace '[&#]?wake=1', ''
     }
-    $browser = Find-Browser
     if (-not $browser) {
         Write-Log 'Chrome/Edge nicht gefunden – öffne den Standardbrowser'
         Start-Process $url

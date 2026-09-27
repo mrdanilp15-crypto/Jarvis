@@ -8,6 +8,7 @@ param(
     [string]$Repo = '',       # Windows-Pfad (Modus windows) bzw. Linux-Pfad (Modus wsl) des Jarvis-Ordners
     [string]$Distro = '',     # WSL-Distribution (leer = Standard)
     [string]$Token = '',      # API-Token aus deploy/.env
+    [ValidateSet('chrome', 'edge')] [string]$Browser = 'chrome',   # edge: kostenlose Stimme „Microsoft Conrad“
     [switch]$Remove
 )
 $ErrorActionPreference = 'Stop'
@@ -43,6 +44,7 @@ $settings = [ordered]@{
     repo   = $Repo
     distro = $Distro
     token  = $Token
+    browser = $Browser
     url    = 'http://127.0.0.1:8080/#' + ($fragment -join '&')
 }
 $settings | ConvertTo-Json | Set-Content -Encoding UTF8 -Path (Join-Path $jarvisHome 'config.json')

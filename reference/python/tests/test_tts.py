@@ -93,3 +93,74 @@ def test_tts_unavailable_is_a_clear_error(make_client):
     response = make_client(DownTTS()).post("/v1/tts", headers=AUTH, json={"text": "Hallo"})
     assert response.status_code == 502 and response.json()["user_message"].startswith("Die JARVIS-Stimme")
     assert make_client(None).get("/v1/system/health").json()["tts"] == "off"
+
+
+def test_azure_conrad_request_and_escaping():
+    httpx = pytest.importorskip("httpx")
+    from jarvis.voice.cloud import AzureTTS
+
+    captured = {}
+
+    def handler(request):
+        captured["url"], captured["headers"], captured["body"] = str(request.url), request.headers, request.content
+        return httpx.Response(200, content=b"RIFF-azure")
+
+    tts = AzureTTS("geheim", "germanywestcentral", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    assert asyncio.run(tts.synthesize_wav("Tür & Tor <offen>")) == b"RIFF-azure"
+    assert captured["url"] == "https://germanywestcentral.tts.speech.microsoft.com/cognitiveservices/v1"
+    assert captured["headers"]["ocp-apim-subscription-key"] == "geheim"
+    assert captured["headers"]["x-microsoft-outputformat"] == "riff-24khz-16bit-mono-pcm"
+    body = captured["body"].decode()
+    assert "<voice name=\"de-DE-ConradNeural\">" in body and 'pitch="-3%"' in body
+    assert "Tür &amp; Tor &lt;offen&gt;" in body  # Text kann das SSML nicht aufbrechen
+
+
+def test_azure_rejects_bad_settings_and_maps_errors():
+    httpx = pytest.importorskip("httpx")
+    from jarvis.errors import JarvisError
+    from jarvis.voice.cloud import AzureTTS
+
+    with pytest.raises(ValueError):
+        AzureTTS("k", "evil.example.com/x")
+    with pytest.raises(ValueError):
+        AzureTTS("k", "westeurope", pitch='-3%"><audio src="x')
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(401)))
+    with pytest.raises(JarvisError) as exc:
+        asyncio.run(AzureTTS("falsch", "westeurope", client=client).synthesize_wav("Hallo"))
+    assert "abgelehnt" in exc.value.user_message
+
+
+def test_fallback_uses_piper_when_azure_fails():
+    from jarvis.errors import JarvisError
+    from jarvis.voice.cloud import FallbackTTS
+
+    class Down:
+        label = "azure"
+
+        async def synthesize_wav(self, text):
+            raise JarvisError("JRV-INT-001", "Azure weg")
+
+    class Piper:
+        label = "piper"
+
+        async def synthesize_wav(self, text):
+            return b"RIFF-piper"
+
+    tts = FallbackTTS(Down(), Piper())
+    assert tts.label == "azure" and asyncio.run(tts.synthesize_wav("Hallo")) == b"RIFF-piper"
+
+
+def test_voice_selection_from_config(monkeypatch):
+    from jarvis.app import _tts
+
+    cfg = {"voice": {"tts": {"uri": "tcp://wyoming-piper:10200", "cloud": {
+        "provider": "azure", "key": "env:AZURE_SPEECH_KEY", "region": "env:AZURE_SPEECH_REGION",
+        "voice": "de-DE-ConradNeural"}}}}
+    monkeypatch.delenv("AZURE_SPEECH_KEY", raising=False)
+    assert _tts(cfg).label == "piper"
+    monkeypatch.setenv("AZURE_SPEECH_KEY", "k")
+    monkeypatch.setenv("AZURE_SPEECH_REGION", "GermanyWestCentral")
+    monkeypatch.setenv("JARVIS_TTS_VOICE", "de-DE-FlorianMultilingualNeural")
+    tts = _tts(cfg)
+    assert tts.label == "azure" and tts.primary.voice == "de-DE-FlorianMultilingualNeural"
+    assert tts.fallback.label == "piper"

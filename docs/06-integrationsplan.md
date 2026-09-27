@@ -201,7 +201,7 @@ anbieterneutrale Transkript erlaubt den Wechsel mitten in einer Sitzung (z. B. F
 |----------|----------|----------|---------|
 | Satellit kompakt | ESP32-S3 mit Mikrofon-Array und Lautsprecher | ESPHome, Wake-Word auf dem Gerät, Wyoming | Räume |
 | Satellit komfortabel | Raspberry Pi 5 + ReSpeaker-Mikrofon-HAT + Lautsprecher | `wyoming-satellite`, openWakeWord lokal, AEC | Wohnzimmer/Küche (Musik + Sprache) |
-| Browser (sofort) | PC/Tablet mit Mikrofon | [Weboberfläche](../reference/python/src/jarvis/web) unter `http://<kern>:8080/`: Spracheingabe des Browsers (Chrome/Edge), JARVIS-Stimme über Piper (`POST /v1/tts`) mit KI-Klangeffekt (Web Audio: Präsenz-EQ, Chorus, kurzer Hall, −0,7 Halbtöne), „Jarvis“-Aktivierung (Dauer-Erkennung des Browsers, abschaltbar), Dauergespräch, Barge-in | Desktop, Tablet-Dashboard |
+| Browser (sofort) | PC/Tablet mit Mikrofon | [Weboberfläche](../reference/python/src/jarvis/web) unter `http://<kern>:8080/`: Spracheingabe des Browsers (Chrome/Edge), JARVIS-Stimme (`POST /v1/tts`: Azure „Conrad“ oder Piper; in Edge alternativ die natürliche Browserstimme „Conrad“) mit einstellbarem Klangeffekt (Web Audio: Präsenz-EQ, kurzer Hall, optional Chorus), „Jarvis“-Aktivierung (Dauer-Erkennung des Browsers, abschaltbar), Dauergespräch, Barge-in | Desktop, Tablet-Dashboard |
 | Browser (lokal, Ausbau) | beliebig | [`voice-widget.js`](../reference/web/voice-widget.js): PCM16 über `WS /v1/stream` an Whisper/Piper (Wyoming) – ohne Cloud; Audio-Frames im Kern noch offen | Desktop, Tablet-Dashboard |
 | App | Smartphone | Push-to-Talk, Headset | unterwegs |
 

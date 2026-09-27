@@ -40,7 +40,7 @@ Vollständige Spezifikation: [`api/openapi.yaml`](../api/openapi.yaml) (OpenAPI 
 | `POST /v1/webhooks/{hook_id}` | signierter Webhook → `jarvis.webhook.received` | HMAC | ✔ |
 | `POST /v1/confirmations/{id}` | Bestätigung freigeben/ablehnen | Bearer | ✔ |
 | `GET /v1/system/health` | Zustand, Circuit-Breaker, Status des lokalen Modells (`local_llm`) | – | ✔ |
-| `POST /v1/tts` | JARVIS-Stimme: ein Satz → WAV (Piper über Wyoming) | Bearer | ✔ |
+| `POST /v1/tts` | JARVIS-Stimme: ein Satz → WAV (Azure Speech „Conrad“, falls eingerichtet, mit Rückfall auf Piper über Wyoming) | Bearer | ✔ |
 | `WS /v1/agent` | PC-Agent verbindet sich, meldet Programme/Ordner (`agent.hello`), erhält `agent.invoke`, antwortet `agent.result` | Token (Query) | ✔ |
 | `GET /` | Browser-Oberfläche (HUD, Sprache, Chat) über `WS /v1/stream` | Token im Link-Fragment (`#token=…`) | ✔ |
 | `GET /docs` | interaktive API-Beschreibung (Swagger UI, **Authorize** für das Bearer-Token) | – | ✔ |
@@ -483,7 +483,7 @@ funktionieren; zusätzliche Regeln prüfen die Handler selbst.
 
 | Ebene | Inhalt | Status im Repo |
 |-------|--------|----------------|
-| Unit | Policy-Matrix, Tool-Validierung, Risiko-Regeln, Bedingungen, Ranking, Segmentierung, Signaturen | ✔ `reference/python/tests` (157 Tests) |
+| Unit | Policy-Matrix, Tool-Validierung, Risiko-Regeln, Bedingungen, Ranking, Segmentierung, Signaturen | ✔ `reference/python/tests` (161 Tests) |
 | Szenario | Orchestrator mit skriptbarem LLM und simuliertem Home Assistant: Fast-Path, Bestätigungen, Prompt-Injection, Gäste, Abbrüche | ✔ |
 | Vertrag | Schemas, Beispiele, Plugin-Manifeste, OpenAPI-Referenzen, Node-RED-Verdrahtung | ✔ `tools/validate.py` |
 | Datenbank | Schema-Import, Hash-Kette, Vektor-Suche | ✔ CI-Job mit `pgvector/pgvector:pg16` |

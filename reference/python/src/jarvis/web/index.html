@@ -117,11 +117,11 @@
       <label class="field">Ihr Ort (für das Wetter)
         <input id="opt-location" type="text" maxlength="100" placeholder="z. B. Hamburg" autocomplete="address-level2">
       </label>
-      <p class="hint">Spracheingabe funktioniert in Chrome und Edge. Deren Spracherkennung läuft über die Server von
+      <p class="hint">Stimme „Automatisch“ nimmt die beste verfügbare: Microsoft Conrad über Azure (falls in
+        <code>deploy/.env</code> eingerichtet), in Microsoft Edge die kostenlose Conrad-Browserstimme, sonst die lokale
+        Piper-Stimme. Spracheingabe funktioniert in Chrome und Edge; deren Spracherkennung läuft über die Server von
         Google bzw. Microsoft – bei eingeschalteter „Jarvis“-Aktivierung dauerhaft, sonst nur nach einem Tipp auf den
-        Kreis. Die JARVIS-Stimme (Piper) läuft lokal auf Ihrem Rechner; Browserstimmen nutzen die
-        Sprachausgabe Ihres Systems. Vollständig lokale Spracherkennung (Whisper, openWakeWord) ist
-        der nächste Ausbauschritt.</p>
+        Kreis.</p>
       <div class="actions">
         <button class="btn danger left" type="button" id="logout">Abmelden</button>
         <button class="btn" type="button" id="voice-test">Stimme testen</button>

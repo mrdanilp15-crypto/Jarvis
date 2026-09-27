@@ -179,21 +179,36 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
 
 
 def _tts(cfg: dict[str, Any]) -> Any:
-    """JARVIS-Stimme über Piper (Wyoming), falls konfiguriert und die Bibliothek installiert ist."""
-    uri = ((cfg.get("voice") or {}).get("tts") or {}).get("uri")
-    if not uri:
-        return None
+    """JARVIS-Stimme: Azure Speech (Conrad), wenn ein Schlüssel hinterlegt ist, sonst bzw. als Rückfall Piper."""
+    tts_cfg = (cfg.get("voice") or {}).get("tts") or {}
+    piper = None
+    if tts_cfg.get("uri"):
+        try:
+            import wyoming  # noqa: F401  – optionales Extra „voice“
+        except ImportError:
+            log.info("Piper deaktiviert: Paket 'wyoming' fehlt")
+        else:
+            from urllib.parse import urlsplit
+
+            from .voice.pipeline import WyomingTTS
+
+            parts = urlsplit(tts_cfg["uri"])
+            piper = WyomingTTS(parts.hostname or "wyoming-piper", parts.port or 10200)
+
+    cloud_cfg = tts_cfg.get("cloud") or {}
+    key, region = resolve_ref(cloud_cfg.get("key")), resolve_ref(cloud_cfg.get("region"))
+    if cloud_cfg.get("provider") != "azure" or not key or not region:
+        return piper
+    from .voice.cloud import AzureTTS, FallbackTTS
+
     try:
-        import wyoming  # noqa: F401  – optionales Extra „voice“
-    except ImportError:
-        log.info("Sprachausgabe (Piper) deaktiviert: Paket 'wyoming' fehlt")
-        return None
-    from urllib.parse import urlsplit
-
-    from .voice.pipeline import WyomingTTS
-
-    parts = urlsplit(uri)
-    return WyomingTTS(parts.hostname or "wyoming-piper", parts.port or 10200)
+        azure = AzureTTS(key, region.strip().lower(), voice=os.environ.get("JARVIS_TTS_VOICE") or cloud_cfg.get(
+            "voice", "de-DE-ConradNeural"), rate=cloud_cfg.get("rate", "-4%"), pitch=cloud_cfg.get("pitch", "-3%"))
+    except ValueError as exc:
+        log.warning("Azure-Stimme nicht aktiviert: %s", exc)
+        return piper
+    log.info("JARVIS-Stimme: Azure %s%s", azure.voice, " (Rückfall: Piper)" if piper else "")
+    return FallbackTTS(azure, piper) if piper else azure
 
 
 def _audit_sink() -> Any:

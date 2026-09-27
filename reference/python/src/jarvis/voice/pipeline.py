@@ -90,6 +90,8 @@ class WyomingSTT:
 
 
 class WyomingTTS:
+    label = "piper"
+
     def __init__(self, host: str, port: int, voice: str | None = None) -> None:
         self.host, self.port, self.voice = host, port, voice
 

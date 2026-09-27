@@ -130,9 +130,17 @@ Whisper/Piper/openWakeWord ist der nächste Ausbauschritt. API-Beschreibung: `ht
 Eingebaut und ohne API-Schlüssel: **Wetter** (Open-Meteo), **Nachrichten** (Tagesschau-RSS, weitere Feeds in
 `config/jarvis.example.yaml`) und **Wikipedia**.
 
-**Stimme:** JARVIS spricht mit einer lokalen Männerstimme (Piper, `de_DE-thorsten-high`) und einem KI-Klangeffekt im
-Browser (etwas tiefer, leichter synthetischer Schimmer, kurzer Raumhall; Stärke im Zahnrad-Menü). Läuft Piper nicht,
-spricht die Browserstimme.
+**Stimme:** „Automatisch“ (Zahnrad-Menü) nimmt die beste verfügbare – eine tiefe, ruhige Männerstimme im Stil des
+Film-JARVIS (die Stimme eines realen Sprechers wird bewusst nicht nachgebildet):
+
+1. **Microsoft Conrad über Azure** – beste Qualität in jedem Browser, mit einstellbarem KI-Effekt. Kostenloses
+   Kontingent (F0, 500 000 Zeichen/Monat): im [Azure-Portal](https://portal.azure.com) eine Ressource
+   **„Speech“** (Tarif *Free F0*) anlegen → **„Schlüssel und Endpunkt“** → *Schlüssel 1* und *Region* als
+   `AZURE_SPEECH_KEY` und `AZURE_SPEECH_REGION` in `deploy/.env` eintragen → `./deploy/start.sh`. Der Antworttext
+   geht dafür an Microsoft.
+2. **Microsoft Conrad in Edge** – dieselbe Stimme kostenlos und ohne Einrichtung, wenn JARVIS in Microsoft Edge läuft
+   (Autostart: `./deploy/start.sh autostart edge`).
+3. **Piper** (`de_DE-thorsten-high`) – läuft komplett lokal; Rückfall, wenn nichts anderes verfügbar ist.
 
 **PC-Steuerung (Windows):** „Öffne den Explorer“, „Öffne meine Downloads“, „Öffne YouTube“, „Such im Internet nach …“,
 „Starte Spotify“. Das übernimmt ein kleiner PC-Agent (`deploy/windows/jarvis-pc-agent.ps1`), der mit der
@@ -140,7 +148,7 @@ Desktop-Verknüpfung startet, sich selbst mit JARVIS verbindet (kein offener Por
 ausführt – eigene Programme in `%LOCALAPPDATA%\JARVIS\apps.json`, z. B. `{"steam": "steam:"}`. Oben rechts zeigt
 „PC“, ob er verbunden ist.
 
-**Automatisch beim Anmelden starten (Windows):** `./deploy/start.sh autostart` – danach startet Windows Docker
+**Automatisch beim Anmelden starten (Windows):** `./deploy/start.sh autostart` (oder `… autostart edge`) – danach startet Windows Docker
 Desktop, den PC-Agenten und JARVIS als eigenes Fenster, ohne Konsole; zusätzlich liegt eine Verknüpfung „JARVIS“ auf
 dem Desktop. Nach einem Update erneut ausführen. Entfernen: `./deploy/start.sh autostart-remove`.
 
@@ -189,7 +197,7 @@ python tools/validate.py
 # Kernlogik des Python-Skeletts testen (läuft offline, ohne LLM/Home Assistant)
 cd reference/python
 pip install -e ".[dev]"
-pytest                    # 157 Tests
+pytest                    # 161 Tests
 python -m jarvis.demo     # Fast-Path, Tool-Use, R3-Bestätigung, Prompt-Injection-Abwehr, Gastrechte
 
 # Node-Beispiele (Node >= 22)

@@ -149,6 +149,8 @@ def create_app(container: Container) -> FastAPI:
             raise JarvisError("JRV-INT-001", "Sprachausgabe nicht eingerichtet")
         try:
             audio = await asyncio.wait_for(container.tts.synthesize_wav(body.text), 30)
+        except JarvisError:
+            raise
         except (OSError, asyncio.TimeoutError) as exc:
             raise JarvisError("JRV-INT-001", f"Piper nicht erreichbar: {exc}",
                               user_message="Die JARVIS-Stimme ist gerade nicht erreichbar.") from exc
@@ -193,7 +195,7 @@ def create_app(container: Container) -> FastAPI:
             "cloud_llm": container.router.cloud_breaker.state,
             "local_llm": container.llm_status,
             "pc_agent": "connected" if container.agents and container.agents.connected else "disconnected",
-            "tts": "configured" if container.tts is not None else "off",
+            "tts": getattr(container.tts, "label", "configured") if container.tts is not None else "off",
         }
 
     @app.websocket("/v1/stream")

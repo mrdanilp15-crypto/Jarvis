@@ -22,6 +22,7 @@ Alle Beispiele sind lauffähiger bzw. geprüfter Code im Repository – die Ausz
 | [`jarvis/api.py`](../reference/python/src/jarvis/api.py) | Python | FastAPI: REST + WebSocket | TestClient |
 | [`jarvis/info.py`](../reference/python/src/jarvis/info.py) | Python | Wetter (Open-Meteo), Nachrichten (RSS/Atom), Wikipedia | gegen nachgebildete API-Antworten |
 | [`jarvis/pc.py`](../reference/python/src/jarvis/pc.py) | Python | PC-Steuerung: Agent-Verbindung, `pc.*`-Capabilities | Ende-zu-Ende über TestClient |
+| [`jarvis/voice/cloud.py`](../reference/python/src/jarvis/voice/cloud.py) | Python | Azure-Speech-Stimme „Conrad“ (SSML), Rückfall auf Piper | gegen nachgebildete API |
 | [`jarvis/webhooks.py`](../reference/python/src/jarvis/webhooks.py) | Python | HMAC-Signatur, Replay-Schutz | Unit-Tests |
 | [`jarvis/logging_setup.py`](../reference/python/src/jarvis/logging_setup.py) | Python | JSON-Logging, Korrelation, Redaktion | Unit-Tests |
 | [`jarvis/demo.py`](../reference/python/src/jarvis/demo.py) | Python | Offline-Demo aller Kernabläufe | CI |
@@ -314,7 +315,7 @@ mosquitto_pub … -u jarvis-core -t jarvis/v1/cmd/airsensor_buero -m '{"command"
 
 ```bash
 cd reference/python && pip install -e ".[dev]"
-pytest                      # 157 Tests: Policy, Orchestrator, Automationen, Memory, API, LLM-Adapter …
+pytest                      # 161 Tests: Policy, Orchestrator, Automationen, Memory, API, LLM-Adapter …
 python -m jarvis.demo       # Offline-Demo ohne LLM/Home Assistant
 cd ../node && node --test   # Webhook-Signatur, Retry-Verhalten
 python ../../tools/validate.py

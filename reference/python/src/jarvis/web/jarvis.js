@@ -48,7 +48,7 @@
   if (!sessionId) { sessionId = `web-${randomId()}`; store.set("session", sessionId); }
 
   const settings = {
-    speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice", ""),
+    speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice.v2", ""),
     wake: store.get("wake", false), location: store.get("location", ""), effect: store.get("effect", "dezent"),
   };
 
@@ -264,13 +264,19 @@
     return german[0] ?? null;
   }
 
-  // JARVIS-Stimme: Piper (lokal, über /v1/tts) plus Klangeffekt im Browser – eine ruhige, tiefe Stimme mit
-  // leichtem synthetischem Schimmer und etwas Raum, wie ein Assistent, der durch das Haus spricht.
+  // JARVIS-Stimme über /v1/tts – Microsoft „Conrad“ (Azure) oder lokal Piper – plus Klangeffekt im Browser.
+  // „dezent“ hebt nur Klarheit an und gibt einen Hauch Raum; „stark“ klingt hörbar synthetisch.
   const EFFECTS = {
     aus: { rate: 1.0, chorus: 0, reverb: 0, presence: 0 },
-    dezent: { rate: 0.96, chorus: 0.18, reverb: 0.12, presence: 4 },
-    stark: { rate: 0.93, chorus: 0.34, reverb: 0.22, presence: 6 },
+    dezent: { rate: 1.0, chorus: 0, reverb: 0.06, presence: 2 },
+    stark: { rate: 1.0, chorus: 0.2, reverb: 0.14, presence: 4 },
   };
+  const TTS_LABEL = {
+    azure: "JARVIS – Microsoft Conrad (Azure)",
+    piper: "JARVIS – lokale Stimme (Piper)",
+    configured: "JARVIS – Serverstimme",
+  };
+  let ttsProvider = "off";
   let ttsConfigured = false;
   let jarvisVoiceBroken = false;
 
@@ -342,7 +348,16 @@
     },
   };
 
-  const useJarvisVoice = () => ttsConfigured && !jarvisVoiceBroken && (settings.voice === "" || settings.voice === "jarvis");
+  // Natürliche Neural-Stimmen des Browsers (Edge: „Microsoft Conrad Online (Natural)“) – kostenlos, sehr gut
+  const naturalBrowserVoice = () => germanVoices().find(
+    (v) => /conrad|killian|florian/i.test(v.name) && /natural|online/i.test(v.name)) ?? null;
+
+  function useJarvisVoice() {  // Automatik: Azure-Conrad > natürliche Browserstimme > Piper > Browserstimme
+    if (!ttsConfigured || jarvisVoiceBroken) return false;
+    if (settings.voice === "jarvis") return true;
+    if (settings.voice !== "") return false;
+    return ttsProvider === "azure" || !naturalBrowserVoice();
+  }
 
   async function fetchSpeech(text) {
     const response = await fetch("/v1/tts", {
@@ -873,7 +888,8 @@
       const response = await fetch("/v1/system/health", { cache: "no-store" });
       const health = await response.json();
       llmStatus = health.local_llm ?? "ready";
-      ttsConfigured = health.tts === "configured";
+      ttsProvider = health.tts ?? "off";
+      ttsConfigured = ttsProvider !== "off";
       setPcStatus(health.pc_agent === "connected");
     } catch {
       llmStatus = "unknown";
@@ -993,16 +1009,17 @@
   els.login.addEventListener("cancel", (event) => { if (!token) event.preventDefault(); });
 
   function fillVoices() {
-    const german = germanVoices();
     const jarvis = useJarvisVoice();
-    const current = jarvis ? null : pickVoice();
-    els.voice.replaceChildren();
-    if (ttsConfigured) els.voice.append(new Option("JARVIS – lokale Stimme mit KI-Effekt", "jarvis", false, jarvis));
-    german.forEach((voice) => {
+    const auto = jarvis ? TTS_LABEL[ttsProvider] ?? TTS_LABEL.configured : pickVoice()?.name ?? "Browserstimme";
+    els.voice.replaceChildren(new Option(`Automatisch (jetzt: ${auto})`, "", false, settings.voice === ""));
+    if (ttsConfigured) {
+      els.voice.append(new Option(TTS_LABEL[ttsProvider] ?? TTS_LABEL.configured, "jarvis", false,
+                                  settings.voice === "jarvis"));
+    }
+    germanVoices().forEach((voice) => {
       const label = `${voice.name}${voice.localService ? "" : " (online)"}`;
-      els.voice.append(new Option(label, voice.name, false, voice === current));
+      els.voice.append(new Option(label, voice.name, false, settings.voice === voice.name));
     });
-    if (!els.voice.options.length) els.voice.append(new Option("Keine deutsche Stimme gefunden", ""));
     els.voice.disabled = els.voice.options.length < 2;
     els.optEffect.value = settings.effect;
     els.optEffect.disabled = !jarvis;
@@ -1024,7 +1041,7 @@
   els.optConvo.addEventListener("change", () => { settings.convo = els.optConvo.checked; store.set("convo", settings.convo); });
   els.voice.addEventListener("change", () => {
     settings.voice = els.voice.value;
-    store.set("voice", settings.voice);
+    store.set("voice.v2", settings.voice);
     els.optEffect.disabled = !useJarvisVoice();
   });
   els.optEffect.addEventListener("change", () => {

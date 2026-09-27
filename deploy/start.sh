@@ -2,7 +2,8 @@
 # JARVIS mit einem Befehl starten (macOS, Linux, Windows über WSL/Git Bash).
 #   ./deploy/start.sh                    Kern + Postgres + Redis + Ollama starten, Modelle laden
 #   ./deploy/start.sh stop               alles stoppen (Daten bleiben erhalten)
-#   ./deploy/start.sh autostart          Windows: beim Anmelden automatisch starten + Desktop-Verknüpfung
+#   ./deploy/start.sh autostart [edge]   Windows: beim Anmelden automatisch starten + Desktop-Verknüpfung
+#                                        (edge: JARVIS in Microsoft Edge öffnen – mit der Stimme „Conrad“)
 #   ./deploy/start.sh autostart-remove   Autostart wieder entfernen
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -48,7 +49,7 @@ choose_model() {  # $1 = GPU-Speicher in MiB (leer = keine GPU)
   fi
 }
 
-autostart() {  # $1 = install | remove
+autostart() {  # $1 = install | remove, $2 = Browser (chrome | edge)
   local repo mode distro="" script
   if grep -qi microsoft /proc/version 2>/dev/null; then
     mode=wsl
@@ -78,7 +79,7 @@ EOF
   if [ "$1" = remove ]; then
     args+=(-Remove)
   else
-    args+=(-Mode "$mode" -Repo "$repo")
+    args+=(-Mode "$mode" -Repo "$repo" -Browser "${2:-chrome}")
     if [ -n "$distro" ]; then args+=(-Distro "$distro"); fi
     if [ -n "$token" ]; then args+=(-Token "$token"); fi
   fi
@@ -99,7 +100,9 @@ fi
 token="$(sed -n 's/.*{"\([^"]*\)": {"actor".*/\1/p' .env | head -n 1)"
 
 case "${1:-}" in
-  autostart) autostart install; exit 0 ;;
+  autostart)
+    case "${2:-chrome}" in chrome|edge) ;; *) echo "Browser: chrome oder edge"; exit 1 ;; esac
+    autostart install "${2:-chrome}"; exit 0 ;;
   autostart-remove) autostart remove; exit 0 ;;
   "") ;;
   *) echo "Unbekannter Befehl: $1 (möglich: stop, autostart, autostart-remove)"; exit 1 ;;

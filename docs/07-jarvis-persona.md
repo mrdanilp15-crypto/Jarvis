@@ -36,7 +36,7 @@ Sätze). Die Stimmparameter gehen an die TTS.
 | `address.formal_pronoun` | ja | nein | Sie / du |
 | `humor_rules.never_during` | Warnung, Fehler, Sicherheit, Gesundheit, Trauer, Bestätigung | – | harte Humor-Sperren |
 | `humor_rules.max_per_hour` | 2 | – | Humor-Budget |
-| `voice.voice_id` | `de_DE-thorsten-high` (en: `en_GB-alan-medium`) | `de_DE-thorsten-medium` | Stimme |
+| `voice.voice_id` | `de-DE-ConradNeural` (Azure; lokal `de_DE-thorsten-high`; en: `en_GB-alan-medium`) | `de_DE-thorsten-medium` | Stimme – tief, ruhig, klar; keine Nachbildung realer Sprecher |
 | `voice.speaking_rate` / `pitch_semitones` | 1,05 / −1 | 1,0 / 0 | ruhig, etwas tiefer, zügig |
 | `voice.sentence_pause_ms` | 250 | 200 | gemessene Pausen zwischen Sätzen |
 | `voice.volume_night` | 0,35 | 0,35 | Lautstärke in der Nachtruhe |

@@ -131,7 +131,15 @@ voice:
   wake_word: { model: hey_jarvis, threshold: 0.5, server_verify_threshold: 0.7 }
   vad: { end_silence_ms: 700, min_speech_ms: 250 }
   stt: { uri: tcp://wyoming-whisper:10300, language: de, initial_prompt_from_entities: true }
-  tts: { uri: tcp://wyoming-piper:10200 }
+  tts:
+    uri: tcp://wyoming-piper:10200   # lokale Stimme (Piper) – Standard und Rückfall
+    cloud:                           # optional: Microsoft „Conrad“ (Azure Speech, kostenloses Kontingent F0)
+      provider: azure
+      key: env:AZURE_SPEECH_KEY      # leer = nur Piper
+      region: env:AZURE_SPEECH_REGION
+      voice: de-DE-ConradNeural      # JARVIS_TTS_VOICE hat Vorrang (z. B. de-DE-FlorianMultilingualNeural)
+      rate: "-4%"                    # etwas ruhiger
+      pitch: "-3%"                   # etwas tiefer
   speaker_id: { model: ecapa-tdnn, threshold: 0.75 }
   follow_up_window_s: 5
   barge_in: true
