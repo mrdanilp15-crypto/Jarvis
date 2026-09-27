@@ -191,6 +191,7 @@ anbieterneutrale Transkript erlaubt den Wechsel mitten in einer Sitzung (z. B. F
 | Bedienung | globaler Hotkey für Schnelleingabe, Tray-Icon, Push-to-Talk, Benachrichtigungen |
 | Kontext | Zwischenablage, markierter Text oder Screenshot werden **nur auf ausdrückliche Aktion** mitgeschickt |
 | Technik-Funktionen | lokaler System-Agent (Sidecar) stellt `system.diagnose`, `system.logs_query` bereit – per mTLS angebunden und als Plugin mit Manifest registriert |
+| PC-Steuerung | umgesetzt für Windows: [`jarvis-pc-agent.ps1`](../deploy/windows/jarvis-pc-agent.ps1) verbindet sich per WebSocket mit `/v1/agent` (ausgehend, kein offener Port) und führt nur freigegebene Aktionen aus: Programme aus seiner Liste, bekannte Ordner, http/https-Adressen. `pc.open_url` ist R2 (nach fremden Inhalten nur mit Bestätigung), die übrigen R1; Gäste und Kinder dürfen nicht |
 | Skripte | Ausführung nur in der Sandbox (`code.run_sandbox`) oder auf dem Host nach R3-Bestätigung (`system.run_script`) |
 | Referenz | [`reference/node/jarvis-client.mjs`](../reference/node/jarvis-client.mjs) zeigt Protokoll, Reconnect und Bestätigungsdialog |
 
@@ -200,7 +201,7 @@ anbieterneutrale Transkript erlaubt den Wechsel mitten in einer Sitzung (z. B. F
 |----------|----------|----------|---------|
 | Satellit kompakt | ESP32-S3 mit Mikrofon-Array und Lautsprecher | ESPHome, Wake-Word auf dem Gerät, Wyoming | Räume |
 | Satellit komfortabel | Raspberry Pi 5 + ReSpeaker-Mikrofon-HAT + Lautsprecher | `wyoming-satellite`, openWakeWord lokal, AEC | Wohnzimmer/Küche (Musik + Sprache) |
-| Browser (sofort) | PC/Tablet mit Mikrofon | [Weboberfläche](../reference/python/src/jarvis/web) unter `http://<kern>:8080/`: Spracheingabe und -ausgabe des Browsers (Chrome/Edge), „Jarvis“-Aktivierung (Dauer-Erkennung des Browsers, abschaltbar), Dauergespräch, Barge-in | Desktop, Tablet-Dashboard |
+| Browser (sofort) | PC/Tablet mit Mikrofon | [Weboberfläche](../reference/python/src/jarvis/web) unter `http://<kern>:8080/`: Spracheingabe des Browsers (Chrome/Edge), JARVIS-Stimme über Piper (`POST /v1/tts`) mit KI-Klangeffekt (Web Audio: Präsenz-EQ, Chorus, kurzer Hall, −0,7 Halbtöne), „Jarvis“-Aktivierung (Dauer-Erkennung des Browsers, abschaltbar), Dauergespräch, Barge-in | Desktop, Tablet-Dashboard |
 | Browser (lokal, Ausbau) | beliebig | [`voice-widget.js`](../reference/web/voice-widget.js): PCM16 über `WS /v1/stream` an Whisper/Piper (Wyoming) – ohne Cloud; Audio-Frames im Kern noch offen | Desktop, Tablet-Dashboard |
 | App | Smartphone | Push-to-Talk, Headset | unterwegs |
 

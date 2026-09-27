@@ -11,7 +11,8 @@
     login: $("#login"), loginForm: $("#login-form"), loginToken: $("#login-token"), loginError: $("#login-error"),
     settings: $("#settings"), settingsBtn: $("#settings-btn"), voice: $("#voice"), voiceTest: $("#voice-test"),
     optSpeak: $("#opt-speak"), optConvo: $("#opt-convo"), optLocation: $("#opt-location"), logout: $("#logout"),
-    wakeToggle: $("#wake-toggle"), wakeText: $("#wake-text"),
+    wakeToggle: $("#wake-toggle"), wakeText: $("#wake-text"), optEffect: $("#opt-effect"),
+    pc: $("#pc-status"), pcText: $("#pc-text"),
   };
 
   // ---------------------------------------------------------------- Browser-Speicher (nur Komfort)
@@ -48,7 +49,7 @@
 
   const settings = {
     speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice", ""),
-    wake: store.get("wake", false), location: store.get("location", ""),
+    wake: store.get("wake", false), location: store.get("location", ""), effect: store.get("effect", "dezent"),
   };
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -99,7 +100,8 @@
       const tick = () => {
         this.boost *= 0.9;
         const base = 0.16 + 0.14 * Math.abs(Math.sin(performance.now() / 150));
-        setLevel(Math.max(base, this.boost));
+        const live = tts.source ? voiceFx.level() : null;  // JARVIS-Stimme: echter Pegel
+        setLevel(live ?? Math.max(base, this.boost));
         this.frame = requestAnimationFrame(tick);
       };
       cancelAnimationFrame(this.frame);
@@ -262,12 +264,166 @@
     return german[0] ?? null;
   }
 
+  // JARVIS-Stimme: Piper (lokal, über /v1/tts) plus Klangeffekt im Browser – eine ruhige, tiefe Stimme mit
+  // leichtem synthetischem Schimmer und etwas Raum, wie ein Assistent, der durch das Haus spricht.
+  const EFFECTS = {
+    aus: { rate: 1.0, chorus: 0, reverb: 0, presence: 0 },
+    dezent: { rate: 0.96, chorus: 0.18, reverb: 0.12, presence: 4 },
+    stark: { rate: 0.93, chorus: 0.34, reverb: 0.22, presence: 6 },
+  };
+  let ttsConfigured = false;
+  let jarvisVoiceBroken = false;
+
+  function impulseResponse(context, seconds, decay) {
+    const length = Math.floor(context.sampleRate * seconds);
+    const buffer = context.createBuffer(2, length, context.sampleRate);
+    for (let channel = 0; channel < 2; channel += 1) {
+      const data = buffer.getChannelData(channel);
+      for (let i = 0; i < length; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / length) ** decay;
+    }
+    return buffer;
+  }
+
+  const voiceFx = {
+    context: null, input: null, analyser: null, samples: null, nodes: null,
+    ensure() {
+      if (this.context) return this.context;
+      const context = new AudioContext();
+      const input = context.createGain();
+      const highpass = context.createBiquadFilter();
+      highpass.type = "highpass";
+      highpass.frequency.value = 110;
+      const presence = context.createBiquadFilter();
+      presence.type = "peaking";
+      presence.frequency.value = 3000;
+      presence.Q.value = 0.9;
+      const dry = context.createGain();
+      const chorusDelay = context.createDelay(0.05);  // kurze, schwankende Verzögerung = synthetischer Schimmer
+      chorusDelay.delayTime.value = 0.014;
+      const lfo = context.createOscillator();
+      lfo.frequency.value = 0.7;
+      const lfoDepth = context.createGain();
+      lfoDepth.gain.value = 0.0018;
+      lfo.connect(lfoDepth).connect(chorusDelay.delayTime);
+      lfo.start();
+      const chorus = context.createGain();
+      const convolver = context.createConvolver();  // kurzer, heller Raum
+      convolver.buffer = impulseResponse(context, 0.9, 3.2);
+      const reverb = context.createGain();
+      const compressor = context.createDynamicsCompressor();
+      compressor.threshold.value = -20;
+      compressor.ratio.value = 3;
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 512;
+      input.connect(highpass).connect(presence);
+      presence.connect(dry).connect(compressor);
+      presence.connect(chorusDelay).connect(chorus).connect(compressor);
+      presence.connect(convolver).connect(reverb).connect(compressor);
+      compressor.connect(analyser).connect(context.destination);
+      Object.assign(this, { context, input, analyser, samples: new Uint8Array(analyser.fftSize),
+                            nodes: { presence, dry, chorus, reverb } });
+      this.apply();
+      return context;
+    },
+    apply() {
+      if (!this.nodes) return;
+      const fx = EFFECTS[settings.effect] ?? EFFECTS.dezent;
+      this.nodes.presence.gain.value = fx.presence;
+      this.nodes.chorus.gain.value = fx.chorus;
+      this.nodes.reverb.gain.value = fx.reverb;
+      this.nodes.dry.gain.value = 1 - fx.chorus * 0.4;
+    },
+    level() {
+      if (!this.analyser) return null;
+      this.analyser.getByteTimeDomainData(this.samples);
+      let sum = 0;
+      for (const sample of this.samples) { const x = (sample - 128) / 128; sum += x * x; }
+      return Math.min(1, Math.sqrt(sum / this.samples.length) * 4);
+    },
+  };
+
+  const useJarvisVoice = () => ttsConfigured && !jarvisVoiceBroken && (settings.voice === "" || settings.voice === "jarvis");
+
+  async function fetchSpeech(text) {
+    const response = await fetch("/v1/tts", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.slice(0, 1000) }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return voiceFx.ensure().decodeAudioData(await response.arrayBuffer());
+  }
+
+  function jarvisVoiceFailed() {
+    if (jarvisVoiceBroken) return;
+    jarvisVoiceBroken = true;
+    addSystem("Die JARVIS-Stimme (Piper) ist gerade nicht erreichbar – ich spreche vorerst mit der Browserstimme.", true);
+  }
+
   const tts = {
     generation: 0,
     pending: 0,
+    chain: Promise.resolve(),
+    source: null,
     speak(text) {
       const clean = forSpeech(text);
-      if (!clean || !settings.speak || !canSpeak) return;
+      if (!clean || !settings.speak) return;
+      if (useJarvisVoice()) this.speakJarvis(clean);
+      else this.speakBrowser(clean);
+    },
+    done(generation) {  // eine Äußerung ist fertig
+      if (generation !== this.generation) return;
+      this.pending = Math.max(0, this.pending - 1);
+      if (this.pending === 0) onSpeechDone();
+    },
+    speakJarvis(clean) {
+      const generation = this.generation;
+      this.pending += 1;
+      wake.stop();  // nicht zuhören, während JARVIS spricht – sonst hört er sich selbst
+      const audio = fetchSpeech(clean);  // Synthese startet sofort, parallel zur Wiedergabe des Satzes davor
+      audio.catch(() => {});
+      this.chain = this.chain.then(async () => {
+        if (generation !== this.generation) return;
+        try {
+          const buffer = await audio;
+          if (generation === this.generation) await this.play(buffer);
+        } catch {
+          if (generation !== this.generation) return;
+          jarvisVoiceFailed();
+          this.speakBrowser(clean);  // Rückfall für diesen Satz
+        }
+      }).finally(() => this.done(generation));
+    },
+    play(buffer) {
+      const context = voiceFx.ensure();
+      voiceFx.apply();
+      return new Promise((resolve) => {
+        const fx = EFFECTS[settings.effect] ?? EFFECTS.dezent;
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.playbackRate.value = fx.rate;  // etwas langsamer und tiefer
+        source.connect(voiceFx.input);
+        let finished = false;
+        const end = () => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timer);
+          if (this.source === source) this.source = null;
+          resolve();
+        };
+        const timer = setTimeout(end, (buffer.duration / fx.rate) * 1000 + 3000);
+        source.onended = end;
+        this.source = source;
+        if (context.state === "suspended") {
+          context.resume().catch(() => {});
+          setTimeout(() => { if (context.state === "suspended") explainBlockedSpeech(); }, 600);
+        }
+        setState("speaking");
+        source.start();
+      });
+    },
+    speakBrowser(clean) {
+      if (!canSpeak) return;
       const generation = this.generation;
       const utterance = new SpeechSynthesisUtterance(clean);
       const voice = pickVoice();
@@ -282,9 +438,7 @@
         if (settled) return;
         settled = true;
         clearTimeout(watchdog);
-        if (generation !== this.generation) return;
-        this.pending = Math.max(0, this.pending - 1);
-        if (this.pending === 0) onSpeechDone();
+        this.done(generation);
       };
       utterance.onstart = () => { if (generation === this.generation) setState("speaking"); };
       utterance.onboundary = () => speakingAnimation.pulse();
@@ -294,16 +448,23 @@
         finish();
       };
       this.pending += 1;
-      wake.stop();  // nicht zuhören, während JARVIS spricht – sonst hört er sich selbst
+      wake.stop();
       speechSynthesis.speak(utterance);
     },
     stop() {
       this.generation += 1;
       this.pending = 0;
+      try { this.source?.stop(); } catch { /* schon beendet */ }
+      this.source = null;
       if (canSpeak) speechSynthesis.cancel();
     },
     get busy() { return this.pending > 0; },
   };
+
+  // Browser erlauben Ton erst nach einer Interaktion – beim ersten Klick/Tastendruck freischalten
+  ["pointerdown", "keydown"].forEach((type) => document.addEventListener(type, () => {
+    if (voiceFx.context?.state === "suspended") voiceFx.context.resume().catch(() => {});
+  }));
 
   let speechHintShown = false;
 
@@ -710,12 +871,21 @@
     clearTimeout(healthTimer);
     try {
       const response = await fetch("/v1/system/health", { cache: "no-store" });
-      llmStatus = (await response.json()).local_llm ?? "ready";
+      const health = await response.json();
+      llmStatus = health.local_llm ?? "ready";
+      ttsConfigured = health.tts === "configured";
+      setPcStatus(health.pc_agent === "connected");
     } catch {
       llmStatus = "unknown";
     }
     if (state === "idle") setState("idle");
-    if (LLM_STATUS[llmStatus] && ws) healthTimer = setTimeout(checkHealth, 3000);  // bis das Modell bereit ist
+    if (ws) healthTimer = setTimeout(checkHealth, LLM_STATUS[llmStatus] ? 3000 : 30000);
+  }
+
+  function setPcStatus(connected) {
+    els.pc.dataset.conn = connected ? "online" : "none";
+    els.pc.title = connected ? "PC-Steuerung verbunden: Programme, Ordner und Webseiten öffnen"
+      : "PC-Steuerung nicht verbunden – JARVIS über die Desktop-Verknüpfung starten (./deploy/start.sh autostart)";
   }
 
   // ---------------------------------------------------------------- Verbindung
@@ -747,6 +917,7 @@
     setConnection("connecting", "Verbinde …");
     socket.addEventListener("open", () => {
       reconnectDelay = 500;
+      jarvisVoiceBroken = false;
       setConnection("online", "Online");
       if (state === "offline") setState("idle");
       checkHealth();
@@ -823,19 +994,18 @@
 
   function fillVoices() {
     const german = germanVoices();
-    const current = pickVoice();
+    const jarvis = useJarvisVoice();
+    const current = jarvis ? null : pickVoice();
     els.voice.replaceChildren();
-    if (!german.length) {
-      const option = new Option("Keine deutsche Stimme gefunden", "");
-      els.voice.append(option);
-      els.voice.disabled = true;
-      return;
-    }
-    els.voice.disabled = false;
+    if (ttsConfigured) els.voice.append(new Option("JARVIS – lokale Stimme mit KI-Effekt", "jarvis", false, jarvis));
     german.forEach((voice) => {
       const label = `${voice.name}${voice.localService ? "" : " (online)"}`;
       els.voice.append(new Option(label, voice.name, false, voice === current));
     });
+    if (!els.voice.options.length) els.voice.append(new Option("Keine deutsche Stimme gefunden", ""));
+    els.voice.disabled = els.voice.options.length < 2;
+    els.optEffect.value = settings.effect;
+    els.optEffect.disabled = !jarvis;
   }
 
   els.settingsBtn.addEventListener("click", () => {
@@ -852,7 +1022,16 @@
     if (!settings.speak) tts.stop();
   });
   els.optConvo.addEventListener("change", () => { settings.convo = els.optConvo.checked; store.set("convo", settings.convo); });
-  els.voice.addEventListener("change", () => { settings.voice = els.voice.value; store.set("voice", settings.voice); });
+  els.voice.addEventListener("change", () => {
+    settings.voice = els.voice.value;
+    store.set("voice", settings.voice);
+    els.optEffect.disabled = !useJarvisVoice();
+  });
+  els.optEffect.addEventListener("change", () => {
+    settings.effect = els.optEffect.value;
+    store.set("effect", settings.effect);
+    voiceFx.apply();
+  });
   els.optLocation.addEventListener("change", () => {
     settings.location = els.optLocation.value.trim();
     store.set("location", settings.location);

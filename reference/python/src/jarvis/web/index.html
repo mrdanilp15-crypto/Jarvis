@@ -15,6 +15,7 @@
   <header class="topbar">
     <div class="brand">J.A.R.V.I.S<small>Just A Rather Very Intelligent System</small></div>
     <div class="conn" id="conn" data-conn="connecting"><span class="dot"></span><span id="conn-text">Verbinde …</span></div>
+    <div class="conn" id="pc-status" data-conn="none" title="PC-Steuerung"><span class="dot"></span><span id="pc-text">PC</span></div>
     <button class="icon-btn" id="settings-btn" type="button" aria-label="Einstellungen" title="Einstellungen">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
@@ -106,12 +107,20 @@
       <label class="check"><input type="checkbox" id="opt-convo">
         <span>Dauergespräch: nach jeder gesprochenen Antwort automatisch wieder zuhören</span></label>
       <label class="field">Stimme <select id="voice"></select></label>
+      <label class="field">KI-Effekt der JARVIS-Stimme
+        <select id="opt-effect">
+          <option value="dezent">dezent</option>
+          <option value="stark">stark</option>
+          <option value="aus">aus</option>
+        </select>
+      </label>
       <label class="field">Ihr Ort (für das Wetter)
         <input id="opt-location" type="text" maxlength="100" placeholder="z. B. Hamburg" autocomplete="address-level2">
       </label>
       <p class="hint">Spracheingabe funktioniert in Chrome und Edge. Deren Spracherkennung läuft über die Server von
         Google bzw. Microsoft – bei eingeschalteter „Jarvis“-Aktivierung dauerhaft, sonst nur nach einem Tipp auf den
-        Kreis. Die Stimme nutzt die Sprachausgabe Ihres Systems. Vollständig lokal (Whisper, Piper, openWakeWord) ist
+        Kreis. Die JARVIS-Stimme (Piper) läuft lokal auf Ihrem Rechner; Browserstimmen nutzen die
+        Sprachausgabe Ihres Systems. Vollständig lokale Spracherkennung (Whisper, openWakeWord) ist
         der nächste Ausbauschritt.</p>
       <div class="actions">
         <button class="btn danger left" type="button" id="logout">Abmelden</button>

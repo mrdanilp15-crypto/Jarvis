@@ -1,4 +1,4 @@
-﻿# JARVIS starten: Docker Desktop starten, auf JARVIS warten, JARVIS als eigenes Fenster öffnen.
+﻿# JARVIS starten: PC-Agent starten, Docker Desktop starten, auf JARVIS warten, JARVIS als eigenes Fenster öffnen.
 # install-autostart.ps1 kopiert dieses Skript nach %LOCALAPPDATA%\JARVIS und legt Verknüpfungen im Autostart und
 # auf dem Desktop an, die es unsichtbar starten. Protokoll: %LOCALAPPDATA%\JARVIS\launcher.log
 # Kompatibel mit Windows PowerShell 5.1.
@@ -44,18 +44,27 @@ function Wait-For([scriptblock]$condition, [int]$seconds) {
     return $false
 }
 
+function Start-PcAgent {
+    # Öffnet auf Zuruf Programme, Ordner und Webseiten; verbindet sich selbst mit JARVIS, sobald er läuft
+    $agent = Join-Path $jarvisHome 'jarvis-pc-agent.ps1'
+    if (-not (Test-Path $agent)) { return }
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    Start-Process -FilePath $powershell -WindowStyle Hidden -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$agent`"")
+}
+
 function Start-Jarvis {
     # Die Container starten mit Docker von selbst (restart: unless-stopped). „docker compose up“ holt sie zurück,
-    # falls sie mit „start.sh stop“ entfernt wurden, und tut sonst nichts.
+    # falls sie mit „start.sh stop“ entfernt wurden, und tut sonst nichts. wyoming-piper = JARVIS-Stimme.
     if ($config.mode -eq 'wsl') {
         $wslArgs = @()
         if ($config.distro) { $wslArgs += @('-d', $config.distro) }
-        $wslArgs += @('--cd', "$($config.repo)/deploy", '--', 'docker', 'compose', 'up', '-d', 'jarvis-core')
+        $wslArgs += @('--cd', "$($config.repo)/deploy", '--', 'docker', 'compose', 'up', '-d', 'jarvis-core', 'wyoming-piper')
         $output = & wsl.exe @wslArgs 2>&1
     } else {
         Push-Location (Join-Path $config.repo 'deploy')
         try {
-            $output = & docker compose up -d jarvis-core 2>&1
+            $output = & docker compose up -d jarvis-core wyoming-piper 2>&1
         } finally {
             Pop-Location
         }
@@ -102,7 +111,10 @@ function Open-Jarvis {
 }
 
 Write-Log "Start (Modus: $($config.mode), Repository: $($config.repo))"
-if (-not (Test-Jarvis)) {
+Start-PcAgent
+if (Test-Jarvis) {
+    Start-Jarvis   # läuft schon – nur sicherstellen, dass auch die Stimme (Piper) läuft
+} else {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         Show-Problem 'Docker Desktop ist nicht installiert (Befehl "docker" nicht gefunden).'
         exit 1

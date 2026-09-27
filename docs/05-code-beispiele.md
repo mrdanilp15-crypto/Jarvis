@@ -21,6 +21,7 @@ Alle Beispiele sind lauffähiger bzw. geprüfter Code im Repository – die Ausz
 | [`jarvis/voice/pipeline.py`](../reference/python/src/jarvis/voice/pipeline.py) | Python | Wyoming-STT/TTS, Satz-Streaming, Barge-in | Segmentierungs-Tests |
 | [`jarvis/api.py`](../reference/python/src/jarvis/api.py) | Python | FastAPI: REST + WebSocket | TestClient |
 | [`jarvis/info.py`](../reference/python/src/jarvis/info.py) | Python | Wetter (Open-Meteo), Nachrichten (RSS/Atom), Wikipedia | gegen nachgebildete API-Antworten |
+| [`jarvis/pc.py`](../reference/python/src/jarvis/pc.py) | Python | PC-Steuerung: Agent-Verbindung, `pc.*`-Capabilities | Ende-zu-Ende über TestClient |
 | [`jarvis/webhooks.py`](../reference/python/src/jarvis/webhooks.py) | Python | HMAC-Signatur, Replay-Schutz | Unit-Tests |
 | [`jarvis/logging_setup.py`](../reference/python/src/jarvis/logging_setup.py) | Python | JSON-Logging, Korrelation, Redaktion | Unit-Tests |
 | [`jarvis/demo.py`](../reference/python/src/jarvis/demo.py) | Python | Offline-Demo aller Kernabläufe | CI |
@@ -29,7 +30,7 @@ Alle Beispiele sind lauffähiger bzw. geprüfter Code im Repository – die Ausz
 | [`node/mqtt-device-adapter.mjs`](../reference/node/mqtt-device-adapter.mjs) | Node.js | MQTT-Geräteadapter | `node --check` |
 | [`node/plugin-weather/`](../reference/node/plugin-weather) | Node.js | vollständiges Plugin (Manifest + HTTP-Protokoll) | Manifest-Schema |
 | [`jarvis/web/`](../reference/python/src/jarvis/web) | HTML/CSS/JS (Browser) | Oberfläche unter `/`: HUD, Spracheingabe/-ausgabe, „Jarvis“-Aktivierung, Chat, Bestätigungen | TestClient, `node --check` |
-| [`deploy/windows/`](../deploy/windows) | PowerShell | Autostart: Docker starten, auf JARVIS warten, App-Fenster öffnen | Parser-Prüfung in der CI |
+| [`deploy/windows/`](../deploy/windows) | PowerShell | Autostart (Docker starten, auf JARVIS warten, App-Fenster öffnen) und PC-Agent (Programme/Ordner/Webseiten öffnen) | Parser-Prüfung in der CI |
 | [`web/voice-widget.js`](../reference/web/voice-widget.js) | JavaScript (Browser) | Push-to-Talk, AudioWorklet, Barge-in | Syntax |
 | [`homeassistant/packages/jarvis.yaml`](../integrations/homeassistant/packages/jarvis.yaml) | HA-YAML | rest_command, Webhook-Trigger, MQTT-Sensoren, Skript | YAML-Prüfung |
 | [`mqtt/acl`](../integrations/mqtt/acl), [`mosquitto.conf`](../integrations/mqtt/mosquitto.conf) | Mosquitto | Broker, TLS, ACL | – |
@@ -313,7 +314,7 @@ mosquitto_pub … -u jarvis-core -t jarvis/v1/cmd/airsensor_buero -m '{"command"
 
 ```bash
 cd reference/python && pip install -e ".[dev]"
-pytest                      # 132 Tests: Policy, Orchestrator, Automationen, Memory, API, LLM-Adapter …
+pytest                      # 157 Tests: Policy, Orchestrator, Automationen, Memory, API, LLM-Adapter …
 python -m jarvis.demo       # Offline-Demo ohne LLM/Home Assistant
 cd ../node && node --test   # Webhook-Signatur, Retry-Verhalten
 python ../../tools/validate.py

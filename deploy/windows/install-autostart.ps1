@@ -30,6 +30,7 @@ if (-not $Repo) { $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) 
 
 New-Item -ItemType Directory -Force -Path $jarvisHome | Out-Null
 Copy-Item -Force (Join-Path $PSScriptRoot 'jarvis-launch.ps1') $jarvisHome
+Copy-Item -Force (Join-Path $PSScriptRoot 'jarvis-pc-agent.ps1') $jarvisHome
 Copy-Item -Force (Join-Path $PSScriptRoot 'jarvis.ico') $jarvisHome
 
 # Beim ersten Öffnen: Token übernehmen und die „Jarvis“-Aktivierung einschalten (danach merkt sich das Fenster
@@ -41,6 +42,7 @@ $settings = [ordered]@{
     mode   = $Mode
     repo   = $Repo
     distro = $Distro
+    token  = $Token
     url    = 'http://127.0.0.1:8080/#' + ($fragment -join '&')
 }
 $settings | ConvertTo-Json | Set-Content -Encoding UTF8 -Path (Join-Path $jarvisHome 'config.json')
@@ -61,4 +63,5 @@ foreach ($link in $links) {
 
 Write-Host 'Fertig: JARVIS startet ab jetzt beim Anmelden automatisch.'
 Write-Host 'Zusätzlich liegt eine Verknüpfung "JARVIS" auf dem Desktop.'
+Write-Host 'Die PC-Steuerung (Programme, Ordner, Webseiten öffnen) startet mit JARVIS mit.'
 Write-Host 'Entfernen: ./deploy/start.sh autostart-remove'

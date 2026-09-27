@@ -82,6 +82,10 @@ llm:
     dimensions: 1024
     keep_alive: 24h
 
+pc_agent:                      # PC-Steuerung über deploy/windows/jarvis-pc-agent.ps1 (verbindet sich mit /v1/agent)
+  enabled: true
+  search_url: https://www.google.com/search?q={query}
+
 info:                          # eingebaute Informationsdienste ohne API-Schlüssel
   enabled: true
   home_location: ""            # Standardort fürs Wetter (JARVIS_HOME_LOCATION hat Vorrang; die Weboberfläche sendet ihren eigenen)

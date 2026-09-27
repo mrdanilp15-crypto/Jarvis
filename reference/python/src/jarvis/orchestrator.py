@@ -216,7 +216,8 @@ class Orchestrator:
                 return await self._resolve_by_voice(pending, req, approve=reply)
 
         # 2) Fast-Path ohne LLM
-        if self.fast_path is not None and (match := self.fast_path.match(req.text)):
+        match = self.fast_path.match(req.text) if self.fast_path is not None else None
+        if match is not None and self.registry.get(match.capability) is not None:  # sonst übernimmt das LLM
             record = await self.request_action(
                 capability=match.capability, arguments=match.arguments, principal=req.principal,
                 correlation_id=req.correlation_id, session_id=req.session_id, via="fast_path",

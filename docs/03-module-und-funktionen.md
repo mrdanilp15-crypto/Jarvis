@@ -78,6 +78,7 @@ verfügbar · Capability-IDs sind die kanonischen Namen in Tool-Registry, Polici
 | Code-Generierung | Code in allen gängigen Sprachen, Erklärung, Refactoring, Tests | LLM (Cloud bevorzugt) | R0 | eingeschränkt |
 | Skripte | Shell/Python/PowerShell erzeugen; Ausführung **nur** in der Sandbox oder auf Host nach R3-Bestätigung | `code.run_sandbox`, `system.run_script` | R2 / R3 | ja |
 | Systemdiagnosen | CPU/RAM/Disk/Temperaturen, Dienste, Container, Netzwerk, Backups, Zertifikatsabläufe | `system.diagnose` | R0 | ja |
+| PC-Steuerung | Programme, Ordner und Webseiten auf dem PC öffnen, im Web suchen – über den PC-Agenten (Allowlist, ausgehende Verbindung); Sofortbefehle ohne LLM | `pc.open_app`, `pc.open_folder`, `pc.search_web`, `pc.open_url` | R1 / R2 (URL) | ja |
 | Fehleranalyse | Logs durchsuchen (Loki), Stacktraces erklären, Ursachen-Hypothesen, Korrelation mit Änderungen | `system.logs_query`, `system.diagnose` | R0 | ja |
 | Optimierungsvorschläge | Ressourcen, Energie, Automationen, Netzwerk, Kosten – als Vorschlag mit Begründung und Rollback-Plan | Proaktiv-Engine + LLM | R0 | teilweise |
 | Wartungsaktionen | Dienst neu starten, Container aktualisieren, Cache leeren | `system.service_restart`, `system.container_update` | R2 / R3 | ja |

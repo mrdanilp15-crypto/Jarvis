@@ -29,12 +29,14 @@ from .connectors.homeassistant import HomeAssistantClient, register_home_capabil
 from .context import ContextBuilder, Situation
 from .errors import CircuitBreaker, JarvisError
 from .events import InMemoryEventBus, RedisStreamEventBus
+from .fastpath import FastPath
 from .info import InfoConfig, register_info_capabilities
 from .llm.ollama import OllamaProvider
 from .llm.router import ModelRouter
 from .logging_setup import configure_logging
 from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingWeights
 from .orchestrator import ConfirmationStore, Orchestrator
+from .pc import AgentHub, register_pc_capabilities
 from .persona import Persona
 from .policy import PolicyEngine, Principal
 from .tools import ToolRegistry
@@ -96,6 +98,11 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
             wikipedia_language=info_cfg.get("wikipedia_language", defaults.wikipedia_language),
         ))
 
+    agents = AgentHub()
+    if (cfg.get("pc_agent") or {}).get("enabled", True):
+        register_pc_capabilities(registry, agents, search_url=(cfg.get("pc_agent") or {}).get(
+            "search_url", "https://www.google.com/search?q={query}"))
+
     providers = cfg["llm"]["providers"]
     local_cfg = providers[cfg["llm"]["default_local"]]
     # JARVIS_LLM_MODEL (deploy/.env) überschreibt das Modell – start.sh wählt es passend zur Hardware
@@ -130,6 +137,8 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         confirmations=ConfirmationStore(timeout_s=cfg["security"].get("confirmation_timeout_s", 60)),
         memory=memory,
         bus=bus,
+        # Sofortbefehle ohne LLM („Öffne den Explorer“, Timer); Licht-Grammatiken brauchen Räume aus Home Assistant
+        fast_path=FastPath({}, {}),
         max_iterations=cfg["orchestrator"]["max_tool_iterations"],
         turn_timeout_s=cfg["orchestrator"]["turn_timeout_s"],
         session_idle_timeout_s=cfg["context"]["session_idle_timeout_s"],
@@ -143,7 +152,7 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
                          area=principal.area, channel=channel, location=home_location)
 
     container = Container(orchestrator=orchestrator, bus=bus, router=router, tokens=tokens,
-                          webhook_secrets={}, situation=situation)
+                          webhook_secrets={}, situation=situation, agents=agents, tts=_tts(cfg))
 
     async def warm_up_local_model() -> None:
         """Lädt das lokale Modell beim Start und rechnet Regeln und Tools vorab durch, damit schon die erste
@@ -167,6 +176,24 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
 
     background.append(warm_up_local_model())
     return container, background
+
+
+def _tts(cfg: dict[str, Any]) -> Any:
+    """JARVIS-Stimme über Piper (Wyoming), falls konfiguriert und die Bibliothek installiert ist."""
+    uri = ((cfg.get("voice") or {}).get("tts") or {}).get("uri")
+    if not uri:
+        return None
+    try:
+        import wyoming  # noqa: F401  – optionales Extra „voice“
+    except ImportError:
+        log.info("Sprachausgabe (Piper) deaktiviert: Paket 'wyoming' fehlt")
+        return None
+    from urllib.parse import urlsplit
+
+    from .voice.pipeline import WyomingTTS
+
+    parts = urlsplit(uri)
+    return WyomingTTS(parts.hostname or "wyoming-piper", parts.port or 10200)
 
 
 def _audit_sink() -> Any:

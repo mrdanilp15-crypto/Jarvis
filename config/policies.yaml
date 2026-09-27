@@ -42,7 +42,8 @@ roles:
     max_risk: R3
     allow: ["home.*", "info.*", "web.*", "calendar.*", "task.*", "reminder.*", "timer.*",
             "mail.*", "message.*", "call.*", "contacts.*", "memory.*", "automation.*",
-            "system.diagnose", "system.logs_query", "code.run_sandbox", "energy.*", "events.*", "persona.set"]
+            "system.diagnose", "system.logs_query", "code.run_sandbox", "energy.*", "events.*", "persona.set",
+            "pc.*"]
     deny: ["system.run_script", "system.container_update"]
   child:
     max_risk: R1

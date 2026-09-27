@@ -124,15 +124,15 @@ if [ -z "$(env_value JARVIS_LLM_MODEL)" ]; then
   echo "→ Sprachmodell passend zur Hardware: $(env_value JARVIS_LLM_MODEL) (ändern: JARVIS_LLM_MODEL in deploy/.env)"
 fi
 
-echo "→ Baue und starte jarvis-core, Postgres, Redis und Ollama …"
-if ! docker compose up -d --build jarvis-core; then
+echo "→ Baue und starte jarvis-core, Postgres, Redis, Ollama und die JARVIS-Stimme (Piper) …"
+if ! docker compose up -d --build jarvis-core wyoming-piper; then
   grep -q '^COMPOSE_FILE=' .env || exit 1
   echo "✖ Start mit GPU fehlgeschlagen – starte ohne GPU (erneut versuchen: JARVIS_GPU=off aus deploy/.env löschen)."
   unset_env COMPOSE_FILE
   unset_env COMPOSE_PATH_SEPARATOR
   set_env JARVIS_GPU off
   if [ "$auto_model" = 1 ]; then set_env JARVIS_LLM_MODEL "$(choose_model "")"; fi
-  docker compose up -d --build jarvis-core
+  docker compose up -d --build jarvis-core wyoming-piper
 fi
 
 config_value() {  # liest einen Wert aus der aktiven JARVIS-Konfiguration im Container

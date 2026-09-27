@@ -8,7 +8,9 @@ Dienste, die auch Home Assistant nutzt.
 from __future__ import annotations
 
 import asyncio
+import io
 import re
+import wave
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 
@@ -105,6 +107,36 @@ class WyomingTTS:
                     return
                 if AudioChunk.is_type(event.type):
                     yield AudioChunk.from_event(event).audio
+
+    async def synthesize_wav(self, text: str) -> bytes:
+        """Ganzen Satz synthetisieren und als WAV liefern (für die Weboberfläche: ein Satz = eine Datei)."""
+        from wyoming.audio import AudioChunk, AudioStart, AudioStop
+        from wyoming.client import AsyncTcpClient
+        from wyoming.tts import Synthesize, SynthesizeVoice
+
+        rate, width, channels = 22050, 2, 1
+        frames = bytearray()
+        async with AsyncTcpClient(self.host, self.port) as client:
+            voice = SynthesizeVoice(name=self.voice) if self.voice else None
+            await client.write_event(Synthesize(text=text, voice=voice).event())
+            while True:
+                event = await client.read_event()
+                if event is None or AudioStop.is_type(event.type):
+                    break
+                if AudioStart.is_type(event.type):
+                    start = AudioStart.from_event(event)
+                    rate, width, channels = start.rate, start.width, start.channels
+                elif AudioChunk.is_type(event.type):
+                    chunk = AudioChunk.from_event(event)
+                    rate, width, channels = chunk.rate, chunk.width, chunk.channels
+                    frames += chunk.audio
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav:
+            wav.setnchannels(channels)
+            wav.setsampwidth(width)
+            wav.setframerate(rate)
+            wav.writeframes(bytes(frames))
+        return buffer.getvalue()
 
 
 TextHandler = Callable[[str, Callable[[str], Awaitable[None]]], Awaitable[str]]

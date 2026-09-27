@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Body, Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -21,6 +22,7 @@ from .events import CloudEvent, EventBus
 from .llm.base import OnText
 from .llm.router import HeuristicClassifier, ModelRouter
 from .orchestrator import Orchestrator, TurnRequest, TurnResult
+from .pc import AgentHub
 from .policy import Principal
 from .webhooks import ReplayCache, verify
 
@@ -47,6 +49,8 @@ class Container:
     classifier: HeuristicClassifier = field(default_factory=HeuristicClassifier)
     replay_cache: ReplayCache = field(default_factory=ReplayCache)
     llm_status: str = "unknown"  # lokales Modell: unknown | loading | ready | missing_model | unavailable
+    agents: AgentHub | None = None  # PC-Agent (Programme/Ordner/Webseiten auf dem PC öffnen)
+    tts: Any = None  # Sprachausgabe mit synthesize_wav(text) -> bytes (Piper über Wyoming)
 
     async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
                        location: str | None = None) -> TurnResult:
@@ -94,6 +98,10 @@ class MessageIn(BaseModel):
     location: str | None = Field(default=None, max_length=100)
 
 
+class SpeechIn(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+
+
 class ConfirmationIn(BaseModel):
     decision: Literal["approve", "reject"]
     # Im Betrieb belegt die App die Methode mit einer signierten Challenge (Geräteschlüssel + Biometrie).
@@ -134,6 +142,18 @@ def create_app(container: Container) -> FastAPI:
         )
         return turn_to_json(result)
 
+    @app.post("/v1/tts", response_class=Response, responses={200: {"content": {"audio/wav": {}}}})
+    async def tts(body: SpeechIn, who: Principal = Depends(principal)) -> Response:
+        """JARVIS-Stimme (Piper, lokal): ein Satz -> WAV. Die Weboberfläche legt den KI-Klangeffekt darüber."""
+        if container.tts is None:
+            raise JarvisError("JRV-INT-001", "Sprachausgabe nicht eingerichtet")
+        try:
+            audio = await asyncio.wait_for(container.tts.synthesize_wav(body.text), 30)
+        except (OSError, asyncio.TimeoutError) as exc:
+            raise JarvisError("JRV-INT-001", f"Piper nicht erreichbar: {exc}",
+                              user_message="Die JARVIS-Stimme ist gerade nicht erreichbar.") from exc
+        return Response(content=audio, media_type="audio/wav")
+
     @app.post("/v1/confirmations/{confirmation_id}")
     async def resolve(confirmation_id: str, body: ConfirmationIn, who: Principal = Depends(principal)) -> dict:
         record = await container.orchestrator.resolve_confirmation(
@@ -168,7 +188,13 @@ def create_app(container: Container) -> FastAPI:
 
     @app.get("/v1/system/health")
     async def health() -> dict:
-        return {"status": "ok", "cloud_llm": container.router.cloud_breaker.state, "local_llm": container.llm_status}
+        return {
+            "status": "ok",
+            "cloud_llm": container.router.cloud_breaker.state,
+            "local_llm": container.llm_status,
+            "pc_agent": "connected" if container.agents and container.agents.connected else "disconnected",
+            "tts": "configured" if container.tts is not None else "off",
+        }
 
     @app.websocket("/v1/stream")
     async def stream(ws: WebSocket) -> None:
@@ -217,6 +243,33 @@ def create_app(container: Container) -> FastAPI:
                     await ws.send_json({"type": "error", "error": problem})
         except WebSocketDisconnect:
             return
+
+    @app.websocket("/v1/agent")
+    async def agent(ws: WebSocket) -> None:
+        # Der PC-Agent verbindet sich von sich aus (kein offener Port auf dem PC) und meldet, was er kann.
+        who = container.tokens.get(ws.query_params.get("token", ""))
+        await ws.accept()
+        if who is None or container.agents is None:
+            await ws.close(code=4401)
+            return
+        hub = container.agents
+        handle = None
+        try:
+            hello = await ws.receive_json()
+            if hello.get("type") != "agent.hello":
+                await ws.close(code=4400)
+                return
+            handle = hub.attach(ws.send_json, {k: hello.get(k) for k in ("name", "apps", "folders")})
+            log.info("PC-Agent verbunden", extra={"agent": hello.get("name"), "actor": who.actor})
+            while True:
+                message = await ws.receive_json()
+                if message.get("type") == "agent.result":
+                    hub.resolve(message)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            if handle is not None:
+                hub.detach(handle)
 
     # Zuletzt: alles, was keine API-Route ist, liefert die Browser-Oberfläche aus
     app.mount("/", _WebFiles(directory=WEB_DIR, html=True), name="web")

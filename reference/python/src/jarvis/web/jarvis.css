@@ -80,6 +80,7 @@ button, input, select { font: inherit; color: inherit; }
 .conn[data-conn="online"] .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .conn[data-conn="connecting"] .dot { background: var(--warn); animation: blink 1s steps(2) infinite; }
 .conn[data-conn="offline"] .dot { background: var(--danger); }
+.conn + .conn { margin-left: 14px; cursor: help; }
 
 .icon-btn {
   width: 38px; height: 38px;

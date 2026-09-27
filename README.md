@@ -130,9 +130,19 @@ Whisper/Piper/openWakeWord ist der nächste Ausbauschritt. API-Beschreibung: `ht
 Eingebaut und ohne API-Schlüssel: **Wetter** (Open-Meteo), **Nachrichten** (Tagesschau-RSS, weitere Feeds in
 `config/jarvis.example.yaml`) und **Wikipedia**.
 
+**Stimme:** JARVIS spricht mit einer lokalen Männerstimme (Piper, `de_DE-thorsten-high`) und einem KI-Klangeffekt im
+Browser (etwas tiefer, leichter synthetischer Schimmer, kurzer Raumhall; Stärke im Zahnrad-Menü). Läuft Piper nicht,
+spricht die Browserstimme.
+
+**PC-Steuerung (Windows):** „Öffne den Explorer“, „Öffne meine Downloads“, „Öffne YouTube“, „Such im Internet nach …“,
+„Starte Spotify“. Das übernimmt ein kleiner PC-Agent (`deploy/windows/jarvis-pc-agent.ps1`), der mit der
+Desktop-Verknüpfung startet, sich selbst mit JARVIS verbindet (kein offener Port) und nur freigegebene Aktionen
+ausführt – eigene Programme in `%LOCALAPPDATA%\JARVIS\apps.json`, z. B. `{"steam": "steam:"}`. Oben rechts zeigt
+„PC“, ob er verbunden ist.
+
 **Automatisch beim Anmelden starten (Windows):** `./deploy/start.sh autostart` – danach startet Windows Docker
-Desktop und öffnet JARVIS als eigenes Fenster, ohne Konsole; zusätzlich liegt eine Verknüpfung „JARVIS“ auf dem
-Desktop. Entfernen: `./deploy/start.sh autostart-remove`.
+Desktop, den PC-Agenten und JARVIS als eigenes Fenster, ohne Konsole; zusätzlich liegt eine Verknüpfung „JARVIS“ auf
+dem Desktop. Nach einem Update erneut ausführen. Entfernen: `./deploy/start.sh autostart-remove`.
 
 Update auf eine neue Version: `git pull` und erneut `./deploy/start.sh` (baut den Kern neu; geladene Modelle bleiben).
 
@@ -179,7 +189,7 @@ python tools/validate.py
 # Kernlogik des Python-Skeletts testen (läuft offline, ohne LLM/Home Assistant)
 cd reference/python
 pip install -e ".[dev]"
-pytest                    # 132 Tests
+pytest                    # 157 Tests
 python -m jarvis.demo     # Fast-Path, Tool-Use, R3-Bestätigung, Prompt-Injection-Abwehr, Gastrechte
 
 # Node-Beispiele (Node >= 22)
