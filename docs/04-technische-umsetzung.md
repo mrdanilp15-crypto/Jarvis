@@ -39,7 +39,7 @@ Vollständige Spezifikation: [`api/openapi.yaml`](../api/openapi.yaml) (OpenAPI 
 | `POST /v1/events` | CloudEvent einspeisen (Trust aus Token) | Bearer | ✔ |
 | `POST /v1/webhooks/{hook_id}` | signierter Webhook → `jarvis.webhook.received` | HMAC | ✔ |
 | `POST /v1/confirmations/{id}` | Bestätigung freigeben/ablehnen | Bearer | ✔ |
-| `GET /v1/system/health` | Zustand, Circuit-Breaker | – | ✔ |
+| `GET /v1/system/health` | Zustand, Circuit-Breaker, Status des lokalen Modells (`local_llm`) | – | ✔ |
 | `GET /` | Browser-Oberfläche (HUD, Sprache, Chat) über `WS /v1/stream` | Token im Link-Fragment (`#token=…`) | ✔ |
 | `GET /docs` | interaktive API-Beschreibung (Swagger UI, **Authorize** für das Bearer-Token) | – | ✔ |
 | `POST /v1/actions` · `GET /v1/actions/{id}` | Capability direkt ausführen / Status | Bearer | Blueprint |
@@ -466,8 +466,8 @@ externes Medium. Die Anwendungsrolle darf nur `INSERT`.
 | Aufruf | offizielles `anthropic`-SDK, `client.beta.messages.stream(...)` | native `/api/chat` mit `stream: true` |
 | Denken/Aufwand | `thinking: {type: "adaptive"}`, `output_config.effort`: `medium` (Dialog) / `high` (Recherche, Code) | – |
 | Tools | JSON-Schema, `eager_input_streaming: true`; Eingaben werden im Orchestrator gegen das Schema geprüft, bei `max_tokens`/`refusal` nie ausgeführt | `tools` im Ollama-Format |
-| Prompt-Caching | Breakpoint am statischen Systemprompt (deckt Tools + Regeln + Persona); volatile Situation/Memories dahinter; Tools deterministisch sortiert | KV-Cache des Servers |
-| Robustheit | SDK-Retries, Circuit-Breaker, serverseitiger Refusal-Fallback (`fallbacks: "default"`, Beta-Header `server-side-fallback-2026-07-01`) | Health-Check, Timeout |
+| Prompt-Caching | Breakpoint am statischen Systemprompt (deckt Tools + Regeln + Persona); volatile Situation/Memories dahinter; Tools deterministisch sortiert | KV-Cache von Ollama: System-Prompt und Tools bleiben unverändert vorne, Situation/Memories stehen in der Nutzernachricht, zu der sie gehören (jede Frage behält ihren Kontext) – der Verlauf bleibt ein unveränderter Präfix, pro Frage rechnet das Modell nur die neuen Tokens; `keep_alive: 24h`, Vorwärmen beim Start, `num_ctx` 8192 |
+| Robustheit | SDK-Retries, Circuit-Breaker, serverseitiger Refusal-Fallback (`fallbacks: "default"`, Beta-Header `server-side-fallback-2026-07-01`) | Health-Check (`local_llm`), Timeout |
 | Verlauf | Assistenten-Blöcke werden unverändert an denselben Anbieter zurückgegeben | aus neutralem Transkript gerendert |
 
 Der Verlauf wird nur an Turn-Grenzen gekürzt (nie zwischen Tool-Aufruf und Ergebnis). Für Modelle, die Denk-Blöcke
@@ -481,7 +481,7 @@ funktionieren; zusätzliche Regeln prüfen die Handler selbst.
 
 | Ebene | Inhalt | Status im Repo |
 |-------|--------|----------------|
-| Unit | Policy-Matrix, Tool-Validierung, Risiko-Regeln, Bedingungen, Ranking, Segmentierung, Signaturen | ✔ `reference/python/tests` (118 Tests) |
+| Unit | Policy-Matrix, Tool-Validierung, Risiko-Regeln, Bedingungen, Ranking, Segmentierung, Signaturen | ✔ `reference/python/tests` (132 Tests) |
 | Szenario | Orchestrator mit skriptbarem LLM und simuliertem Home Assistant: Fast-Path, Bestätigungen, Prompt-Injection, Gäste, Abbrüche | ✔ |
 | Vertrag | Schemas, Beispiele, Plugin-Manifeste, OpenAPI-Referenzen, Node-RED-Verdrahtung | ✔ `tools/validate.py` |
 | Datenbank | Schema-Import, Hash-Kette, Vektor-Suche | ✔ CI-Job mit `pgvector/pgvector:pg16` |

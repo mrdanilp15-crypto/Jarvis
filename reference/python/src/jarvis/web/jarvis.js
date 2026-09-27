@@ -10,7 +10,8 @@
     conn: $("#conn"), connText: $("#conn-text"),
     login: $("#login"), loginForm: $("#login-form"), loginToken: $("#login-token"), loginError: $("#login-error"),
     settings: $("#settings"), settingsBtn: $("#settings-btn"), voice: $("#voice"), voiceTest: $("#voice-test"),
-    optSpeak: $("#opt-speak"), optConvo: $("#opt-convo"), logout: $("#logout"),
+    optSpeak: $("#opt-speak"), optConvo: $("#opt-convo"), optLocation: $("#opt-location"), logout: $("#logout"),
+    wakeToggle: $("#wake-toggle"), wakeText: $("#wake-text"),
   };
 
   // ---------------------------------------------------------------- Browser-Speicher (nur Komfort)
@@ -31,19 +32,24 @@
 
   const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
 
-  // Token aus dem Link von start.sh (#token=…) übernehmen und aus der Adresszeile entfernen
+  // Link von start.sh bzw. dem Autostart: #token=…[&wake=1] übernehmen und aus der Adresszeile entfernen
   function tokenFromLink() {
-    const value = new URLSearchParams(location.hash.slice(1)).get("token");
-    if (!value) return null;
-    store.set("token", value);
+    const params = new URLSearchParams(location.hash.slice(1));
+    const value = params.get("token");
+    if (params.get("wake") === "1") store.set("wake", true);
+    if (!params.toString()) return null;
     history.replaceState(null, "", location.pathname + location.search);
+    if (value) store.set("token", value);
     return value;
   }
   let token = tokenFromLink() || store.get("token", null);
   let sessionId = store.get("session", null);
   if (!sessionId) { sessionId = `web-${randomId()}`; store.set("session", sessionId); }
 
-  const settings = { speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice", "") };
+  const settings = {
+    speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice", ""),
+    wake: store.get("wake", false), location: store.get("location", ""),
+  };
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const canListen = Boolean(SpeechRecognition);
@@ -53,21 +59,33 @@
   // ---------------------------------------------------------------- Zustand & HUD
   const STATUS = {
     offline: "Keine Verbindung zum JARVIS-Server …",
-    idle: canListen ? "Tippen Sie auf den Kreis oder drücken Sie die Leertaste, um zu sprechen."
-                    : "Schreiben Sie unten eine Nachricht. (Spracheingabe: Chrome oder Edge)",
     listening: "Ich höre zu …",
     thinking: "Einen Moment …",
     speaking: "JARVIS spricht – tippen zum Unterbrechen.",
   };
+  const LLM_STATUS = {
+    loading: "Das Sprachmodell wird geladen – gleich bin ich bereit …",
+    missing_model: "Das Sprachmodell fehlt noch – bitte ./deploy/start.sh ausführen.",
+    unavailable: "Das Sprachmodell (Ollama) ist noch nicht erreichbar …",
+  };
   let state = "offline";
+  let llmStatus = "unknown";
+
+  function idleText() {
+    if (LLM_STATUS[llmStatus]) return LLM_STATUS[llmStatus];
+    if (!canListen) return "Schreiben Sie unten eine Nachricht. (Spracheingabe: Chrome oder Edge)";
+    if (settings.wake) return "Sagen Sie „Jarvis“ – oder tippen Sie auf den Kreis.";
+    return "Tippen Sie auf den Kreis oder drücken Sie die Leertaste, um zu sprechen.";
+  }
 
   function setState(next, text) {
     const previous = state;
     state = next;
     document.body.dataset.state = next;
-    els.status.textContent = text ?? STATUS[next];
+    els.status.textContent = text ?? (next === "idle" ? idleText() : STATUS[next]);
     if (next === "speaking" && previous !== "speaking") speakingAnimation.start();
     if (next !== "speaking" && previous === "speaking") speakingAnimation.stop();
+    if (next === "idle") wake.schedule();
   }
 
   function setLevel(value) {
@@ -271,8 +289,12 @@
       utterance.onstart = () => { if (generation === this.generation) setState("speaking"); };
       utterance.onboundary = () => speakingAnimation.pulse();
       utterance.onend = finish;
-      utterance.onerror = finish;
+      utterance.onerror = (event) => {
+        if (event.error === "not-allowed") explainBlockedSpeech();
+        finish();
+      };
       this.pending += 1;
+      wake.stop();  // nicht zuhören, während JARVIS spricht – sonst hört er sich selbst
       speechSynthesis.speak(utterance);
     },
     stop() {
@@ -282,6 +304,34 @@
     },
     get busy() { return this.pending > 0; },
   };
+
+  let speechHintShown = false;
+
+  function explainBlockedSpeech() {  // Chrome spricht erst nach einer ersten Interaktion mit der Seite
+    if (speechHintShown) return;
+    speechHintShown = true;
+    addSystem("Damit JARVIS sprechen darf, klicken Sie einmal irgendwo auf diese Seite.", true);
+  }
+
+  function chime() {  // kurzer Ton: „Jarvis“ wurde gehört
+    try {
+      chime.context = chime.context || new AudioContext();
+      const context = chime.context;
+      if (context.state === "suspended") context.resume().catch(() => {});
+      const start = context.currentTime;
+      [[880, 0], [1320, 0.09]].forEach(([frequency, offset]) => {
+        const osc = context.createOscillator();
+        const gain = context.createGain();
+        osc.frequency.value = frequency;
+        gain.gain.setValueAtTime(0.0001, start + offset);
+        gain.gain.exponentialRampToValueAtTime(0.18, start + offset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.16);
+        osc.connect(gain).connect(context.destination);
+        osc.start(start + offset);
+        osc.stop(start + offset + 0.18);
+      });
+    } catch { /* ohne Ton */ }
+  }
 
   // Satzweise sprechen, während der Text noch gestreamt wird
   // Einzelbuchstaben („z. B.“, „d. h.“), gängige Abkürzungen und Ordnungszahlen („3.“) beenden keinen Satz
@@ -329,6 +379,7 @@
       return;
     }
     tts.stop();
+    wake.stop();
     addMessage("user", text);
     const item = addMessage("jarvis", "");
     item.classList.add("pending");
@@ -342,7 +393,8 @@
     updateComposer();
     setState("thinking");
     // Wenn JARVIS spricht, bittet der Kanal „voice“ um kurze, gesprochene Antworten ohne Markdown
-    send({ type: "input.text", text, session_id: sessionId, channel: settings.speak ? "voice" : "web" });
+    send({ type: "input.text", text, session_id: sessionId, channel: settings.speak ? "voice" : "web",
+           location: settings.location || undefined });
   }
 
   function onDelta(delta) {
@@ -477,6 +529,11 @@
     }
     if (recognition || turn) return;
     if (!ws || ws.readyState !== WebSocket.OPEN) { addSystem("Noch keine Verbindung zum Server.", true); return; }
+    if (wake.rec) {  // Chrome erlaubt nur eine Erkennung zur Zeit: erst die Dauer-Erkennung beenden
+      wake.stop();
+      setTimeout(startListening, 300);
+      return;
+    }
     tts.stop();
     let heard = "";
     let failure = null;
@@ -502,7 +559,9 @@
       els.caption.textContent = "";
       if (heard.trim()) { sendText(heard, true); return; }
       if (state === "listening") setState(ws?.readyState === WebSocket.OPEN ? "idle" : "offline");
-      if (failure === "no-speech") els.status.textContent = "Ich habe nichts gehört. Tippen Sie auf den Kreis, um es erneut zu versuchen.";
+      if (failure === "no-speech" && !settings.wake) {
+        els.status.textContent = "Ich habe nichts gehört. Tippen Sie auf den Kreis, um es erneut zu versuchen.";
+      }
       else if (failure && RECOGNITION_ERRORS[failure]) addSystem(RECOGNITION_ERRORS[failure], true);
     };
     recognition = rec;
@@ -526,6 +585,137 @@
     }
     if (tts.busy) tts.stop();
     startListening();
+  }
+
+  // ---------------------------------------------------------------- Aktivierungswort „Jarvis“
+  // Dauer-Erkennung über den Browser (Chrome/Edge senden das Audio dafür an Google bzw. Microsoft). Läuft nur,
+  // solange JARVIS bereit ist – nicht während er denkt, spricht oder einem Befehl zuhört.
+  const WAKE_WORD = /\b(?:jarvis|jarwis|javis|jervis|jarves|charvis|dschawis|dschavis|tschawis)\b/i;
+  const hasWords = (text) => /[\p{L}\p{N}]{2,}/u.test(text);
+
+  const wake = {
+    rec: null, timer: 0, awaitTimer: 0, failures: 0, awaiting: false,
+    wanted() {
+      return settings.wake && canListen && state === "idle" && !turn && !recognition && !tts.busy
+        && ws?.readyState === WebSocket.OPEN;
+    },
+    schedule(delay = 300) {
+      clearTimeout(this.timer);
+      if (settings.wake) this.timer = setTimeout(() => this.start(), delay);
+    },
+    start() {
+      if (this.rec || !this.wanted()) return;
+      const rec = new SpeechRecognition();
+      rec.lang = "de-DE";
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+      const startedAt = Date.now();
+      let failure = null;
+      rec.onresult = (event) => {
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          const result = event.results[i];
+          const text = result[0].transcript.trim();
+          if (this.awaiting) {  // nach „Jarvis“: das Nächste ist der Befehl
+            els.caption.textContent = text;
+            if (result.isFinal && hasWords(text)) { this.hand(text); return; }
+            continue;
+          }
+          const match = WAKE_WORD.exec(text);
+          if (!match) continue;
+          this.failures = 0;
+          if (!result.isFinal) { document.body.classList.add("wake-heard"); continue; }
+          const command = text.slice(match.index + match[0].length).replace(/^[\s,.!?:;-]+/, "");
+          if (hasWords(command)) { this.hand(command); return; }  // „Jarvis, wie ist das Wetter?“
+          this.awaiting = true;                                   // nur „Jarvis“: auf den Befehl warten
+          document.body.classList.remove("wake-heard");
+          chime();
+          setState("listening", "Ja? Ich höre …");
+          clearTimeout(this.awaitTimer);
+          this.awaitTimer = setTimeout(() => {
+            if (!this.awaiting) return;
+            this.awaiting = false;
+            els.caption.textContent = "";
+            setState("idle");
+          }, 8000);
+        }
+      };
+      rec.onerror = (event) => { failure = event.error; };
+      rec.onend = () => {
+        if (this.rec !== rec) return;  // bewusst gestoppt
+        this.rec = null;
+        this.reset();
+        if (["not-allowed", "service-not-allowed", "audio-capture"].includes(failure)) {
+          setWake(false);
+          addSystem(RECOGNITION_ERRORS[failure], true);
+          return;
+        }
+        // Chrome beendet die Dauer-Erkennung regelmäßig (Stille, Netz) – neu starten, bei schnellen Abbrüchen
+        // mit wachsender Pause
+        const quick = Date.now() - startedAt < 3000;
+        this.failures = quick ? this.failures + 1 : 0;
+        if (failure === "network" && this.failures === 3) addSystem(RECOGNITION_ERRORS.network, true);
+        if (state === "listening") setState("idle");
+        this.schedule(quick ? Math.min(30000, 500 * 2 ** this.failures) : 250);
+      };
+      this.rec = rec;
+      try {
+        rec.start();
+      } catch {
+        this.rec = null;
+        this.schedule(2000);
+      }
+    },
+    hand(command) {  // Befehl an JARVIS übergeben
+      this.stop();
+      els.caption.textContent = "";
+      sendText(command, true);
+    },
+    reset() {
+      this.awaiting = false;
+      clearTimeout(this.awaitTimer);
+      document.body.classList.remove("wake-heard");
+    },
+    stop() {
+      clearTimeout(this.timer);
+      this.reset();
+      const rec = this.rec;
+      this.rec = null;
+      if (rec) {
+        rec.onresult = null;
+        rec.onend = null;
+        rec.abort();
+      }
+    },
+  };
+
+  function setWake(on) {
+    settings.wake = on;
+    store.set("wake", on);
+    els.wakeToggle.setAttribute("aria-pressed", String(on));
+    els.wakeText.textContent = on ? "Hört auf „Jarvis“" : "„Jarvis“-Aktivierung aus";
+    if (on) {
+      if (state === "idle") setState("idle");
+    } else {
+      wake.stop();
+      if (state === "listening" && !recognition) setState("idle");
+      else if (state === "idle") setState("idle");
+    }
+  }
+
+  // ---------------------------------------------------------------- Status des Sprachmodells
+  let healthTimer = 0;
+
+  async function checkHealth() {
+    clearTimeout(healthTimer);
+    try {
+      const response = await fetch("/v1/system/health", { cache: "no-store" });
+      llmStatus = (await response.json()).local_llm ?? "ready";
+    } catch {
+      llmStatus = "unknown";
+    }
+    if (state === "idle") setState("idle");
+    if (LLM_STATUS[llmStatus] && ws) healthTimer = setTimeout(checkHealth, 3000);  // bis das Modell bereit ist
   }
 
   // ---------------------------------------------------------------- Verbindung
@@ -559,6 +749,7 @@
       reconnectDelay = 500;
       setConnection("online", "Online");
       if (state === "offline") setState("idle");
+      checkHealth();
       if (!greeted) {
         greeted = true;
         addSystem("JARVIS ist online. Sprechen Sie mit mir oder schreiben Sie unten.");
@@ -574,6 +765,7 @@
       ws = null;
       if (turn) failTurn("Die Verbindung zum Server wurde unterbrochen.");
       if (recognition) recognition.abort();
+      wake.stop();
       setState("offline");
       if (event.code === 4401) {  // Token ungültig: nicht erneut verbinden, neu anmelden
         setConnection("offline", "Nicht angemeldet");
@@ -650,6 +842,7 @@
     els.optSpeak.checked = settings.speak;
     els.optConvo.checked = settings.convo;
     els.optConvo.disabled = !canListen;
+    els.optLocation.value = settings.location;
     fillVoices();
     els.settings.showModal();
   });
@@ -660,6 +853,10 @@
   });
   els.optConvo.addEventListener("change", () => { settings.convo = els.optConvo.checked; store.set("convo", settings.convo); });
   els.voice.addEventListener("change", () => { settings.voice = els.voice.value; store.set("voice", settings.voice); });
+  els.optLocation.addEventListener("change", () => {
+    settings.location = els.optLocation.value.trim();
+    store.set("location", settings.location);
+  });
   els.voiceTest.addEventListener("click", () => {
     const speakSetting = settings.speak;
     settings.speak = true;
@@ -674,6 +871,7 @@
     const socket = ws;
     ws = null;
     socket?.close();
+    wake.stop();
     setConnection("offline", "Nicht angemeldet");
     setState("offline");
     showLogin();
@@ -682,6 +880,8 @@
 
   // ---------------------------------------------------------------- Bedienung
   els.hud.addEventListener("click", onHudActivate);
+  els.wakeToggle.hidden = !canListen;
+  els.wakeToggle.addEventListener("click", () => setWake(!settings.wake));
   els.mic.addEventListener("click", onHudActivate);
   els.form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -697,6 +897,7 @@
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || document.querySelector("dialog[open]")) return;
     if (recognition) recognition.abort();
+    if (wake.awaiting) { wake.reset(); els.caption.textContent = ""; }
     if (turn) { turn.muted = true; tts.stop(); return; }
     tts.stop();
     if (state !== "offline") setState("idle");
@@ -704,6 +905,7 @@
 
   window.addEventListener("hashchange", () => {  // Link mit Token in einem bereits offenen Tab
     const value = tokenFromLink();
+    setWake(store.get("wake", settings.wake));
     if (!value) return;
     token = value;
     if (els.login.open) els.login.close();
@@ -714,6 +916,7 @@
   });
 
   updateComposer();
+  setWake(settings.wake);
   setState("offline", "Verbinde …");
   connect();
 })();

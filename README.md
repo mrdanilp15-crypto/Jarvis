@@ -110,7 +110,8 @@ Voraussetzung: Docker mit Compose v2; für flüssige Antworten 32 GB RAM oder ei
 [Hardware-Tabelle](docs/06-integrationsplan.md#65-lokale-ki-modelle)).
 
 **Ein Befehl** (macOS, Linux, Windows über WSL/Git Bash) – legt `deploy/.env` mit zufälligem Passwort und API-Token
-an, startet Kern, Postgres, Redis und Ollama, lädt die Modelle und zeigt am Ende den Link zur Oberfläche:
+an, wählt das Sprachmodell passend zur Hardware (NVIDIA-GPU wird automatisch genutzt), startet Kern, Postgres, Redis
+und Ollama, lädt die Modelle, wärmt sie vor und zeigt am Ende den Link zur Oberfläche:
 
 ```bash
 git clone https://github.com/mrdanilp15-crypto/Jarvis.git
@@ -120,11 +121,20 @@ cd Jarvis
 
 **Mit JARVIS sprechen:** den angezeigten Link `http://127.0.0.1:8080/#token=…` in Chrome oder Edge öffnen, auf den
 leuchtenden Kreis tippen (oder Leertaste), sprechen – JARVIS antwortet mit Stimme und schreibt mit. Tippen geht auch.
-Im Zahnrad-Menü: Stimme wählen, Sprachausgabe und Dauergespräch ein/aus. Die Spracherkennung nutzt die des Browsers
-(Chrome/Edge senden das Audio dafür an Google bzw. Microsoft); vollständig lokal über Whisper/Piper ist der nächste
-Ausbauschritt. Die API-Beschreibung liegt unter `http://127.0.0.1:8080/docs` (oben rechts **Authorize** → Token).
+Mit **„Jarvis“-Aktivierung** (Schalter unter dem Kreis) reicht „Jarvis, wie wird das Wetter morgen?“. Im Zahnrad-Menü:
+Stimme, Wohnort fürs Wetter, Sprachausgabe und Dauergespräch. Die Spracherkennung nutzt die des Browsers (Chrome/Edge
+senden das Audio dafür an Google bzw. Microsoft – mit „Jarvis“-Aktivierung dauerhaft); vollständig lokal über
+Whisper/Piper/openWakeWord ist der nächste Ausbauschritt. API-Beschreibung: `http://127.0.0.1:8080/docs`
+(oben rechts **Authorize** → Token).
 
-Update auf eine neue Version: `git pull` und erneut `./deploy/start.sh` (baut den Kern neu; Modelle bleiben geladen).
+Eingebaut und ohne API-Schlüssel: **Wetter** (Open-Meteo), **Nachrichten** (Tagesschau-RSS, weitere Feeds in
+`config/jarvis.example.yaml`) und **Wikipedia**.
+
+**Automatisch beim Anmelden starten (Windows):** `./deploy/start.sh autostart` – danach startet Windows Docker
+Desktop und öffnet JARVIS als eigenes Fenster, ohne Konsole; zusätzlich liegt eine Verknüpfung „JARVIS“ auf dem
+Desktop. Entfernen: `./deploy/start.sh autostart-remove`.
+
+Update auf eine neue Version: `git pull` und erneut `./deploy/start.sh` (baut den Kern neu; geladene Modelle bleiben).
 
 Dasselbe Schritt für Schritt:
 
@@ -151,8 +161,8 @@ cd Jarvis/reference/node
 JARVIS_URL=ws://127.0.0.1:8080 JARVIS_TOKEN=dev-alex-token node jarvis-client.mjs
 ```
 
-- Schwächere Hardware: ein kleineres Modell laden (z. B. `qwen2.5:3b`) und in `config/jarvis.example.yaml` unter
-  `llm.providers.local.model` eintragen, dann `docker compose restart jarvis-core`.
+- Anderes Modell: `JARVIS_LLM_MODEL` in `deploy/.env` ändern (z. B. `qwen2.5:3b-instruct` = schneller,
+  `qwen2.5:14b-instruct` = klüger) und `./deploy/start.sh` erneut ausführen.
 - Ohne `ANTHROPIC_API_KEY` arbeitet JARVIS rein lokal; mit Schlüssel gehen komplexe, nicht-sensible Anfragen an Claude.
 - Home Assistant verbinden: Token als `JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN` in `.env` eintragen
   ([Anleitung](docs/06-integrationsplan.md#61-home-assistant)).
@@ -169,7 +179,7 @@ python tools/validate.py
 # Kernlogik des Python-Skeletts testen (läuft offline, ohne LLM/Home Assistant)
 cd reference/python
 pip install -e ".[dev]"
-pytest                    # 118 Tests
+pytest                    # 132 Tests
 python -m jarvis.demo     # Fast-Path, Tool-Use, R3-Bestätigung, Prompt-Injection-Abwehr, Gastrechte
 
 # Node-Beispiele (Node >= 22)

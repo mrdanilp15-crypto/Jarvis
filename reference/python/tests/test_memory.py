@@ -78,3 +78,18 @@ def test_recency_decay_only_for_episodes():
     old_fact = MemoryItem("x", "semantic", None, 0.5, 1.0, created_at=now - timedelta(days=30))
     assert round(score(old_episode, 1.0, now, w), 3) == round(0.6 + 0.25 * 0.5 + 0.15 * 0.5, 3)
     assert score(old_fact, 1.0, now, w) > score(old_episode, 1.0, now, w)
+
+
+def test_recall_without_memories_skips_embedding():
+    class CountingEmbedder(HashingEmbedder):
+        calls = 0
+
+        async def embed(self, texts):
+            CountingEmbedder.calls += 1
+            return await super().embed(texts)
+
+    service = MemoryService(InMemoryMemoryStore(), CountingEmbedder())
+    assert asyncio.run(service.recall("Wie ist das Wetter?", user_id="alex")) == []
+    assert CountingEmbedder.calls == 0  # kein Embedding-Modell laden, solange nichts gespeichert ist
+    asyncio.run(service.remember("Alex mag Jazz", user_id="alex"))
+    assert asyncio.run(service.recall("Musik", user_id="alex")) == ["Alex mag Jazz"]

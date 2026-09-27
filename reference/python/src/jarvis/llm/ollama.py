@@ -30,8 +30,9 @@ class OllamaProvider:
         *,
         base_url: str = "http://localhost:11434",
         model: str = "qwen2.5:14b-instruct",
-        num_ctx: int = 32768,
-        timeout_s: float = 60.0,
+        num_ctx: int = 8192,
+        timeout_s: float = 180.0,
+        keep_alive: str | int = "24h",
         client: Any = None,
     ) -> None:
         import httpx  # optionale Abhängigkeit
@@ -39,15 +40,24 @@ class OllamaProvider:
         self._httpx = httpx
         self._client = client or httpx.AsyncClient(base_url=base_url, timeout=timeout_s)
         self.model = model
-        self.num_ctx = num_ctx
+        self.num_ctx = num_ctx  # größerer Kontext = mehr Speicher und langsamer, vor allem ohne GPU
+        self.keep_alive = keep_alive  # Modell im Speicher halten; Standard von Ollama wären 5 Minuten
 
     def _render(self, system: SystemPrompt, transcript: list[Turn]) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": f"{system.static}\n\n{system.dynamic}".strip()}
-        ]
-        for turn in transcript:
+        # Ollama rechnet nur den Teil des Prompts neu, der sich gegenüber der letzten Anfrage geändert hat
+        # (KV-Cache). Deshalb bleibt vorne nur der stabile Teil (Regeln, Persona; danach die Tools), und der
+        # dynamische Teil (Uhrzeit, Erinnerungen) steht in der Nutzernachricht, zu der er gehört – jede frühere
+        # Nachricht behält ihren Kontext von damals. So bleibt der gerenderte Verlauf Zeichen für Zeichen gleich
+        # und pro Frage kommen nur die neuen Tokens hinzu. Stünde der Kontext im System-Prompt, müsste das Modell
+        # bei jeder Frage System-Prompt, Tools und Verlauf komplett neu lesen.
+        current = max((i for i, t in enumerate(transcript) if isinstance(t, UserTurn)), default=None)
+        system_text = system.static if current is not None else f"{system.static}\n\n{system.dynamic}"
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_text.strip()}]
+        for i, turn in enumerate(transcript):
             if isinstance(turn, UserTurn):
-                messages.append({"role": "user", "content": turn.text})
+                context = turn.context or (system.dynamic if i == current else "")
+                text = f"{context}\n\n{turn.text}" if context else turn.text
+                messages.append({"role": "user", "content": text})
             elif isinstance(turn, AssistantTurn):
                 msg: dict[str, Any] = {"role": "assistant", "content": turn.text}
                 if turn.tool_calls:
@@ -69,19 +79,7 @@ class OllamaProvider:
         on_text: OnText | None = None,
         effort: str | None = None,  # lokal ohne Wirkung
     ) -> LLMResponse:
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": self._render(system, transcript),
-            "stream": True,
-            "options": {"num_ctx": self.num_ctx, "temperature": 0.3},
-        }
-        if tools:
-            payload["tools"] = [
-                {"type": "function",
-                 "function": {"name": t.name, "description": t.description, "parameters": t.input_schema}}
-                for t in tools
-            ]
-
+        payload = self._payload(self._render(system, transcript), tools, stream=True)
         text_parts: list[str] = []
         calls: list[ToolCall] = []
         done_reason = None
@@ -112,13 +110,8 @@ class OllamaProvider:
                             "input_tokens": chunk.get("prompt_eval_count", 0),
                             "output_tokens": chunk.get("eval_count", 0),
                         }
-        except self._httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404:
-                raise JarvisError("JRV-LLM-001", f"Modell {self.model} ist nicht geladen",
-                                  user_message=f"Das lokale Modell fehlt noch: 'ollama pull {self.model}' ausführen.") from exc
-            raise JarvisError("JRV-LLM-001", f"Lokales Modell antwortet mit HTTP {exc.response.status_code}") from exc
         except self._httpx.HTTPError as exc:
-            raise JarvisError("JRV-LLM-001", f"Lokales Modell nicht erreichbar: {exc}") from exc
+            raise self._error(exc) from exc
 
         text = "".join(text_parts)
         stop: StopReason = "tool_use" if calls else ("max_tokens" if done_reason == "length" else "end_turn")
@@ -130,3 +123,40 @@ class OllamaProvider:
             usage=usage,
             model=self.model,
         )
+
+    async def warm_up(self, system_static: str, tools: list[ToolSpec]) -> None:
+        """Lädt das Modell und rechnet System-Prompt und Tools einmal vorab durch (landet im KV-Cache).
+        Damit ist schon die erste Frage nach dem Start schnell. Wirft ``JarvisError`` wie ``complete``."""
+        messages = [{"role": "system", "content": system_static.strip()}, {"role": "user", "content": "."}]
+        payload = self._payload(messages, tools, stream=False)
+        payload["options"]["num_predict"] = 1
+        try:
+            response = await self._client.post("/api/chat", json=payload)
+            response.raise_for_status()
+        except self._httpx.HTTPError as exc:
+            raise self._error(exc) from exc
+
+    def _payload(self, messages: list[dict[str, Any]], tools: list[ToolSpec], *, stream: bool) -> dict[str, Any]:
+        # num_ctx muss bei allen Anfragen gleich sein – ein anderer Wert lädt das Modell neu
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": stream,
+            "keep_alive": self.keep_alive,
+            "options": {"num_ctx": self.num_ctx, "temperature": 0.3},
+        }
+        if tools:
+            payload["tools"] = [
+                {"type": "function",
+                 "function": {"name": t.name, "description": t.description, "parameters": t.input_schema}}
+                for t in tools
+            ]
+        return payload
+
+    def _error(self, exc: Exception) -> JarvisError:
+        if isinstance(exc, self._httpx.HTTPStatusError):
+            if exc.response.status_code == 404:
+                return JarvisError("JRV-LLM-001", f"Modell {self.model} ist nicht geladen",
+                                   user_message=f"Das lokale Modell fehlt noch: 'ollama pull {self.model}' ausführen.")
+            return JarvisError("JRV-LLM-001", f"Lokales Modell antwortet mit HTTP {exc.response.status_code}")
+        return JarvisError("JRV-LLM-001", f"Lokales Modell nicht erreichbar: {exc}")

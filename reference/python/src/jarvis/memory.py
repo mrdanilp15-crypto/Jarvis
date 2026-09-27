@@ -82,14 +82,17 @@ class HashingEmbedder:
 
 
 class OllamaEmbedder:
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "bge-m3") -> None:
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "bge-m3",
+                 keep_alive: str | int = "24h") -> None:
         import httpx
 
         self._client = httpx.AsyncClient(base_url=base_url, timeout=30)
         self.model = model
+        self.keep_alive = keep_alive
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        response = await self._client.post("/api/embed", json={"model": self.model, "input": texts})
+        response = await self._client.post("/api/embed", json={"model": self.model, "input": texts,
+                                                              "keep_alive": self.keep_alive})
         response.raise_for_status()
         return response.json()["embeddings"]
 
@@ -143,6 +146,9 @@ class InMemoryMemoryStore:
             item.access_count += 1
         return ranked
 
+    async def has_memories(self, user_id: str | None) -> bool:
+        return bool(self._visible(user_id))
+
     async def forget(self, item_id: str, *, user_id: str | None) -> bool:
         item = self.items.get(item_id)
         if item is None or item.user_id not in (user_id, None):
@@ -187,6 +193,11 @@ class PostgresMemoryStore:
     def __init__(self, pool: Any) -> None:
         self.pool = pool  # asyncpg.Pool
 
+    async def has_memories(self, user_id: str | None) -> bool:
+        return bool(await self.pool.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM jarvis.memory_items WHERE valid_until IS NULL"
+            " AND (user_id = $1::text OR user_id IS NULL))", user_id))
+
     async def search(
         self,
         query_embedding: list[float],
@@ -226,6 +237,8 @@ class MemoryService:
 
     async def recall(self, query: str, *, user_id: str | None, top_k: int = 8,
                      include_sensitive: bool = False, now: datetime | None = None) -> list[str]:
+        if not await self.store.has_memories(user_id):
+            return []  # nichts gespeichert: kein Embedding nötig (spart ein zweites Modell im Speicher)
         [embedding] = await self.embedder.embed([query])
         results = await self.store.search(embedding, user_id=user_id, top_k=top_k,
                                           include_sensitive=include_sensitive, now=now, weights=self.weights)

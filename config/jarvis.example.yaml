@@ -71,14 +71,23 @@ llm:
     local:
       type: ollama
       base_url: http://ollama:11434
-      model: qwen2.5:14b-instruct
-      num_ctx: 32768
-      timeout_s: 60
+      model: qwen2.5:14b-instruct   # JARVIS_LLM_MODEL in deploy/.env hat Vorrang (start.sh wählt nach Hardware)
+      num_ctx: 8192                  # Kontextfenster: größer = mehr Speicher und langsamer (vor allem ohne GPU)
+      keep_alive: 24h                # Modell im Speicher halten (Ollama-Standard: 5 min, danach Neuladen)
+      timeout_s: 180                 # ohne GPU braucht die erste Antwort nach dem Laden länger
   embeddings:
     type: ollama
     base_url: http://ollama:11434
     model: bge-m3
     dimensions: 1024
+    keep_alive: 24h
+
+info:                          # eingebaute Informationsdienste ohne API-Schlüssel
+  enabled: true
+  home_location: ""            # Standardort fürs Wetter (JARVIS_HOME_LOCATION hat Vorrang; die Weboberfläche sendet ihren eigenen)
+  wikipedia_language: de
+  news_feeds:                  # RSS/Atom; der erste ist die Standardquelle
+    tagesschau: https://www.tagesschau.de/index~rss2.xml
 
 router:
   fast_path_min_confidence: 0.9
@@ -88,7 +97,7 @@ router:
 
 orchestrator:
   max_tool_iterations: 8
-  turn_timeout_s: 60
+  turn_timeout_s: 180          # inkl. mehrerer Tool-Runden; lokal ohne GPU großzügig
   tool_default_timeout_s: 10
   verify_state_changes: true
 

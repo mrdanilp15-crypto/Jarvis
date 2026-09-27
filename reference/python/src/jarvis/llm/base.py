@@ -37,6 +37,9 @@ class ToolResult:
 @dataclass
 class UserTurn:
     text: str
+    # Situation/Erinnerungen zum Zeitpunkt der Frage. Lokale Modelle bekommen sie mit der Nachricht, damit der
+    # gerenderte Verlauf unverändert bleibt und Ollama ihn nicht bei jeder Frage neu durchrechnen muss.
+    context: str = ""
 
 
 @dataclass

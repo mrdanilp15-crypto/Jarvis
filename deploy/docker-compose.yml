@@ -22,6 +22,8 @@ services:
       JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN: ${JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN:-}
       JARVIS_SECRET_KV_JARVIS_MQTT_PASSWORD: ${JARVIS_SECRET_KV_JARVIS_MQTT_PASSWORD:-}
       JARVIS_DEV_TOKENS: ${JARVIS_DEV_TOKENS:-{}}
+      JARVIS_LLM_MODEL: ${JARVIS_LLM_MODEL:-}           # leer = Modell aus der Konfiguration
+      JARVIS_HOME_LOCATION: ${JARVIS_HOME_LOCATION:-}   # Standardort fürs Wetter
     volumes:
       - ../config:/app/config:ro
       - ../schemas:/app/schemas:ro
@@ -83,13 +85,13 @@ services:
   ollama:
     <<: *restart
     image: ollama/ollama:latest
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h             # Modelle im Speicher halten, sonst nach 5 min Pause neu laden
+      OLLAMA_NUM_PARALLEL: "1"           # ein Gespräch zur Zeit: ein KV-Cache, weniger Speicher
+      OLLAMA_FLASH_ATTENTION: "1"
     volumes: [ollama:/root/.ollama]
     networks: [core, egress]             # egress nur für "ollama pull"; danach entfernbar
-    # GPU (NVIDIA Container Toolkit):
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }]
+    # GPU (NVIDIA): docker-compose.gpu.yml – start.sh aktiviert es automatisch über COMPOSE_FILE in .env
 
   wyoming-whisper:
     <<: *restart

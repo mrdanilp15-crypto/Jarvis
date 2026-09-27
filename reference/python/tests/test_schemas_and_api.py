@@ -153,3 +153,34 @@ def test_api_websocket_stream(client):
         assert final["type"] == "output.final" and final["route"] == "fast_path"
         ws.send_json({"type": "confirmation.resolve", "confirmation_id": "cnf_x", "decision": "approve"})
         assert ws.receive_json()["error"]["code"] == "JRV-POL-001"
+
+
+def test_location_from_client_reaches_the_model_context(orchestrator):
+    import asyncio
+    from datetime import datetime
+
+    from jarvis.api import Container
+    from jarvis.context import Situation
+    from jarvis.events import InMemoryEventBus
+    from jarvis.llm.router import ModelRouter
+    from jarvis.orchestrator import TurnRequest
+    from jarvis.testing import say
+
+    seen = {}
+
+    class CapturingProvider:
+        name = "ollama"
+        is_local = True
+
+        async def complete(self, *, system, transcript, tools, on_text=None, effort=None):
+            seen["dynamic"] = system.dynamic
+            return say("Hamburg, Sir.")
+
+    container = Container(
+        orchestrator=orchestrator, bus=InMemoryEventBus(), router=ModelRouter(local=CapturingProvider(), cloud=None),
+        tokens={}, webhook_secrets={},
+        situation=lambda who, channel: Situation(now=datetime(2026, 9, 27, 10, 0), channel=channel, location="Berlin"),
+    )
+    request = TurnRequest(text="Wie ist das Wetter?", session_id="loc1", principal=ALEX)
+    asyncio.run(container.run_turn(request, channel="voice", location="Hamburg"))
+    assert "Ort des Nutzers: Hamburg" in seen["dynamic"]  # Ort der Oberfläche schlägt den Standardort

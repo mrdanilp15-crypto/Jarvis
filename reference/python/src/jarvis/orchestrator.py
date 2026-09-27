@@ -255,7 +255,7 @@ class Orchestrator:
                 log.warning("memory recall failed; continuing without memories", exc_info=True,
                             extra={"correlation_id": req.correlation_id})
         system = self.context.system_prompt(situation, memories)
-        session.transcript.append(UserTurn(req.text))
+        session.transcript.append(UserTurn(req.text, context=system.dynamic))
         tools = self.registry.tool_specs(req.allowed_domains)
         result = TurnResult(text="", route=f"llm:{provider.name}", tainted=session.tainted)
 

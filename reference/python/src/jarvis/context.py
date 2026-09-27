@@ -40,6 +40,7 @@ class Situation:
     area: str | None = None
     mode: str = "normal"
     channel: str = "voice"
+    location: str | None = None  # Ort des Nutzers (z. B. fürs Wetter), aus der Oberfläche oder der Konfiguration
     home_state: list[str] = field(default_factory=list)  # bereits relevanzgefiltert
 
     def render(self) -> str:
@@ -50,6 +51,8 @@ class Situation:
             f"Modus: {self.mode}",
             f"Ausgabekanal: {self.channel}",
         ]
+        if self.location:
+            lines.append(f"Ort des Nutzers: {self.location}")
         if self.home_state:
             lines.append("Relevante Gerätezustände:")
             lines.extend(f"- {s}" for s in self.home_state)
@@ -118,7 +121,7 @@ class ContextBuilder:
 
 def _turn_text(turn: Turn) -> str:
     if isinstance(turn, UserTurn):
-        return turn.text
+        return f"{turn.context}{turn.text}"
     if isinstance(turn, AssistantTurn):
         return turn.text + "".join(f"{c.name}{c.arguments}" for c in turn.tool_calls)
     if isinstance(turn, ToolResultsTurn):

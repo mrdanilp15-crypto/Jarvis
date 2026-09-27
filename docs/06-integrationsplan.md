@@ -136,6 +136,13 @@ Ollama (`/api/chat`, `/api/embed`), STT/TTS/Wake-Word über das Wyoming-Protokol
 | GPU 24 GB VRAM | 14–32 B | `large-v3` | Piper `high` / XTTS | lokal auch Recherche-Zusammenfassungen und längere Planung |
 | Apple Silicon, 32–64 GB | 14–32 B (Metal) | whisper.cpp / faster-whisper | Piper | wie GPU 24 GB, leise und sparsam |
 
+`./deploy/start.sh` wählt beim ersten Start automatisch: NVIDIA-GPU ab 11 GB → `qwen2.5:14b-instruct`, ab 6 GB bzw.
+ohne GPU mit mindestens 12 GB Docker-Arbeitsspeicher → `qwen2.5:7b-instruct`, sonst `qwen2.5:3b-instruct`
+(`JARVIS_LLM_MODEL` in `deploy/.env`). Eine NVIDIA-GPU wird über `docker-compose.gpu.yml` eingebunden; scheitert das,
+startet Ollama ohne GPU. Ohne GPU bestimmen vor allem zwei Dinge die Wartezeit: das erneute Durchrechnen des Prompts
+(vermieden durch den stabilen Präfix, siehe 4.8) und das Neuladen des Modells nach Pausen (vermieden durch
+`keep_alive` und das Vorwärmen beim Start).
+
 Auswahlregel: Modellfamilien mit zuverlässigem Tool-Calling und guter Deutschleistung wählen und **mit dem Eval-Set**
 (Intent, Tool-Wahl, Rückfragen) gegeneinander messen, bevor ein Modell produktiv wird. Embeddings: ein
 mehrsprachiges Modell (z. B. `bge-m3`, 1024 Dimensionen – passend zu `vector(1024)` im Schema).
@@ -193,7 +200,7 @@ anbieterneutrale Transkript erlaubt den Wechsel mitten in einer Sitzung (z. B. F
 |----------|----------|----------|---------|
 | Satellit kompakt | ESP32-S3 mit Mikrofon-Array und Lautsprecher | ESPHome, Wake-Word auf dem Gerät, Wyoming | Räume |
 | Satellit komfortabel | Raspberry Pi 5 + ReSpeaker-Mikrofon-HAT + Lautsprecher | `wyoming-satellite`, openWakeWord lokal, AEC | Wohnzimmer/Küche (Musik + Sprache) |
-| Browser (sofort) | PC/Tablet mit Mikrofon | [Weboberfläche](../reference/python/src/jarvis/web) unter `http://<kern>:8080/`: Spracheingabe und -ausgabe des Browsers (Chrome/Edge), Dauergespräch, Barge-in | Desktop, Tablet-Dashboard |
+| Browser (sofort) | PC/Tablet mit Mikrofon | [Weboberfläche](../reference/python/src/jarvis/web) unter `http://<kern>:8080/`: Spracheingabe und -ausgabe des Browsers (Chrome/Edge), „Jarvis“-Aktivierung (Dauer-Erkennung des Browsers, abschaltbar), Dauergespräch, Barge-in | Desktop, Tablet-Dashboard |
 | Browser (lokal, Ausbau) | beliebig | [`voice-widget.js`](../reference/web/voice-widget.js): PCM16 über `WS /v1/stream` an Whisper/Piper (Wyoming) – ohne Cloud; Audio-Frames im Kern noch offen | Desktop, Tablet-Dashboard |
 | App | Smartphone | Push-to-Talk, Headset | unterwegs |
 
@@ -209,7 +216,8 @@ nachgeprüft.
    `cd deploy && cp .env.example .env` (Passwort und Dev-Token ändern), dann
    `docker compose up -d --build jarvis-core` – startet Postgres, Redis, Ollama und den Kern; das Datenbankschema wird
    beim ersten Start importiert. Test: `curl http://127.0.0.1:8080/v1/system/health`. Danach im Browser
-   `http://127.0.0.1:8080/#token=<Dev-Token>` öffnen und mit JARVIS sprechen (6.9).
+   `http://127.0.0.1:8080/#token=<Dev-Token>` öffnen und mit JARVIS sprechen (6.9). Windows:
+   `./deploy/start.sh autostart` startet JARVIS künftig beim Anmelden (Docker Desktop, dann App-Fenster ohne Konsole).
 3. **Modelle laden:** `docker compose exec ollama ollama pull <modell>` für LLM und Embeddings (siehe 6.5). Fehlt
    das Modell, antwortet die API mit `JRV-LLM-001` und nennt den nötigen `ollama pull`-Befehl.
 4. **Weitere Dienste:** für MQTT zuerst TLS-Zertifikate nach `deploy/secrets/certs` und Mosquitto-Passwörter

@@ -84,4 +84,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: POSTGRES_PASSWORD=ci docker compose -f deploy/docker-compose.yml config -q
+      - run: POSTGRES_PASSWORD=ci docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.gpu.yml config -q
       - run: bash -n deploy/start.sh
+      - name: Windows-Skripte (Autostart) parsen
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in Get-ChildItem deploy/windows/*.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            foreach ($e in $errors) { Write-Host "::error file=$($file.Name)::$($e.Message)"; $failed = $true }
+            $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+            if ($bytes[0] -ne 0xEF) { Write-Host "::error file=$($file.Name)::UTF-8-BOM fehlt (PowerShell 5.1 liest Umlaute sonst falsch)"; $failed = $true }
+          }
+          if ($failed) { exit 1 }

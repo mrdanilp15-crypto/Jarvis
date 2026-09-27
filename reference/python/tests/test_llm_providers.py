@@ -137,7 +137,10 @@ def test_ollama_streaming_tool_calls():
         tools=[tool], on_text=on_text))
 
     body = captured["body"]
-    assert body["messages"][0] == {"role": "system", "content": "REGELN\n\nSITUATION"}
+    # stabiler Präfix (KV-Cache): nur Regeln im System-Prompt, Situation in der aktuellen Nutzernachricht
+    assert body["messages"][0] == {"role": "system", "content": "REGELN"}
+    assert body["messages"][1] == {"role": "user", "content": "SITUATION\n\nLicht an"}
+    assert body["keep_alive"] == "24h" and body["options"]["num_ctx"] == 8192
     assert body["messages"][2]["tool_calls"][0]["function"]["name"] == "home__get_state"
     assert body["messages"][3] == {"role": "tool", "content": "off", "tool_name": "home__get_state"}
     assert body["tools"][0]["function"]["parameters"] == {"type": "object", "properties": {}}
@@ -159,3 +162,42 @@ def test_ollama_missing_model_gives_actionable_error():
         asyncio.run(provider.complete(system=SystemPrompt("R"), transcript=[UserTurn("hi")], tools=[]))
     assert exc.value.code == "JRV-LLM-001"
     assert "ollama pull qwen2.5:14b-instruct" in exc.value.user_message
+
+
+def test_ollama_prefix_stays_stable_across_turns():
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content=json.dumps({"message": {"content": "ok"}, "done": True}).encode())
+
+    client = httpx.AsyncClient(base_url="http://ollama:11434", transport=httpx.MockTransport(handler))
+    provider = OllamaProvider(client=client)
+    # wie im Orchestrator: jede Frage behält den Kontext ihres Zeitpunkts
+    first = [UserTurn("Hallo", context="Zeit: 10:00")]
+    second = [*first, AssistantTurn("Guten Tag.", [], "ollama"), UserTurn("Wie spät?", context="Zeit: 10:01")]
+    asyncio.run(provider.complete(system=SystemPrompt("REGELN", "Zeit: 10:00"), transcript=first, tools=[]))
+    asyncio.run(provider.complete(system=SystemPrompt("REGELN", "Zeit: 10:01"), transcript=second, tools=[]))
+    one, two = bodies[0]["messages"], bodies[1]["messages"]
+    assert two[: len(one)] == one  # alter Prompt ist unveränderter Präfix des neuen -> KV-Cache greift
+    assert one[0] == {"role": "system", "content": "REGELN"}
+    assert two[3] == {"role": "user", "content": "Zeit: 10:01\n\nWie spät?"}
+
+
+def test_ollama_warm_up_loads_model_with_same_options():
+    captured = {}
+
+    def handler(request):
+        captured["path"] = request.url.path
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"message": {"content": "."}, "done": True})
+
+    client = httpx.AsyncClient(base_url="http://ollama:11434", transport=httpx.MockTransport(handler))
+    provider = OllamaProvider(client=client, model="qwen2.5:7b-instruct", num_ctx=4096, keep_alive="1h")
+    tool = ToolSpec("info__weather", "Wetter.", {"type": "object", "properties": {}})
+    asyncio.run(provider.warm_up("REGELN", [tool]))
+    body = captured["body"]
+    assert captured["path"] == "/api/chat" and body["stream"] is False
+    assert body["messages"][0] == {"role": "system", "content": "REGELN"}
+    assert body["options"] == {"num_ctx": 4096, "temperature": 0.3, "num_predict": 1}
+    assert body["keep_alive"] == "1h" and body["tools"][0]["function"]["name"] == "info__weather"

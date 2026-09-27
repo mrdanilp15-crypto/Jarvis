@@ -65,6 +65,10 @@
       </button>
       <p class="status" id="status" aria-live="polite">Verbinde …</p>
       <p class="caption" id="caption" aria-live="polite"></p>
+      <button class="pill" id="wake-toggle" type="button" aria-pressed="false"
+              title="Hört dauerhaft auf „Jarvis“. Dafür sendet Chrome bzw. Edge das Mikrofon-Audio laufend an Google bzw. Microsoft.">
+        <span class="dot" aria-hidden="true"></span><span id="wake-text">„Jarvis“-Aktivierung aus</span>
+      </button>
     </section>
 
     <section class="log-panel" aria-label="Gesprächsprotokoll">
@@ -102,9 +106,13 @@
       <label class="check"><input type="checkbox" id="opt-convo">
         <span>Dauergespräch: nach jeder gesprochenen Antwort automatisch wieder zuhören</span></label>
       <label class="field">Stimme <select id="voice"></select></label>
+      <label class="field">Ihr Ort (für das Wetter)
+        <input id="opt-location" type="text" maxlength="100" placeholder="z. B. Hamburg" autocomplete="address-level2">
+      </label>
       <p class="hint">Spracheingabe funktioniert in Chrome und Edge. Deren Spracherkennung läuft über die Server von
-        Google bzw. Microsoft; die Stimme nutzt die Sprachausgabe Ihres Systems. Vollständig lokal (Whisper und Piper)
-        ist der nächste Ausbauschritt.</p>
+        Google bzw. Microsoft – bei eingeschalteter „Jarvis“-Aktivierung dauerhaft, sonst nur nach einem Tipp auf den
+        Kreis. Die Stimme nutzt die Sprachausgabe Ihres Systems. Vollständig lokal (Whisper, Piper, openWakeWord) ist
+        der nächste Ausbauschritt.</p>
       <div class="actions">
         <button class="btn danger left" type="button" id="logout">Abmelden</button>
         <button class="btn" type="button" id="voice-test">Stimme testen</button>

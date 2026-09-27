@@ -201,6 +201,27 @@ body[data-state="offline"] .spin-fast, body[data-state="offline"] .spin-mid { an
 }
 @keyframes blink { 50% { opacity: 0.2; } }
 
+/* Aktivierungswort */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.pill:hover { background: var(--cyan-faint); }
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.pill[aria-pressed="true"] { color: var(--cyan); border-color: var(--cyan-soft); }
+.pill[aria-pressed="true"] .dot { background: var(--cyan); box-shadow: 0 0 8px var(--hud-glow); animation: breathe 2.4s ease-in-out infinite; }
+body.wake-heard { --hud: #8fe8ff; --hud-glow: rgba(143, 232, 255, 0.75); }
+@keyframes breathe { 50% { opacity: 0.35; } }
+
 /* ---------- Protokoll ---------- */
 .log-panel {
   min-height: 0;
@@ -390,4 +411,5 @@ dialog .hint { font-size: 12px; }
   .spin, .spin-rev, .spin-fast, .spin-mid { animation-duration: 600s; }
   .sweep { animation-duration: 4s; }
   body[data-state="listening"] .ripple { animation: none; }
+  .pill[aria-pressed="true"] .dot { animation: none; }
 }

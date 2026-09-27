@@ -27,8 +27,9 @@ from .api import Container, create_app
 from .capabilities import register_memory_capabilities
 from .connectors.homeassistant import HomeAssistantClient, register_home_capabilities, state_changed_to_event
 from .context import ContextBuilder, Situation
-from .errors import CircuitBreaker
+from .errors import CircuitBreaker, JarvisError
 from .events import InMemoryEventBus, RedisStreamEventBus
+from .info import InfoConfig, register_info_capabilities
 from .llm.ollama import OllamaProvider
 from .llm.router import ModelRouter
 from .logging_setup import configure_logging
@@ -80,15 +81,28 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
     mem_cfg = cfg["memory"]
     memory = MemoryService(
         InMemoryMemoryStore(dedup_similarity=mem_cfg["dedup_similarity"]),  # Betrieb: PostgresMemoryStore
-        OllamaEmbedder(emb_cfg["base_url"], emb_cfg["model"]),
+        OllamaEmbedder(emb_cfg["base_url"], emb_cfg["model"], keep_alive=emb_cfg.get("keep_alive", "24h")),
         RankingWeights(**mem_cfg["retrieval"]["weights"], half_life_days=mem_cfg["retrieval"]["half_life_days"]),
     )
     register_memory_capabilities(registry, memory)
 
+    info_cfg = cfg.get("info") or {}
+    home_location = os.environ.get("JARVIS_HOME_LOCATION") or info_cfg.get("home_location") or None
+    if info_cfg.get("enabled", True):
+        defaults = InfoConfig()
+        register_info_capabilities(registry, InfoConfig(
+            home_location=home_location,
+            news_feeds=info_cfg.get("news_feeds") or defaults.news_feeds,
+            wikipedia_language=info_cfg.get("wikipedia_language", defaults.wikipedia_language),
+        ))
+
     providers = cfg["llm"]["providers"]
     local_cfg = providers[cfg["llm"]["default_local"]]
-    local = OllamaProvider(base_url=local_cfg["base_url"], model=local_cfg["model"],
-                           num_ctx=local_cfg["num_ctx"], timeout_s=local_cfg["timeout_s"])
+    # JARVIS_LLM_MODEL (deploy/.env) überschreibt das Modell – start.sh wählt es passend zur Hardware
+    local = OllamaProvider(base_url=local_cfg["base_url"],
+                           model=os.environ.get("JARVIS_LLM_MODEL") or local_cfg["model"],
+                           num_ctx=local_cfg["num_ctx"], timeout_s=local_cfg["timeout_s"],
+                           keep_alive=local_cfg.get("keep_alive", "24h"))
     cloud = None
     cloud_cfg = providers.get(cfg["llm"]["default_cloud"])
     api_key = resolve_ref(cloud_cfg.get("api_key")) if cloud_cfg else None
@@ -126,10 +140,32 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
 
     def situation(principal: Principal, channel: str) -> Situation:
         return Situation(now=datetime.now(tz), user_display=principal.actor.split(":", 1)[-1],
-                         area=principal.area, channel=channel)
+                         area=principal.area, channel=channel, location=home_location)
 
     container = Container(orchestrator=orchestrator, bus=bus, router=router, tokens=tokens,
                           webhook_secrets={}, situation=situation)
+
+    async def warm_up_local_model() -> None:
+        """Lädt das lokale Modell beim Start und rechnet Regeln und Tools vorab durch, damit schon die erste
+        Frage schnell beantwortet wird. Wiederholt, bis Ollama läuft und das Modell geladen ist."""
+        static = orchestrator.context.system_prompt(Situation(now=datetime.now(tz)), []).static
+        delay = 5.0
+        while True:
+            container.llm_status = "loading"
+            try:
+                await local.warm_up(static, registry.tool_specs())
+            except JarvisError as exc:
+                # user_message ist nur gesetzt, wenn das Modell fehlt (HTTP 404, „ollama pull …“)
+                container.llm_status = "missing_model" if exc.user_message else "unavailable"
+                log.info("lokales Modell noch nicht bereit (%s) – neuer Versuch in %.0f s", exc.detail, delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 15.0)
+                continue
+            container.llm_status = "ready"
+            log.info("lokales Modell %s geladen und vorgewärmt", local.model)
+            return
+
+    background.append(warm_up_local_model())
     return container, background
 
 

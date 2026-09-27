@@ -46,13 +46,17 @@ class Container:
     situation: Callable[[Principal, str], Situation]
     classifier: HeuristicClassifier = field(default_factory=HeuristicClassifier)
     replay_cache: ReplayCache = field(default_factory=ReplayCache)
+    llm_status: str = "unknown"  # lokales Modell: unknown | loading | ready | missing_model | unavailable
 
-    async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None) -> TurnResult:
+    async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
+                       location: str | None = None) -> TurnResult:
         classification = self.classifier.classify(req.text)
         decision = self.router.decide(classification)
         provider = self.router.provider_for(decision)
         effort = "high" if classification.complexity == "complex" else "medium"
         situation = self.situation(req.principal, channel)
+        if location:
+            situation.location = location
         try:
             result = await self.orchestrator.handle_turn(req, provider=provider, situation=situation,
                                                          on_text=on_text, effort=effort)
@@ -87,6 +91,7 @@ class MessageIn(BaseModel):
     text: str = Field(min_length=1, max_length=32000, examples=["Hallo Jarvis, was kannst du?"])
     mode: Literal["normal", "night", "away", "guest", "party", "vacation"] = "normal"
     channel: Literal["app", "desktop", "web", "api"] = "app"
+    location: str | None = Field(default=None, max_length=100)
 
 
 class ConfirmationIn(BaseModel):
@@ -125,7 +130,7 @@ def create_app(container: Container) -> FastAPI:
     async def post_message(conversation_id: str, body: MessageIn, who: Principal = Depends(principal)) -> dict:
         result = await container.run_turn(
             TurnRequest(text=body.text, session_id=conversation_id, principal=who, mode=body.mode),
-            channel=body.channel,
+            channel=body.channel, location=body.location,
         )
         return turn_to_json(result)
 
@@ -163,7 +168,7 @@ def create_app(container: Container) -> FastAPI:
 
     @app.get("/v1/system/health")
     async def health() -> dict:
-        return {"status": "ok", "cloud_llm": container.router.cloud_breaker.state}
+        return {"status": "ok", "cloud_llm": container.router.cloud_breaker.state, "local_llm": container.llm_status}
 
     @app.websocket("/v1/stream")
     async def stream(ws: WebSocket) -> None:
@@ -180,9 +185,11 @@ def create_app(container: Container) -> FastAPI:
                 async def on_text(delta: str) -> None:
                     await ws.send_json({"type": "output.text_delta", "delta": delta})
 
+                location = msg.get("location")
                 result = await container.run_turn(
                     TurnRequest(text=msg["text"], session_id=msg["session_id"], principal=who),
-                    channel=msg.get("channel", "app"), on_text=on_text)
+                    channel=msg.get("channel", "app"), on_text=on_text,
+                    location=location[:100] if isinstance(location, str) and location.strip() else None)
                 await ws.send_json({"type": "output.final", **turn_to_json(result)})
             elif kind == "confirmation.resolve":
                 record = await container.orchestrator.resolve_confirmation(
