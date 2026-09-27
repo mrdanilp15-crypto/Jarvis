@@ -110,13 +110,21 @@ Voraussetzung: Docker mit Compose v2; für flüssige Antworten 32 GB RAM oder ei
 [Hardware-Tabelle](docs/06-integrationsplan.md#65-lokale-ki-modelle)).
 
 **Ein Befehl** (macOS, Linux, Windows über WSL/Git Bash) – legt `deploy/.env` mit zufälligem Passwort und API-Token
-an, startet Kern, Postgres, Redis und Ollama, lädt die Modelle und zeigt Token und Beispielaufrufe:
+an, startet Kern, Postgres, Redis und Ollama, lädt die Modelle und zeigt am Ende den Link zur Oberfläche:
 
 ```bash
 git clone https://github.com/mrdanilp15-crypto/Jarvis.git
 cd Jarvis
 ./deploy/start.sh          # stoppen: ./deploy/start.sh stop
 ```
+
+**Mit JARVIS sprechen:** den angezeigten Link `http://127.0.0.1:8080/#token=…` in Chrome oder Edge öffnen, auf den
+leuchtenden Kreis tippen (oder Leertaste), sprechen – JARVIS antwortet mit Stimme und schreibt mit. Tippen geht auch.
+Im Zahnrad-Menü: Stimme wählen, Sprachausgabe und Dauergespräch ein/aus. Die Spracherkennung nutzt die des Browsers
+(Chrome/Edge senden das Audio dafür an Google bzw. Microsoft); vollständig lokal über Whisper/Piper ist der nächste
+Ausbauschritt. Die API-Beschreibung liegt unter `http://127.0.0.1:8080/docs` (oben rechts **Authorize** → Token).
+
+Update auf eine neue Version: `git pull` und erneut `./deploy/start.sh` (baut den Kern neu; Modelle bleiben geladen).
 
 Dasselbe Schritt für Schritt:
 
@@ -161,7 +169,7 @@ python tools/validate.py
 # Kernlogik des Python-Skeletts testen (läuft offline, ohne LLM/Home Assistant)
 cd reference/python
 pip install -e ".[dev]"
-pytest                    # 115 Tests
+pytest                    # 118 Tests
 python -m jarvis.demo     # Fast-Path, Tool-Use, R3-Bestätigung, Prompt-Injection-Abwehr, Gastrechte
 
 # Node-Beispiele (Node >= 22)

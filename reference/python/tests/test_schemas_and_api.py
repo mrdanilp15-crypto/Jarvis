@@ -83,6 +83,17 @@ def test_api_requires_auth(client):
     assert r.status_code == 401
     assert r.headers["content-type"].startswith("application/problem+json")
     assert r.json()["code"] == "JRV-AUTH-001"
+    wrong_scheme = {"Authorization": "Basic tok_alex"}
+    assert client.post("/v1/conversations/c1/messages", headers=wrong_scheme, json={"text": "Hallo"}).status_code == 401
+
+
+def test_api_docs_offer_bearer_login(client):
+    # /docs zeigt nur mit Security-Schema den „Authorize“-Knopf und sendet das Token dann mit
+    spec = client.get("/openapi.json").json()
+    assert spec["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == "bearer"
+    operation = spec["paths"]["/v1/conversations/{conversation_id}/messages"]["post"]
+    assert operation["security"] == [{"HTTPBearer": []}]
+    assert not any(p["name"].lower() == "authorization" for p in operation.get("parameters", []))
 
 
 def test_api_message_fast_path_and_llm(client):
@@ -112,6 +123,25 @@ def test_api_webhook_signature(client):
     assert client.post("/v1/webhooks/whk_doorbell", content=body, headers=headers).status_code == 401
     bad = {**headers, "x-jarvis-delivery": "dlv_2", "x-jarvis-signature": "sha256=00"}
     assert client.post("/v1/webhooks/whk_doorbell", content=body, headers=bad).status_code == 401
+
+
+def test_web_ui_is_served(client):
+    page = client.get("/")
+    assert page.status_code == 200 and "J.A.R.V.I.S" in page.text
+    assert page.headers["cache-control"] == "no-cache"
+    for asset in ("jarvis.js", "jarvis.css", "favicon.svg"):
+        assert client.get(f"/{asset}").status_code == 200
+    assert client.get("/v1/system/health").json()["status"] == "ok"  # API-Routen haben Vorrang
+
+
+def test_api_websocket_rejects_bad_token(client):
+    from starlette.websockets import WebSocketDisconnect
+
+    # 4401 muss beim Browser ankommen (vor accept() würde daraus HTTP 403 bzw. Close-Code 1006)
+    with client.websocket_connect("/v1/stream?token=falsch") as ws:
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+    assert closed.value.code == 4401
 
 
 def test_api_websocket_stream(client):

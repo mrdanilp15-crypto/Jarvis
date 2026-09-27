@@ -6,10 +6,13 @@ import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Body, Depends, FastAPI, Header, Request, WebSocket, WebSocketDisconnect
+from fastapi import Body, Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .context import Situation
@@ -22,6 +25,16 @@ from .policy import Principal
 from .webhooks import ReplayCache, verify
 
 log = logging.getLogger(__name__)
+
+WEB_DIR = Path(__file__).with_name("web")  # Browser-Oberfläche (HUD, Sprache, Chat) unter „/“
+
+
+class _WebFiles(StaticFiles):
+    async def get_response(self, path: str, scope: Any) -> Any:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"  # nach einem Update sofort die neue Oberfläche laden
+        return response
+
 
 @dataclass
 class Container:
@@ -71,7 +84,7 @@ def turn_to_json(result: TurnResult) -> dict[str, Any]:
 
 
 class MessageIn(BaseModel):
-    text: str = Field(min_length=1, max_length=32000)
+    text: str = Field(min_length=1, max_length=32000, examples=["Hallo Jarvis, was kannst du?"])
     mode: Literal["normal", "night", "away", "guest", "party", "vacation"] = "normal"
     channel: Literal["app", "desktop", "web", "api"] = "app"
 
@@ -98,9 +111,12 @@ def create_app(container: Container) -> FastAPI:
                               user_message="Da ist bei mir etwas schiefgegangen.").to_problem(instance=request.url.path)
         return JSONResponse(problem, status_code=500, media_type="application/problem+json")
 
-    def principal(authorization: str | None = Header(default=None)) -> Principal:
-        token = authorization.removeprefix("Bearer ").strip() if authorization else ""
-        who = container.tokens.get(token)
+    # Als Security-Schema deklariert: nur so zeigt /docs den „Authorize“-Knopf und sendet das Token mit
+    # (Swagger UI verschickt Header-Parameter namens „Authorization“ grundsätzlich nicht).
+    bearer = HTTPBearer(auto_error=False, description="API-Token aus deploy/.env (JARVIS_DEV_TOKENS), ohne „Bearer “")
+
+    def principal(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> Principal:
+        who = container.tokens.get(credentials.credentials) if credentials else None
         if who is None:
             raise JarvisError("JRV-AUTH-001", "Bearer-Token fehlt oder ist ungültig")
         return who
@@ -153,10 +169,10 @@ def create_app(container: Container) -> FastAPI:
     async def stream(ws: WebSocket) -> None:
         # Browser können beim WebSocket-Handshake keine Header setzen -> kurzlebiges Token als Query-Parameter
         who = container.tokens.get(ws.query_params.get("token", ""))
+        await ws.accept()  # erst annehmen: vor accept() würde das Schließen zu HTTP 403, der Client sähe nur 1006
         if who is None:
-            await ws.close(code=4401)
+            await ws.close(code=4401)  # Authentifizierung fehlgeschlagen – Client verbindet nicht neu
             return
-        await ws.accept()
 
         async def handle(msg: dict[str, Any]) -> None:
             kind = msg.get("type")
@@ -185,7 +201,16 @@ def create_app(container: Container) -> FastAPI:
                     await handle(msg)
                 except JarvisError as exc:
                     await ws.send_json({"type": "error", "error": exc.to_problem()})
+                except WebSocketDisconnect:
+                    raise
+                except Exception as exc:  # Verbindung offen halten, der nächste Turn soll funktionieren
+                    log.exception("unhandled error in stream")
+                    problem = JarvisError("JRV-SYS-001", type(exc).__name__,
+                                          user_message="Da ist bei mir etwas schiefgegangen.").to_problem()
+                    await ws.send_json({"type": "error", "error": problem})
         except WebSocketDisconnect:
             return
 
+    # Zuletzt: alles, was keine API-Route ist, liefert die Browser-Oberfläche aus
+    app.mount("/", _WebFiles(directory=WEB_DIR, html=True), name="web")
     return app

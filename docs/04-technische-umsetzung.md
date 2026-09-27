@@ -40,6 +40,8 @@ Vollständige Spezifikation: [`api/openapi.yaml`](../api/openapi.yaml) (OpenAPI 
 | `POST /v1/webhooks/{hook_id}` | signierter Webhook → `jarvis.webhook.received` | HMAC | ✔ |
 | `POST /v1/confirmations/{id}` | Bestätigung freigeben/ablehnen | Bearer | ✔ |
 | `GET /v1/system/health` | Zustand, Circuit-Breaker | – | ✔ |
+| `GET /` | Browser-Oberfläche (HUD, Sprache, Chat) über `WS /v1/stream` | Token im Link-Fragment (`#token=…`) | ✔ |
+| `GET /docs` | interaktive API-Beschreibung (Swagger UI, **Authorize** für das Bearer-Token) | – | ✔ |
 | `POST /v1/actions` · `GET /v1/actions/{id}` | Capability direkt ausführen / Status | Bearer | Blueprint |
 | `GET/POST /v1/automations` · `POST …:dry-run` | Automationen verwalten, simulieren | Bearer | Blueprint |
 | `GET/POST /v1/tasks` | To-dos, Erinnerungen, Timer, Jobs | Bearer | Blueprint |
@@ -479,7 +481,7 @@ funktionieren; zusätzliche Regeln prüfen die Handler selbst.
 
 | Ebene | Inhalt | Status im Repo |
 |-------|--------|----------------|
-| Unit | Policy-Matrix, Tool-Validierung, Risiko-Regeln, Bedingungen, Ranking, Segmentierung, Signaturen | ✔ `reference/python/tests` (115 Tests) |
+| Unit | Policy-Matrix, Tool-Validierung, Risiko-Regeln, Bedingungen, Ranking, Segmentierung, Signaturen | ✔ `reference/python/tests` (118 Tests) |
 | Szenario | Orchestrator mit skriptbarem LLM und simuliertem Home Assistant: Fast-Path, Bestätigungen, Prompt-Injection, Gäste, Abbrüche | ✔ |
 | Vertrag | Schemas, Beispiele, Plugin-Manifeste, OpenAPI-Referenzen, Node-RED-Verdrahtung | ✔ `tools/validate.py` |
 | Datenbank | Schema-Import, Hash-Kette, Vektor-Suche | ✔ CI-Job mit `pgvector/pgvector:pg16` |

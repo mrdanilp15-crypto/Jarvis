@@ -27,6 +27,7 @@ Alle Beispiele sind lauffähiger bzw. geprüfter Code im Repository – die Ausz
 | [`node/webhook-relay.mjs`](../reference/node/webhook-relay.mjs) | Node.js | Webhook-Relay mit Signatur (identisch zu Python) | `node --test` (gemeinsamer Testvektor) |
 | [`node/mqtt-device-adapter.mjs`](../reference/node/mqtt-device-adapter.mjs) | Node.js | MQTT-Geräteadapter | `node --check` |
 | [`node/plugin-weather/`](../reference/node/plugin-weather) | Node.js | vollständiges Plugin (Manifest + HTTP-Protokoll) | Manifest-Schema |
+| [`jarvis/web/`](../reference/python/src/jarvis/web) | HTML/CSS/JS (Browser) | Oberfläche unter `/`: HUD, Spracheingabe/-ausgabe, Chat, Bestätigungen | TestClient, `node --check` |
 | [`web/voice-widget.js`](../reference/web/voice-widget.js) | JavaScript (Browser) | Push-to-Talk, AudioWorklet, Barge-in | Syntax |
 | [`homeassistant/packages/jarvis.yaml`](../integrations/homeassistant/packages/jarvis.yaml) | HA-YAML | rest_command, Webhook-Trigger, MQTT-Sensoren, Skript | YAML-Prüfung |
 | [`mqtt/acl`](../integrations/mqtt/acl), [`mosquitto.conf`](../integrations/mqtt/mosquitto.conf) | Mosquitto | Broker, TLS, ACL | – |
@@ -310,7 +311,7 @@ mosquitto_pub … -u jarvis-core -t jarvis/v1/cmd/airsensor_buero -m '{"command"
 
 ```bash
 cd reference/python && pip install -e ".[dev]"
-pytest                      # 115 Tests: Policy, Orchestrator, Automationen, Memory, API, LLM-Adapter …
+pytest                      # 118 Tests: Policy, Orchestrator, Automationen, Memory, API, LLM-Adapter …
 python -m jarvis.demo       # Offline-Demo ohne LLM/Home Assistant
 cd ../node && node --test   # Webhook-Signatur, Retry-Verhalten
 python ../../tools/validate.py

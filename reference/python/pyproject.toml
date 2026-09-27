@@ -29,5 +29,8 @@ jarvis-demo = "jarvis.demo:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+jarvis = ["web/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

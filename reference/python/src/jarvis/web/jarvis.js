@@ -1,0 +1,719 @@
+// JARVIS – Browser-Oberfläche: HUD, Spracheingabe (Web Speech API), Sprachausgabe (speechSynthesis) und Chat
+// über den WebSocket /v1/stream (Protokoll: docs/04-technische-umsetzung.md, Abschnitt 4.2.3).
+(() => {
+  "use strict";
+
+  const $ = (selector) => document.querySelector(selector);
+  const els = {
+    hud: $("#hud"), status: $("#status"), caption: $("#caption"), log: $("#log"),
+    form: $("#composer"), input: $("#text"), mic: $("#mic-btn"), send: $("#send-btn"),
+    conn: $("#conn"), connText: $("#conn-text"),
+    login: $("#login"), loginForm: $("#login-form"), loginToken: $("#login-token"), loginError: $("#login-error"),
+    settings: $("#settings"), settingsBtn: $("#settings-btn"), voice: $("#voice"), voiceTest: $("#voice-test"),
+    optSpeak: $("#opt-speak"), optConvo: $("#opt-convo"), logout: $("#logout"),
+  };
+
+  // ---------------------------------------------------------------- Browser-Speicher (nur Komfort)
+  const store = {
+    get(key, fallback) {
+      try {
+        const raw = localStorage.getItem(`jarvis.${key}`);
+        return raw === null ? fallback : JSON.parse(raw);
+      } catch { return fallback; }
+    },
+    set(key, value) {
+      try { localStorage.setItem(`jarvis.${key}`, JSON.stringify(value)); } catch { /* privates Fenster */ }
+    },
+    remove(key) {
+      try { localStorage.removeItem(`jarvis.${key}`); } catch { /* privates Fenster */ }
+    },
+  };
+
+  const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
+
+  // Token aus dem Link von start.sh (#token=…) übernehmen und aus der Adresszeile entfernen
+  function tokenFromLink() {
+    const value = new URLSearchParams(location.hash.slice(1)).get("token");
+    if (!value) return null;
+    store.set("token", value);
+    history.replaceState(null, "", location.pathname + location.search);
+    return value;
+  }
+  let token = tokenFromLink() || store.get("token", null);
+  let sessionId = store.get("session", null);
+  if (!sessionId) { sessionId = `web-${randomId()}`; store.set("session", sessionId); }
+
+  const settings = { speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice", "") };
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const canListen = Boolean(SpeechRecognition);
+  const canSpeak = "speechSynthesis" in window;
+  if (canSpeak) speechSynthesis.getVoices();  // Stimmenliste laden lassen (Chrome liefert sie verzögert)
+
+  // ---------------------------------------------------------------- Zustand & HUD
+  const STATUS = {
+    offline: "Keine Verbindung zum JARVIS-Server …",
+    idle: canListen ? "Tippen Sie auf den Kreis oder drücken Sie die Leertaste, um zu sprechen."
+                    : "Schreiben Sie unten eine Nachricht. (Spracheingabe: Chrome oder Edge)",
+    listening: "Ich höre zu …",
+    thinking: "Einen Moment …",
+    speaking: "JARVIS spricht – tippen zum Unterbrechen.",
+  };
+  let state = "offline";
+
+  function setState(next, text) {
+    const previous = state;
+    state = next;
+    document.body.dataset.state = next;
+    els.status.textContent = text ?? STATUS[next];
+    if (next === "speaking" && previous !== "speaking") speakingAnimation.start();
+    if (next !== "speaking" && previous === "speaking") speakingAnimation.stop();
+  }
+
+  function setLevel(value) {
+    els.hud.style.setProperty("--level", value.toFixed(3));
+  }
+
+  const speakingAnimation = {
+    frame: 0,
+    boost: 0,
+    start() {
+      const tick = () => {
+        this.boost *= 0.9;
+        const base = 0.16 + 0.14 * Math.abs(Math.sin(performance.now() / 150));
+        setLevel(Math.max(base, this.boost));
+        this.frame = requestAnimationFrame(tick);
+      };
+      cancelAnimationFrame(this.frame);
+      tick();
+    },
+    stop() { cancelAnimationFrame(this.frame); this.frame = 0; setLevel(0); },
+    pulse() { this.boost = 0.85; },
+  };
+
+  // ---------------------------------------------------------------- Protokoll
+  const timeNow = () => new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+
+  function scrollLog() { els.log.scrollTop = els.log.scrollHeight; }
+
+  function addMessage(kind, text, meta) {
+    const item = document.createElement("li");
+    item.className = `msg ${kind}`;
+    if (kind !== "system") {
+      const head = document.createElement("div");
+      head.className = "meta";
+      head.textContent = meta ?? `${kind === "user" ? "Sie" : "JARVIS"} · ${timeNow()}`;
+      item.append(head);
+    }
+    const body = document.createElement("div");
+    body.className = "body";
+    body.textContent = text;
+    item.append(body);
+    els.log.append(item);
+    scrollLog();
+    return item;
+  }
+
+  function addSystem(text, isError = false) {
+    const item = addMessage("system", text);
+    if (isError) item.classList.add("error");
+    return item;
+  }
+
+  const STATUS_DE = {
+    succeeded: "erledigt", failed: "fehlgeschlagen", denied: "abgelehnt",
+    pending_confirmation: "wartet auf Bestätigung", rejected: "abgebrochen", timed_out: "Zeit abgelaufen",
+  };
+
+  function actionChip(action) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    updateChip(chip, action);
+    return chip;
+  }
+
+  function updateChip(chip, action) {
+    chip.dataset.actionId = action.action_id;
+    chip.dataset.status = action.status;
+    chip.textContent = `${action.capability} · ${STATUS_DE[action.status] ?? action.status}`;
+    const reason = action.decision?.reason || action.error?.detail || action.error?.title;
+    if (reason) chip.title = reason;
+  }
+
+  function onActionUpdate(action) {
+    document.querySelectorAll(`.chip[data-action-id="${CSS.escape(action.action_id)}"]`)
+      .forEach((chip) => updateChip(chip, action));
+    document.querySelectorAll(`.confirm[data-action-id="${CSS.escape(action.action_id)}"]`).forEach((card) => {
+      if (action.status !== "pending_confirmation") closeConfirmation(card, STATUS_DE[action.status] ?? action.status);
+    });
+  }
+
+  function routeLabel(route) {
+    if (!route) return "";
+    if (route === "fast_path") return "Direktbefehl";
+    if (route === "confirmation_resolver") return "Bestätigung";
+    if (route.startsWith("llm:claude")) return "Claude · Cloud";
+    if (route.startsWith("llm:")) return "lokales Modell";
+    return route;
+  }
+
+  // ---------------------------------------------------------------- Bestätigungen
+  function addConfirmation(item, pending, actionId) {
+    const open = `.confirm[data-confirmation-id="${CSS.escape(pending.confirmation_id)}"]:not(.done)`;
+    if (document.querySelector(open)) return;  // dieselbe Bestätigung steht schon im Protokoll
+    const card = document.createElement("div");
+    card.className = "confirm";
+    card.dataset.confirmationId = pending.confirmation_id;
+    if (actionId) card.dataset.actionId = actionId;
+    const prompt = document.createElement("p");
+    prompt.textContent = pending.prompt;
+    const row = document.createElement("div");
+    row.className = "row";
+    const approve = button("Bestätigen", "btn primary", () => resolveConfirmation(card, "approve"));
+    const reject = button("Ablehnen", "btn danger", () => resolveConfirmation(card, "reject"));
+    const note = document.createElement("p");
+    note.className = "note";
+    if (pending.method === "app_biometric") {
+      approve.hidden = true;  // R3: nur mit Biometrie in der App – der Browser kann das nicht nachweisen
+      note.textContent = "Diese Aktion muss in der JARVIS-App mit Fingerabdruck oder Gesichtserkennung bestätigt werden.";
+    } else {
+      note.textContent = "Sie können auch einfach „Ja“ oder „Nein“ sagen.";
+    }
+    row.append(approve, reject);
+    card.append(prompt, row, note);
+    item.append(card);
+    scrollLog();
+  }
+
+  function button(label, className, onClick) {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = className;
+    el.textContent = label;
+    el.addEventListener("click", onClick);
+    return el;
+  }
+
+  let resolvingCard = null;
+
+  function resolveConfirmation(card, decision) {
+    if (!send({ type: "confirmation.resolve", confirmation_id: card.dataset.confirmationId, decision, method: "app" })) return;
+    resolvingCard = card;
+    card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+  }
+
+  function closeConfirmation(card, outcome) {
+    card.classList.add("done");
+    card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    card.querySelector(".note").textContent = `Status: ${outcome}`;
+    if (resolvingCard === card) resolvingCard = null;
+  }
+
+  // ---------------------------------------------------------------- Sprachausgabe
+  function forSpeech(text) {
+    return text
+      .replace(/```[\s\S]*?```/g, " Den Code sehen Sie auf dem Bildschirm. ")
+      .replace(/`([^`]*)`/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/https?:\/\/\S+/g, "Link")
+      .replace(/^\s*(?:[-*+•]|\d+[.)])\s+/gm, "")
+      .replace(/^#{1,6}\s*/gm, "")
+      .replace(/[*_~>|#]/g, "")
+      .replace(/\p{Extended_Pictographic}/gu, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function germanVoices() {
+    if (!canSpeak) return [];
+    return speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith("de"));
+  }
+
+  function pickVoice() {
+    if (!canSpeak) return null;
+    const voices = speechSynthesis.getVoices();
+    const chosen = voices.find((v) => v.name === settings.voice);
+    if (chosen) return chosen;
+    const german = germanVoices();
+    // JARVIS klingt männlich: bekannte männliche Stimmen zuerst, dann natürliche Online-Stimmen, dann irgendeine
+    const preferred = [/conrad/i, /killian/i, /florian/i, /stefan/i, /natural/i, /google/i];
+    for (const pattern of preferred) {
+      const match = german.find((v) => pattern.test(v.name));
+      if (match) return match;
+    }
+    return german[0] ?? null;
+  }
+
+  const tts = {
+    generation: 0,
+    pending: 0,
+    speak(text) {
+      const clean = forSpeech(text);
+      if (!clean || !settings.speak || !canSpeak) return;
+      const generation = this.generation;
+      const utterance = new SpeechSynthesisUtterance(clean);
+      const voice = pickVoice();
+      utterance.lang = voice?.lang ?? "de-DE";
+      if (voice) utterance.voice = voice;
+      utterance.rate = 1.03;
+      utterance.pitch = 0.9;
+      let settled = false;
+      // Chrome verschluckt gelegentlich „end“ – Sicherheitsnetz nach geschätzter Sprechdauer
+      const watchdog = setTimeout(() => finish(), 8000 + clean.length * 110);
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(watchdog);
+        if (generation !== this.generation) return;
+        this.pending = Math.max(0, this.pending - 1);
+        if (this.pending === 0) onSpeechDone();
+      };
+      utterance.onstart = () => { if (generation === this.generation) setState("speaking"); };
+      utterance.onboundary = () => speakingAnimation.pulse();
+      utterance.onend = finish;
+      utterance.onerror = finish;
+      this.pending += 1;
+      speechSynthesis.speak(utterance);
+    },
+    stop() {
+      this.generation += 1;
+      this.pending = 0;
+      if (canSpeak) speechSynthesis.cancel();
+    },
+    get busy() { return this.pending > 0; },
+  };
+
+  // Satzweise sprechen, während der Text noch gestreamt wird
+  // Einzelbuchstaben („z. B.“, „d. h.“), gängige Abkürzungen und Ordnungszahlen („3.“) beenden keinen Satz
+  const ABBREVIATION = /(?:(?:^|[\s(„"])\p{L}|\b(?:bzw|ca|usw|etc|nr|dr|hr|fr|st|vgl|ggf|inkl|evtl|bspw|mio|mrd|min|std))\.$|\d\.$/iu;
+
+  function sentenceEnd(text) {
+    const boundary = /[.!?…]+(?=\s)|\n/g;
+    let match;
+    while ((match = boundary.exec(text))) {
+      const end = match.index + match[0].length;
+      if (match[0] !== "\n" && ABBREVIATION.test(text.slice(0, end))) continue;
+      return end;
+    }
+    return -1;
+  }
+
+  class SentenceStream {
+    constructor(onSentence) { this.buffer = ""; this.onSentence = onSentence; }
+    push(delta) {
+      this.buffer += delta;
+      let end;
+      while ((end = sentenceEnd(this.buffer)) > 0) {
+        const sentence = this.buffer.slice(0, end);
+        this.buffer = this.buffer.slice(end);
+        if (sentence.trim()) this.onSentence(sentence);
+      }
+    }
+    flush() {
+      const rest = this.buffer;
+      this.buffer = "";
+      if (rest.trim()) this.onSentence(rest);
+    }
+  }
+
+  // ---------------------------------------------------------------- Gesprächsrunde
+  let turn = null;           // aktuelle Anfrage an JARVIS
+  let lastTurnSpoken = false;
+
+  function sendText(raw, spoken) {
+    const text = raw.trim();
+    if (!text) return;
+    if (turn) { els.status.textContent = "Einen Moment, ich antworte noch auf die letzte Frage …"; return; }
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      addSystem("Keine Verbindung zum Server – ich versuche es weiter.", true);
+      return;
+    }
+    tts.stop();
+    addMessage("user", text);
+    const item = addMessage("jarvis", "");
+    item.classList.add("pending");
+    turn = {
+      spoken, item, body: item.querySelector(".body"), streamed: "", muted: false,
+      slowTimer: setTimeout(() => {
+        if (state === "thinking") setState("thinking", "Das Sprachmodell rechnet noch – beim ersten Mal kann das eine Weile dauern …");
+      }, 12000),
+    };
+    turn.sentences = new SentenceStream((sentence) => { if (!turn?.muted) tts.speak(sentence); });
+    updateComposer();
+    setState("thinking");
+    // Wenn JARVIS spricht, bittet der Kanal „voice“ um kurze, gesprochene Antworten ohne Markdown
+    send({ type: "input.text", text, session_id: sessionId, channel: settings.speak ? "voice" : "web" });
+  }
+
+  function onDelta(delta) {
+    if (!turn) return;
+    turn.streamed += delta;
+    turn.body.textContent = turn.streamed;
+    turn.sentences.push(delta);
+    scrollLog();
+  }
+
+  function onFinal(result) {
+    if (!turn) return;
+    const current = endTurn();
+    const finalText = (result.text || "").trim();
+    const streamed = current.streamed.trim();
+    let shown = streamed || finalText;
+    if (streamed && finalText && !streamed.includes(finalText)) shown = `${streamed}\n\n${finalText}`;
+    current.body.textContent = shown || "(keine Antwort)";
+
+    if (!current.muted) {
+      current.sentences.flush();
+      if (!streamed) tts.speak(finalText);
+      else if (finalText && !streamed.includes(finalText)) tts.speak(finalText);
+    }
+
+    const meta = current.item.querySelector(".meta");
+    const route = routeLabel(result.route);
+    if (route) meta.textContent += ` · ${route}`;
+
+    const actions = result.actions ?? [];
+    if (actions.length) {
+      const chips = document.createElement("div");
+      chips.className = "chips";
+      actions.forEach((action) => chips.append(actionChip(action)));
+      current.item.append(chips);
+      actions.forEach((action) => onActionUpdate(action));  // per Sprache aufgelöste Bestätigungen schließen
+    }
+    if (result.pending_confirmation) {
+      const waiting = actions.find((a) => a.status === "pending_confirmation");
+      addConfirmation(current.item, result.pending_confirmation, waiting?.action_id);
+    }
+    scrollLog();
+    if (!tts.busy) onSpeechDone();
+  }
+
+  function failTurn(message) {
+    if (!turn) return;
+    const current = endTurn();
+    current.item.classList.add("error");
+    current.body.textContent = current.streamed ? `${current.streamed}\n\n${message}` : message;
+    tts.stop();
+    tts.speak(message);
+    if (!tts.busy) onSpeechDone();
+  }
+
+  function endTurn() {
+    const current = turn;
+    turn = null;
+    clearTimeout(current.slowTimer);
+    current.item.classList.remove("pending");
+    lastTurnSpoken = current.spoken;
+    updateComposer();
+    return current;
+  }
+
+  function onSpeechDone() {
+    if (turn) { setState("thinking"); return; }        // Antwort läuft noch, nächster Satz kommt
+    if (!ws || ws.readyState !== WebSocket.OPEN) { setState("offline"); return; }
+    if (lastTurnSpoken && settings.convo && canListen && state !== "listening") {
+      lastTurnSpoken = false;
+      setTimeout(() => { if (state !== "listening" && !turn) startListening(); }, 300);
+      setState("idle");
+      return;
+    }
+    setState("idle");
+  }
+
+  function updateComposer() {
+    els.send.disabled = Boolean(turn);
+  }
+
+  // ---------------------------------------------------------------- Spracheingabe
+  let recognition = null;
+
+  const meter = {
+    stream: null, context: null, frame: 0,
+    async start() {
+      if (!navigator.mediaDevices?.getUserMedia) return;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        if (state !== "listening") { stream.getTracks().forEach((t) => t.stop()); return; }
+        this.stream = stream;
+        this.context = new AudioContext();
+        const analyser = this.context.createAnalyser();
+        analyser.fftSize = 512;
+        this.context.createMediaStreamSource(stream).connect(analyser);
+        const samples = new Uint8Array(analyser.fftSize);
+        const tick = () => {
+          analyser.getByteTimeDomainData(samples);
+          let sum = 0;
+          for (const s of samples) { const x = (s - 128) / 128; sum += x * x; }
+          setLevel(Math.min(1, Math.sqrt(sum / samples.length) * 5));
+          this.frame = requestAnimationFrame(tick);
+        };
+        tick();
+      } catch { /* ohne Pegelanzeige weiter */ }
+    },
+    stop() {
+      cancelAnimationFrame(this.frame);
+      this.frame = 0;
+      this.stream?.getTracks().forEach((t) => t.stop());
+      this.stream = null;
+      this.context?.close().catch(() => {});
+      this.context = null;
+      setLevel(0);
+    },
+  };
+
+  const RECOGNITION_ERRORS = {
+    "not-allowed": "Das Mikrofon ist blockiert. Klicken Sie links in der Adressleiste auf das Schloss- bzw. Einstellungssymbol und erlauben Sie das Mikrofon.",
+    "service-not-allowed": "Der Browser erlaubt hier keine Spracherkennung. Bitte Chrome oder Edge verwenden.",
+    "audio-capture": "Kein Mikrofon gefunden. Ist eines angeschlossen und in Windows freigegeben?",
+    network: "Die Spracherkennung des Browsers braucht eine Internetverbindung.",
+    "language-not-supported": "Deutsch wird von der Spracherkennung dieses Browsers nicht unterstützt.",
+  };
+
+  function startListening() {
+    if (!canListen) {
+      addSystem("Spracheingabe funktioniert in Chrome und Edge. Hier bitte unten tippen.");
+      els.input.focus();
+      return;
+    }
+    if (recognition || turn) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) { addSystem("Noch keine Verbindung zum Server.", true); return; }
+    tts.stop();
+    let heard = "";
+    let failure = null;
+    const rec = new SpeechRecognition();
+    rec.lang = "de-DE";
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.maxAlternatives = 1;
+    rec.onstart = () => { setState("listening"); meter.start(); };
+    rec.onresult = (event) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        if (result.isFinal) heard += result[0].transcript;
+        else interim += result[0].transcript;
+      }
+      els.caption.textContent = `${heard} ${interim}`.trim();
+    };
+    rec.onerror = (event) => { failure = event.error; };
+    rec.onend = () => {
+      recognition = null;
+      meter.stop();
+      els.caption.textContent = "";
+      if (heard.trim()) { sendText(heard, true); return; }
+      if (state === "listening") setState(ws?.readyState === WebSocket.OPEN ? "idle" : "offline");
+      if (failure === "no-speech") els.status.textContent = "Ich habe nichts gehört. Tippen Sie auf den Kreis, um es erneut zu versuchen.";
+      else if (failure && RECOGNITION_ERRORS[failure]) addSystem(RECOGNITION_ERRORS[failure], true);
+    };
+    recognition = rec;
+    try {
+      rec.start();
+    } catch (err) {
+      recognition = null;
+      addSystem(`Spracheingabe konnte nicht starten: ${err.message}`, true);
+    }
+  }
+
+  function stopListening() { recognition?.stop(); }
+
+  function onHudActivate() {
+    if (recognition) { stopListening(); return; }
+    if (turn) {  // Antwort läuft: Stimme stummschalten, Text läuft weiter ins Protokoll
+      turn.muted = true;
+      tts.stop();
+      setState("thinking");
+      return;
+    }
+    if (tts.busy) tts.stop();
+    startListening();
+  }
+
+  // ---------------------------------------------------------------- Verbindung
+  let ws = null;
+  let reconnectDelay = 500;
+  let reconnectTimer = 0;
+  let greeted = false;
+
+  function setConnection(kind, text) {
+    els.conn.dataset.conn = kind;
+    els.connText.textContent = text;
+  }
+
+  function send(message) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      addSystem("Keine Verbindung zum Server.", true);
+      return false;
+    }
+    ws.send(JSON.stringify(message));
+    return true;
+  }
+
+  function connect() {
+    clearTimeout(reconnectTimer);
+    if (!token) { setConnection("offline", "Nicht angemeldet"); showLogin(); return; }
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    const socket = new WebSocket(`${scheme}://${location.host}/v1/stream?token=${encodeURIComponent(token)}`);
+    ws = socket;
+    setConnection("connecting", "Verbinde …");
+    socket.addEventListener("open", () => {
+      reconnectDelay = 500;
+      setConnection("online", "Online");
+      if (state === "offline") setState("idle");
+      if (!greeted) {
+        greeted = true;
+        addSystem("JARVIS ist online. Sprechen Sie mit mir oder schreiben Sie unten.");
+      }
+    });
+    socket.addEventListener("message", (event) => {
+      let message;
+      try { message = JSON.parse(event.data); } catch { return; }
+      onServerMessage(message);
+    });
+    socket.addEventListener("close", (event) => {
+      if (ws !== socket) return;
+      ws = null;
+      if (turn) failTurn("Die Verbindung zum Server wurde unterbrochen.");
+      if (recognition) recognition.abort();
+      setState("offline");
+      if (event.code === 4401) {  // Token ungültig: nicht erneut verbinden, neu anmelden
+        setConnection("offline", "Nicht angemeldet");
+        token = null;
+        store.remove("token");
+        showLogin("Dieses Token wurde nicht akzeptiert. Bitte prüfen Sie es.");
+        return;
+      }
+      setConnection("offline", "Offline – verbinde erneut …");
+      reconnectTimer = setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+    });
+  }
+
+  function onServerMessage(message) {
+    switch (message.type) {
+      case "output.text_delta": onDelta(message.delta ?? ""); break;
+      case "output.final": onFinal(message); break;
+      case "action.update": onActionUpdate(message.action); break;
+      case "error": onServerError(message.error ?? {}); break;
+      default: break;
+    }
+  }
+
+  function onServerError(problem) {
+    const text = problem.user_message || problem.detail || problem.title || "Unbekannter Fehler";
+    if (turn) { failTurn(text); return; }
+    if (resolvingCard) {
+      const card = resolvingCard;
+      resolvingCard = null;
+      card.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+      card.querySelector(".note").textContent = text;
+      return;
+    }
+    addSystem(text, true);
+  }
+
+  // ---------------------------------------------------------------- Dialoge
+  function showLogin(error) {
+    els.loginError.hidden = !error;
+    els.loginError.textContent = error ?? "";
+    if (!els.login.open) els.login.showModal();
+    els.loginToken.focus();
+  }
+
+  els.loginForm.addEventListener("submit", (event) => {
+    const value = els.loginToken.value.trim().replace(/^bearer\s+/i, "");
+    if (!value) { event.preventDefault(); return; }
+    token = value;
+    store.set("token", value);
+    els.loginToken.value = "";
+    connect();
+  });
+  els.login.addEventListener("cancel", (event) => { if (!token) event.preventDefault(); });
+
+  function fillVoices() {
+    const german = germanVoices();
+    const current = pickVoice();
+    els.voice.replaceChildren();
+    if (!german.length) {
+      const option = new Option("Keine deutsche Stimme gefunden", "");
+      els.voice.append(option);
+      els.voice.disabled = true;
+      return;
+    }
+    els.voice.disabled = false;
+    german.forEach((voice) => {
+      const label = `${voice.name}${voice.localService ? "" : " (online)"}`;
+      els.voice.append(new Option(label, voice.name, false, voice === current));
+    });
+  }
+
+  els.settingsBtn.addEventListener("click", () => {
+    els.optSpeak.checked = settings.speak;
+    els.optConvo.checked = settings.convo;
+    els.optConvo.disabled = !canListen;
+    fillVoices();
+    els.settings.showModal();
+  });
+  els.optSpeak.addEventListener("change", () => {
+    settings.speak = els.optSpeak.checked;
+    store.set("speak", settings.speak);
+    if (!settings.speak) tts.stop();
+  });
+  els.optConvo.addEventListener("change", () => { settings.convo = els.optConvo.checked; store.set("convo", settings.convo); });
+  els.voice.addEventListener("change", () => { settings.voice = els.voice.value; store.set("voice", settings.voice); });
+  els.voiceTest.addEventListener("click", () => {
+    const speakSetting = settings.speak;
+    settings.speak = true;
+    tts.stop();
+    tts.speak("Guten Tag. Alle Systeme sind einsatzbereit.");
+    settings.speak = speakSetting;
+  });
+  els.logout.addEventListener("click", () => {
+    store.remove("token");
+    token = null;
+    els.settings.close();
+    const socket = ws;
+    ws = null;
+    socket?.close();
+    setConnection("offline", "Nicht angemeldet");
+    setState("offline");
+    showLogin();
+  });
+  if (canSpeak) speechSynthesis.addEventListener("voiceschanged", () => { if (els.settings.open) fillVoices(); });
+
+  // ---------------------------------------------------------------- Bedienung
+  els.hud.addEventListener("click", onHudActivate);
+  els.mic.addEventListener("click", onHudActivate);
+  els.form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = els.input.value;
+    if (!text.trim() || turn) return;
+    els.input.value = "";
+    sendText(text, false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.target.closest?.("input, select, textarea, button, dialog")) return;
+    if (event.code === "Space" && !event.repeat) { event.preventDefault(); onHudActivate(); }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || document.querySelector("dialog[open]")) return;
+    if (recognition) recognition.abort();
+    if (turn) { turn.muted = true; tts.stop(); return; }
+    tts.stop();
+    if (state !== "offline") setState("idle");
+  });
+
+  window.addEventListener("hashchange", () => {  // Link mit Token in einem bereits offenen Tab
+    const value = tokenFromLink();
+    if (!value) return;
+    token = value;
+    if (els.login.open) els.login.close();
+    const socket = ws;
+    ws = null;
+    socket?.close();
+    connect();
+  });
+
+  updateComposer();
+  setState("offline", "Verbinde …");
+  connect();
+})();

@@ -50,6 +50,7 @@ jobs:
             node --check "$f"
           done
           node --input-type=module --check < ../web/voice-widget.js
+          node --check ../python/src/jarvis/web/jarvis.js
       - run: node --test
 
   database:

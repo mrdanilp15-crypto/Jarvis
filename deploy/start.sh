@@ -49,9 +49,15 @@ for _ in $(seq 1 60); do
   if curl -fsS http://127.0.0.1:8080/v1/system/health >/dev/null 2>&1; then
     cat <<EOF
 
-✔ JARVIS läuft: http://127.0.0.1:8080  (API-Beschreibung: http://127.0.0.1:8080/docs)
+✔ JARVIS läuft.
 
-Erste Frage:
+Im Browser öffnen (Chrome oder Edge) und mit JARVIS sprechen:
+
+  http://127.0.0.1:8080/#token=${token}
+
+API-Beschreibung: http://127.0.0.1:8080/docs  (oben rechts „Authorize“, Token: ${token})
+
+Erste Frage im Terminal:
   curl -X POST http://127.0.0.1:8080/v1/conversations/test/messages \\
     -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \\
     -d '{"text": "Hallo Jarvis, was kannst du?"}'
