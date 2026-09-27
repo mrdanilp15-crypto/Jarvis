@@ -483,7 +483,7 @@ funktionieren; zusätzliche Regeln prüfen die Handler selbst.
 
 | Ebene | Inhalt | Status im Repo |
 |-------|--------|----------------|
-| Unit | Policy-Matrix, Tool-Validierung, Risiko-Regeln, Bedingungen, Ranking, Segmentierung, Signaturen | ✔ `reference/python/tests` (161 Tests) |
+| Unit | Policy-Matrix, Tool-Validierung, Risiko-Regeln, Bedingungen, Ranking, Segmentierung, Signaturen | ✔ `reference/python/tests` (216 Tests) |
 | Szenario | Orchestrator mit skriptbarem LLM und simuliertem Home Assistant: Fast-Path, Bestätigungen, Prompt-Injection, Gäste, Abbrüche | ✔ |
 | Vertrag | Schemas, Beispiele, Plugin-Manifeste, OpenAPI-Referenzen, Node-RED-Verdrahtung | ✔ `tools/validate.py` |
 | Datenbank | Schema-Import, Hash-Kette, Vektor-Suche | ✔ CI-Job mit `pgvector/pgvector:pg16` |

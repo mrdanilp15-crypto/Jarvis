@@ -113,6 +113,18 @@ command -v docker >/dev/null || { echo "Docker fehlt: https://docs.docker.com/ge
 docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 fehlt (docker compose …)."; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Docker läuft nicht – bitte Docker Desktop bzw. den Docker-Dienst starten."; exit 1; }
 
+# ---------------------------------------------------------------- Name des Nutzers
+if [ -z "$(env_value JARVIS_USER_NAME)" ] && [ -t 0 ]; then
+  read -r -p "→ Wie soll JARVIS Sie nennen? (Vorname, Enter = überspringen) " user_name || user_name=""
+  # nur Zeichen entfernen, die .env oder sed stören könnten – Buchstaben aller Art bleiben (René, Zoë, Jürgen)
+  user_name="$(printf '%s' "$user_name" | tr -d '[:cntrl:]' | tr -d '|\\"$`&;/<>=#*?!')"
+  user_name="${user_name:0:40}"
+  if [ -n "$user_name" ]; then
+    set_env JARVIS_USER_NAME "$user_name"
+    echo "→ Gespeichert: JARVIS nennt Sie „${user_name}“ (ändern: JARVIS_USER_NAME in deploy/.env)."
+  fi
+fi
+
 # ---------------------------------------------------------------- Hardware: GPU und Modellgröße
 vram="$(gpu_memory_mib)"
 auto_model=0

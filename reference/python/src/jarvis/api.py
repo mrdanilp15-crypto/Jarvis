@@ -112,17 +112,25 @@ def create_app(container: Container) -> FastAPI:
     # Hinweis: FastAPI löst Annotationen per get_type_hints auf – daher Modul-Imports statt lokaler Imports.
     app = FastAPI(title="JARVIS API", version="1.0.0")
 
+    style = container.orchestrator.style
+
+    def styled(problem: dict[str, Any]) -> dict[str, Any]:
+        """Auch Fehlermeldungen für Menschen laufen durch den Formatter (Jarvis-Ton)."""
+        if problem.get("user_message"):
+            problem["user_message"] = style.error_message(problem["user_message"])
+        return problem
+
     @app.exception_handler(JarvisError)
     async def problem_handler(request: Request, exc: JarvisError) -> JSONResponse:
-        return JSONResponse(exc.to_problem(instance=request.url.path), status_code=exc.status,
+        return JSONResponse(styled(exc.to_problem(instance=request.url.path)), status_code=exc.status,
                             media_type="application/problem+json")
 
     @app.exception_handler(Exception)
     async def unexpected_handler(request: Request, exc: Exception) -> JSONResponse:
         log.exception("unhandled error", extra={"path": request.url.path})
         problem = JarvisError("JRV-SYS-001", type(exc).__name__,
-                              user_message="Da ist bei mir etwas schiefgegangen.").to_problem(instance=request.url.path)
-        return JSONResponse(problem, status_code=500, media_type="application/problem+json")
+                              user_message=style.system_text("generic_error")).to_problem(instance=request.url.path)
+        return JSONResponse(styled(problem), status_code=500, media_type="application/problem+json")
 
     # Als Security-Schema deklariert: nur so zeigt /docs den „Authorize“-Knopf und sendet das Token mit
     # (Swagger UI verschickt Header-Parameter namens „Authorization“ grundsätzlich nicht).
@@ -196,6 +204,7 @@ def create_app(container: Container) -> FastAPI:
             "local_llm": container.llm_status,
             "pc_agent": "connected" if container.agents and container.agents.connected else "disconnected",
             "tts": getattr(container.tts, "label", "configured") if container.tts is not None else "off",
+            "style": f"{style.name} {style.version}",
         }
 
     @app.websocket("/v1/stream")
@@ -235,14 +244,14 @@ def create_app(container: Container) -> FastAPI:
                 try:
                     await handle(msg)
                 except JarvisError as exc:
-                    await ws.send_json({"type": "error", "error": exc.to_problem()})
+                    await ws.send_json({"type": "error", "error": styled(exc.to_problem())})
                 except WebSocketDisconnect:
                     raise
                 except Exception as exc:  # Verbindung offen halten, der nächste Turn soll funktionieren
                     log.exception("unhandled error in stream")
                     problem = JarvisError("JRV-SYS-001", type(exc).__name__,
-                                          user_message="Da ist bei mir etwas schiefgegangen.").to_problem()
-                    await ws.send_json({"type": "error", "error": problem})
+                                          user_message=style.system_text("generic_error")).to_problem()
+                    await ws.send_json({"type": "error", "error": styled(problem)})
         except WebSocketDisconnect:
             return
 

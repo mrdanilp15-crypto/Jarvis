@@ -90,3 +90,29 @@ def test_warm_up_retries_until_model_is_ready(config_path, monkeypatch):
     asyncio.run(warm_up)
     assert len(seen["attempts"]) == 2 and "info__weather" in seen["attempts"][0]
     assert seen["status_during_retry"] == "loading" and container.llm_status == "ready"
+
+
+def test_user_name_is_never_taken_from_the_actor_id(config_path, monkeypatch):
+    # Früher wurde aus „user:alex“ der Name „alex“ – der Nutzer heißt aber Daniel
+    import json
+
+    from jarvis.app import build
+
+    monkeypatch.setenv("JARVIS_DEV_TOKENS", json.dumps({
+        "tok-a": {"actor": "user:alex", "role": "adult", "trust": "trusted_user"},
+        "tok-b": {"actor": "user:sam", "role": "adult", "trust": "trusted_user", "name": "Sam"},
+    }))
+    monkeypatch.delenv("JARVIS_USER_NAME", raising=False)
+    container, background = build(config_path)
+    for job in background:
+        job.close()
+    who = container.tokens["tok-a"]
+    assert who.name is None and "alex" not in container.situation(who, "voice").render().lower()
+
+    monkeypatch.setenv("JARVIS_USER_NAME", "Daniel")
+    container, background = build(config_path)
+    for job in background:
+        job.close()
+    assert container.tokens["tok-a"].name == "Daniel"
+    assert container.tokens["tok-b"].name == "Sam"  # eigener Name im Token hat Vorrang
+    assert "Sprecher: Daniel" in container.situation(container.tokens["tok-a"], "voice").render()

@@ -584,16 +584,15 @@
   function onFinal(result) {
     if (!turn) return;
     const current = endTurn();
+    // Angezeigt wird die Endfassung des Servers – sie ist vollständig durch den Jarvis-Formatter gelaufen.
+    // Gesprochen wurde bereits satzweise während des Streamings (ebenfalls formatiert).
     const finalText = (result.text || "").trim();
     const streamed = current.streamed.trim();
-    let shown = streamed || finalText;
-    if (streamed && finalText && !streamed.includes(finalText)) shown = `${streamed}\n\n${finalText}`;
-    current.body.textContent = shown || "(keine Antwort)";
+    current.body.textContent = finalText || streamed || "(keine Antwort)";
 
     if (!current.muted) {
       current.sentences.flush();
       if (!streamed) tts.speak(finalText);
-      else if (finalText && !streamed.includes(finalText)) tts.speak(finalText);
     }
 
     const meta = current.item.querySelector(".meta");

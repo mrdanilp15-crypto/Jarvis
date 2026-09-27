@@ -8,6 +8,7 @@
   "properties": {
     "id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
     "name": { "type": "string" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$", "description": "Version des Stil-Moduls (SemVer)." },
     "enabled": { "type": "boolean" },
     "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
     "address": {
@@ -42,7 +43,9 @@
       "properties": {
         "acknowledgements": { "type": "array", "items": { "type": "string" } },
         "preferred_phrases": { "type": "array", "items": { "type": "string" } },
-        "avoid_phrases": { "type": "array", "items": { "type": "string" } }
+        "avoid_phrases": { "type": "array", "items": { "type": "string" } },
+        "mandatory_phrases": { "type": "array", "items": { "type": "string" }, "description": "Pflicht-Bausteine der Stil-Engine." },
+        "replace": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Zusätzliche Ersetzungen für den Freitext-Filter (Wort -> Ersatz)." }
       },
       "additionalProperties": false
     },

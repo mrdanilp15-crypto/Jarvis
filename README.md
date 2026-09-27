@@ -75,6 +75,7 @@ flowchart LR
 
 ```
 .
+├── CHANGELOG.md              Änderungen des Jarvis-Moduls (Versionen)
 ├── docs/                     Konzept in 8 Abschnitten
 ├── api/openapi.yaml          REST/WebSocket-Blueprint (OpenAPI 3.1)
 ├── schemas/                  JSON-Schemas (Draft 2020-12) + validierte Beispiel-Payloads
@@ -142,6 +143,11 @@ Film-JARVIS (die Stimme eines realen Sprechers wird bewusst nicht nachgebildet):
    (Autostart: `./deploy/start.sh autostart edge`).
 3. **Piper** (`de_DE-thorsten-high`) – läuft komplett lokal; Rückfall, wenn nichts anderes verfügbar ist.
 
+**Jarvis-Ton (Stil-Engine 2.0):** Jede Antwort läuft durch einen Formatter – höflich, britisch-präzise, ohne
+Umgangssprache; Alltagsfragen („Status?“, „Wie spät ist es?“, „Kannst du mir helfen?“) beantwortet JARVIS sofort ohne
+Sprachmodell. Ihren Namen fragt `./deploy/start.sh` ab (oder `JARVIS_USER_NAME` in `deploy/.env`). Details:
+[Abschnitt 7.9](docs/07-jarvis-persona.md#79-stil-engine-20--neukalibrierung), Änderungen: [CHANGELOG](CHANGELOG.md).
+
 **PC-Steuerung (Windows):** „Öffne den Explorer“, „Öffne meine Downloads“, „Öffne YouTube“, „Such im Internet nach …“,
 „Starte Spotify“. Das übernimmt ein kleiner PC-Agent (`deploy/windows/jarvis-pc-agent.ps1`), der mit der
 Desktop-Verknüpfung startet, sich selbst mit JARVIS verbindet (kein offener Port) und nur freigegebene Aktionen
@@ -197,7 +203,7 @@ python tools/validate.py
 # Kernlogik des Python-Skeletts testen (läuft offline, ohne LLM/Home Assistant)
 cd reference/python
 pip install -e ".[dev]"
-pytest                    # 161 Tests
+pytest                    # 216 Tests
 python -m jarvis.demo     # Fast-Path, Tool-Use, R3-Bestätigung, Prompt-Injection-Abwehr, Gastrechte
 
 # Node-Beispiele (Node >= 22)

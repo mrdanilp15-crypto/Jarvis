@@ -168,10 +168,12 @@ def test_provider_failure_rolls_back_transcript(orchestrator, situation):
     def boom(_):
         raise JarvisError("JRV-LLM-001", "offline")
 
+    # (Grüße beantwortet der Formatter direkt – hier eine Frage, die das LLM braucht)
     with pytest.raises(JarvisError):
-        turn(orchestrator, "Hallo", provider=ScriptedProvider([boom]), situation=situation)
+        turn(orchestrator, "Erzähl mir etwas über Paris", provider=ScriptedProvider([boom]), situation=situation)
     assert orchestrator.sessions["s1"].transcript == []
-    ok = turn(orchestrator, "Hallo", provider=ScriptedProvider([say("Guten Abend.")]), situation=situation)
+    ok = turn(orchestrator, "Erzähl mir etwas über Paris", provider=ScriptedProvider([say("Guten Abend.")]),
+              situation=situation)
     assert ok.text == "Guten Abend."
     assert isinstance(orchestrator.sessions["s1"].transcript[0], UserTurn)
 
@@ -192,16 +194,17 @@ def test_memory_outage_degrades_gracefully(orchestrator, situation):
             raise ConnectionError("embedding model not available")
 
     orchestrator.memory = BrokenMemory()
-    result = turn(orchestrator, "Guten Abend", provider=ScriptedProvider([say("Guten Abend.")]), situation=situation)
+    result = turn(orchestrator, "Was gibt es Neues im Haus?", provider=ScriptedProvider([say("Guten Abend.")]),
+                  situation=situation)
     assert result.text == "Guten Abend."
 
 
 def test_each_question_keeps_its_own_context(orchestrator, situation):
     # Grundlage für den KV-Cache lokaler Modelle: der Verlauf ändert sich nachträglich nicht
     provider = ScriptedProvider([say("Guten Abend."), say("Gern.")])
-    for text in ("Hallo", "Danke"):
+    for text in ("Erzähl mir etwas", "Und noch etwas"):
         asyncio.run(orchestrator.handle_turn(TurnRequest(text=text, session_id="ctx", principal=ALEX),
                                              provider=provider, situation=situation))
     users = [t for t in orchestrator.sessions["ctx"].transcript if isinstance(t, UserTurn)]
-    assert [u.text for u in users] == ["Hallo", "Danke"]
+    assert [u.text for u in users] == ["Erzähl mir etwas", "Und noch etwas"]
     assert all("<situation>" in u.context for u in users)

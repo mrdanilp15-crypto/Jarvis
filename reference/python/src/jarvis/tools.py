@@ -92,6 +92,9 @@ class ToolRegistry:
     def get(self, name: str) -> Capability | None:
         return self._caps.get(name)
 
+    def names(self) -> list[str]:
+        return [c.name for c in self.all()]
+
     def all(self) -> list[Capability]:
         return [self._caps[k] for k in sorted(self._caps)]
 

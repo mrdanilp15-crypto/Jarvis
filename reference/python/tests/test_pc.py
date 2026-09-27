@@ -38,10 +38,16 @@ def test_pc_fast_path(text, capability, arguments):
 
 
 @pytest.mark.parametrize("text", [
-    "Mach das Licht aus", "Öffne die Haustür", "Was ist ein Browser?", "Öffne das Fenster im Bad",
+    "Öffne die Haustür", "Was ist ein Browser?", "Öffne das Fenster im Bad",
 ])
 def test_pc_fast_path_ignores_other_requests(text):
     assert FastPath({}, {}).match(text) is None
+
+
+def test_light_without_home_assistant_is_answered_honestly():
+    # Ohne verbundenes Haus: Treffer für home.set_light – der Orchestrator meldet „nicht verfügbar“ statt zu raten
+    match = FastPath({}, {}).match("Mach das Licht aus")
+    assert match.capability == "home.set_light" and match.grammar == "light_unavailable"
 
 
 def test_hub_round_trip_and_errors():

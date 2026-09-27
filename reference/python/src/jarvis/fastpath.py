@@ -23,8 +23,9 @@ YES = re.compile(r"^(ja(\s+(bitte|gerne|mach das|genau))?|jawohl|bestätigt|best
 NO = re.compile(r"^(nein(\s+(danke|abbrechen|lass es|lieber nicht))?|abbrechen|stopp|lass es|lieber nicht"
                 r"|auf keinen fall|ablehnen)(\s+(bitte|jarvis))?$", re.I)
 
-_AREA = r"(?:in der|im|in dem|in)\s+(?P<area>[a-zäöüß]+)"
+_AREA = r"(?P<location>(?:in der|im|in dem|in)\s+(?P<area>[a-zäöüß]+))"
 LIGHT_ON_OFF = re.compile(rf"^(?:mach|schalte?)\s+(?:das\s+)?licht\s+{_AREA}\s+(?P<state>an|aus|ein)$", re.I)
+LIGHT_HERE = re.compile(r"^(?:mach|schalte?)\s+(?:das\s+)?licht\s+(?P<state>an|aus|ein)$", re.I)  # Raum des Sprechers
 LIGHT_PCT = re.compile(
     rf"^(?:mach|stell|dimm|setz)e?\s+(?:das\s+)?licht\s+{_AREA}\s+auf\s+(?P<num>\d{{1,3}}|[a-zäöüß]+)\s*(?:prozent|%)$",
     re.I,
@@ -43,6 +44,44 @@ PC_SEARCH = re.compile(r"^(?:such(?:e)?|google)\s+(?:mal\s+)?(?:im internet|onli
                        r"nach\s+(?P<query>.+)$", re.I)
 PC_GOOGLE = re.compile(r"^google\s+(?P<query>.+)$", re.I)
 _PREFIX = re.compile(r"^(?:(?:hey|hallo|ok|okay)\s+)?jarvis\s*[,:]?\s*|^bitte\s+", re.I)
+
+# Status und Tagesplan (Skills mit Capability) sowie Gesprächs-Intents ohne Aktion. Verglichen wird die ganze,
+# normalisierte Äußerung – „Status?“ ja, „Wie ist der Status der Waschmaschine?“ nein (geht an das LLM).
+STATUS = re.compile(r"^(?:status|systemstatus|status ?bericht|wie ist der status|diagnose|systemdiagnose|"
+                    r"systemcheck|system check|alle systeme)$")
+DAY_PLAN = re.compile(r"^(?:(?:was ist (?:der|mein) )?(?:tages)?plan für (?P<a>morgen|heute)|tagesplan|"
+                      r"was steht (?P<b>morgen|heute) an|wie sieht mein tag (?P<c>morgen|heute) aus|"
+                      r"was habe ich (?P<d>morgen|heute) vor)$")
+CONVERSATION = [
+    ("help", re.compile(r"^(?:kannst du mir helfen|können sie mir helfen|hilf mir|hilfe|ich brauche (?:deine |ihre )?hilfe)$")),
+    ("thanks", re.compile(r"^(?:danke(?: schön| sehr| dir| ihnen)?|dankeschön|vielen dank|herzlichen dank|merci)$")),
+    ("greeting", re.compile(r"^(?:hallo|hi|hey|servus|moin|guten (?:morgen|tag|abend)|grüß dich|grüß gott)$")),
+    ("how_are_you", re.compile(r"^(?:wie geht(?:s| es)(?: dir| ihnen)?|wie läuft(?:s| es)|alles (?:gut|klar) bei dir)$")),
+    ("identity", re.compile(r"^(?:wer bist du|was bist du|stell dich vor)$")),
+    ("capabilities", re.compile(r"^(?:was kannst du(?: alles)?(?: tun)?|was sind deine fähigkeiten|wobei kannst du helfen)$")),
+    ("name", re.compile(r"^(?:wie heiße ich|wer bin ich|weißt du wie ich heiße|kennst du meinen namen)$")),
+    ("time", re.compile(r"^(?:wie spät ist es|wie viel uhr ist es|wieviel uhr ist es|uhrzeit)$")),
+    ("date", re.compile(r"^(?:welcher tag ist heute|welches datum (?:ist|haben wir)(?: heute)?|was ist heute für ein tag|datum)$")),
+    ("goodnight", re.compile(r"^gute nacht$")),
+    ("goodbye", re.compile(r"^(?:tschüss|tschau|ciao|bis später|bis dann|auf wiedersehen|das wars|danke das wars)$")),
+]
+
+
+def normalize_utterance(text: str) -> str:
+    """Kleinbuchstaben, ohne Satzzeichen, ohne Anrede/Füllwörter am Rand („Jarvis, …“, „… bitte“)."""
+    text = re.sub(r"[.,!?;:„“\"]+", " ", text.lower())
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"^(?:(?:hey|hallo|ok|okay)\s+)?jarvis\s+|^(?:sag mal|bitte)\s+", "", text)
+    return re.sub(r"\s+(?:bitte|jarvis|sir)$", "", text).strip()
+
+
+def conversation_intent(text: str) -> str | None:
+    """Gesprächs-Intents ohne Aktion (Hilfe, Dank, Gruß, Uhrzeit …) – beantwortet die Stil-Engine direkt."""
+    normalized = normalize_utterance(text)
+    for name, pattern in CONVERSATION:
+        if pattern.match(normalized):
+            return name
+    return None
 _DOMAIN = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:de|com|org|net|io|eu|at|ch|tv|info)$")
 
 PC_APPS = {
@@ -111,16 +150,31 @@ class FastPath:
         area = self.area_aliases.get(spoken, spoken)
         return area if area in self.area_lights else None
 
-    def match(self, text: str) -> FastPathMatch | None:
-        normalized = re.sub(r"[.!?]+$", "", text.strip())
+    def match(self, text: str, default_area: str | None = None) -> FastPathMatch | None:
+        normalized = _PREFIX.sub("", re.sub(r"[.!?]+$", "", text.strip())).strip()
         if m := LIGHT_ON_OFF.match(normalized):
             area = self._area(m["area"])
             if area:
+                location = re.sub(r"\S+$", lambda w: w.group(0).capitalize(), m["location"].lower())
                 return FastPathMatch(
                     "home.set_light",
                     {"entity_ids": self.area_lights[area], "on": m["state"].lower() in ("an", "ein")},
-                    0.97, "light_on_off", {"area": area},
+                    0.97, "light_on_off", {"area": area, "location": location},
                 )
+        if m := LIGHT_HERE.match(normalized):
+            on = m["state"].lower() in ("an", "ein")
+            if default_area in self.area_lights:
+                return FastPathMatch("home.set_light", {"entity_ids": self.area_lights[default_area], "on": on},
+                                     0.95, "light_here", {"area": default_area})
+            if not self.area_lights:  # kein Haus verbunden: ehrlich antworten statt raten
+                return FastPathMatch("home.set_light", {"on": on}, 0.9, "light_unavailable")
+        simple = normalize_utterance(text)
+        if STATUS.match(simple):
+            return FastPathMatch("system.status", {}, 0.97, "status")
+        if m := DAY_PLAN.match(simple):
+            day = next((v for v in m.groups() if v), "morgen")
+            return FastPathMatch("assistant.day_plan", {"day": "tomorrow" if day == "morgen" else "today"}, 0.95,
+                                 "day_plan")
         if m := LIGHT_PCT.match(normalized):
             area, pct = self._area(m["area"]), parse_number(m["num"])
             if area and pct is not None and 0 <= pct <= 100:

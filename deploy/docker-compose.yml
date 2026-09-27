@@ -24,6 +24,7 @@ services:
       JARVIS_DEV_TOKENS: ${JARVIS_DEV_TOKENS:-{}}
       JARVIS_LLM_MODEL: ${JARVIS_LLM_MODEL:-}           # leer = Modell aus der Konfiguration
       JARVIS_HOME_LOCATION: ${JARVIS_HOME_LOCATION:-}   # Standardort fürs Wetter
+      JARVIS_USER_NAME: ${JARVIS_USER_NAME:-}           # Vorname des Nutzers (Anzeige, „Wie heiße ich?“)
       AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY:-}           # optional: JARVIS-Stimme „Conrad“ (Azure Speech)
       AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION:-}
       JARVIS_TTS_VOICE: ${JARVIS_TTS_VOICE:-}

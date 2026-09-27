@@ -46,7 +46,7 @@ class Situation:
     def render(self) -> str:
         lines = [
             f"Zeit: {self.now.strftime('%A, %d.%m.%Y %H:%M')}",
-            f"Sprecher: {self.user_display or 'unbekannt'}",
+            f"Sprecher: {self.user_display}" if self.user_display else "Sprecher: Name unbekannt",
             f"Raum: {self.area or 'unbekannt'}",
             f"Modus: {self.mode}",
             f"Ausgabekanal: {self.channel}",

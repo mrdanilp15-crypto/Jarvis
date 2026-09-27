@@ -16,7 +16,7 @@ from typing import Any, Protocol
 from .context import ContextBuilder, Situation
 from .errors import JarvisError
 from .events import CloudEvent, EventBus, new_id
-from .fastpath import FastPath, confirmation_reply
+from .fastpath import FastPath, FastPathMatch, confirmation_reply, conversation_intent
 from .llm.base import (
     AssistantTurn,
     LLMProvider,
@@ -29,6 +29,7 @@ from .llm.base import (
 )
 from .memory import MemoryService
 from .policy import Decision, PolicyContext, PolicyEngine, Principal
+from .style import JarvisStyle, PlainStyle
 from .tools import Capability, InvocationContext, ToolRegistry
 
 log = logging.getLogger(__name__)
@@ -175,6 +176,7 @@ class Orchestrator:
         max_iterations: int = 8,
         turn_timeout_s: float = 60.0,
         session_idle_timeout_s: float = 300.0,
+        style: PlainStyle | None = None,
     ) -> None:
         self.registry = registry
         self.policy = policy
@@ -188,6 +190,8 @@ class Orchestrator:
         self.turn_timeout_s = turn_timeout_s
         self.session_idle_timeout_s = session_idle_timeout_s
         self.sessions: dict[str, Session] = {}
+        # Formatter: aktive Persona bestimmt den Ton (Jarvis-Stil-Engine oder neutral)
+        self.style = style or JarvisStyle.from_persona(context.persona)
 
     # ------------------------------------------------------------------
     # Einstieg für Sprache/Text
@@ -201,6 +205,23 @@ class Orchestrator:
         on_text: OnText | None = None,
         effort: str | None = None,
     ) -> TurnResult:
+        """Einziger Ausgang: jede Antwort läuft durch den Formatter (Streaming satzweise, Endfassung komplett)."""
+        stream = self.style.stream(on_text)
+        result = await self._handle(req, provider=provider, situation=situation, stream=stream, effort=effort)
+        await stream.flush()
+        result.text = self.style.finalize(result.text)
+        return result
+
+    async def _handle(
+        self,
+        req: TurnRequest,
+        *,
+        provider: LLMProvider,
+        situation: Situation,
+        stream: Any,
+        effort: str | None,
+    ) -> TurnResult:
+        """Pipeline: Bestätigung -> Intent-Erkennung -> Kontext-Interpretation -> Ausführung bzw. LLM."""
         now = datetime.now(UTC)
         session = self.sessions.get(req.session_id)
         if session is None or (now - session.last_active).total_seconds() > self.session_idle_timeout_s:
@@ -215,26 +236,40 @@ class Orchestrator:
             if reply is not None:
                 return await self._resolve_by_voice(pending, req, approve=reply)
 
-        # 2) Fast-Path ohne LLM
-        match = self.fast_path.match(req.text) if self.fast_path is not None else None
-        if match is not None and self.registry.get(match.capability) is not None:  # sonst übernimmt das LLM
+        # 2) Intent-Erkennung: Gesprächs-Intents und Befehle deterministisch, ohne LLM
+        intent = conversation_intent(req.text)
+        match = self.fast_path.match(req.text, default_area=req.principal.area) if self.fast_path else None
+        if intent == "how_are_you" and self.registry.get("system.status") is not None:
+            match = FastPathMatch("system.status", {}, 0.9, "how_are_you", {"intro": "how_are_you"})
+        elif intent is not None and match is None:
+            return TurnResult(text=self.style.conversation(intent, situation, capabilities=self.registry.names()),
+                              route="conversation")
+        if match is not None and match.grammar.endswith("_unavailable"):
+            if self.registry.get(match.capability) is None:
+                return TurnResult(text=self.style.unavailable(match.capability), route="fast_path")
+            match = None  # Haus verbunden, aber ohne Raumzuordnung: das LLM klärt, welches Gerät gemeint ist
+        if match is not None:
+            # 3) Kontext-Interpretation: fehlende Angaben aus der Situation ergänzen (Ort fürs Wetter usw.)
+            arguments = self._interpret(match, situation)
+            if self.registry.get(match.capability) is None:
+                return TurnResult(text=self.style.unavailable(match.capability), route="fast_path")
             record = await self.request_action(
-                capability=match.capability, arguments=match.arguments, principal=req.principal,
+                capability=match.capability, arguments=arguments, principal=req.principal,
                 correlation_id=req.correlation_id, session_id=req.session_id, via="fast_path",
                 ctx=PolicyContext(tainted=False, allowed_domains=None, mode=req.mode, now=situation.now),
             )
-            return self._fast_path_result(record)
+            return self._fast_path_result(record, match.slots)
 
-        # 3) LLM-Agent-Loop
+        # 4) LLM-Agent-Loop (Antwort wird satzweise durch den Formatter gestreamt)
         start = len(session.transcript)
         try:
             return await asyncio.wait_for(
-                self._agent_loop(req, session, provider, situation, on_text, effort), timeout=self.turn_timeout_s
+                self._agent_loop(req, session, provider, situation, stream, effort), timeout=self.turn_timeout_s
             )
         except TimeoutError:
             await self.audit.record("turn.timeout", correlation_id=req.correlation_id, actor=req.principal.actor)
             del session.transcript[start:]  # halbfertige Tool-Runden verwerfen; Aktionen stehen im Audit-Log
-            return TurnResult(text="Das dauert länger als erwartet; ich habe den Vorgang abgebrochen.",
+            return TurnResult(text=self.style.system_text("timeout"),
                               route="llm", stop_reason="timeout", tainted=session.tainted)
         except BaseException:
             # z. B. Provider-Ausfall: Verlauf zurücksetzen, damit ein Retry (anderer Provider) sauber startet
@@ -264,10 +299,11 @@ class Orchestrator:
             transcript = self.context.trim_history(session.transcript)
             response = await provider.complete(system=system, transcript=transcript, tools=tools,
                                                on_text=on_text, effort=effort)
-
+            if hasattr(on_text, "flush"):
+                await on_text.flush()  # Text vor Tool-Aufrufen vollständig ausgeben
             if response.stop_reason in ("refusal", "max_tokens") and response.tool_calls:
                 # Abgeschnittene oder abgelehnte Tool-Aufrufe niemals ausführen; Verlauf konsistent halten.
-                result.text = "Das konnte ich nicht vollständig verarbeiten. Bitte formulieren Sie es anders."
+                result.text = self.style.system_text("not_processed")
                 session.transcript.append(AssistantTurn(text=result.text, tool_calls=[], provider="system"))
                 result.stop_reason = response.stop_reason
                 return result
@@ -291,7 +327,7 @@ class Orchestrator:
                     result.pending_confirmation = pending
             session.transcript.append(ToolResultsTurn(results))  # alle Ergebnisse in *einer* Nachricht
 
-        result.text = "Ich habe die Aufgabe nach mehreren Schritten angehalten, um nichts Unbeabsichtigtes zu tun."
+        result.text = self.style.system_text("max_iterations")
         result.stop_reason = "max_iterations"
         result.tainted = session.tainted
         return result
@@ -385,7 +421,7 @@ class Orchestrator:
         if decision.effect == "confirm":
             record.status = "pending_confirmation"
             pending = self.confirmations.create(record, principal, session_id, correlation_id, decision.method,
-                                                prompt=self._confirmation_prompt(cap, arguments))
+                                                prompt=self.style.confirmation_prompt(cap, arguments, decision.method))
             record.confirmation_id = pending.id
             await self._publish("jarvis.confirmation.requested", correlation_id, principal,
                                 {"confirmation_id": pending.id, "action": record.to_result_dict(),
@@ -422,15 +458,14 @@ class Orchestrator:
 
     async def _resolve_by_voice(self, pending: PendingConfirmation, req: TurnRequest, *, approve: bool) -> TurnResult:
         if approve and pending.method in STRONG_METHODS:
-            return TurnResult(text="Für diese Aktion benötige ich Ihre Bestätigung in der App.",
+            return TurnResult(text=self.style.system_text("confirm_in_app"),
                               route="confirmation_resolver", pending_confirmation=pending)
         if req.principal.actor != pending.principal.actor:
-            return TurnResult(text="Diese Bestätigung muss von der Person kommen, die den Auftrag gegeben hat.",
+            return TurnResult(text=self.style.system_text("confirm_same_person"),
                               route="confirmation_resolver", pending_confirmation=pending)
         record = await self.resolve_confirmation(pending.id, approve=approve, resolver=req.principal,
                                                  method_used="voice")
-        text = {"succeeded": "Erledigt.", "rejected": "In Ordnung, ich habe es abgebrochen."}.get(
-            record.status, "Das hat leider nicht funktioniert.")
+        text = self.style.action_reply(record, via_confirmation=True)
         return TurnResult(text=text, route="confirmation_resolver", actions=[record])
 
     async def _execute(self, cap: Capability, record: ActionRecord, principal: Principal,
@@ -475,18 +510,15 @@ class Orchestrator:
             trust=principal.trust, data=data,
         ))
 
-    def _confirmation_prompt(self, cap: Capability, arguments: dict[str, Any]) -> str:
-        return f"{cap.description.split('.')[0]}: {json.dumps(arguments, ensure_ascii=False)} – ausführen?"
+    def _interpret(self, match: FastPathMatch, situation: Situation) -> dict[str, Any]:
+        """Kontext-Interpretation: Angaben ergänzen, die der Nutzer nicht nennen muss."""
+        arguments = dict(match.arguments)
+        if match.capability == "assistant.day_plan" and situation.location:
+            arguments.setdefault("location", situation.location)
+        return arguments
 
-    def _fast_path_result(self, record: ActionRecord) -> TurnResult:
-        if record.status == "succeeded":
-            text = "Erledigt."
-        elif record.status == "pending_confirmation":
-            text = "Soll ich das wirklich tun?"
-        elif record.status == "denied":
-            text = f"Das darf ich nicht: {record.decision.reason}."
-        else:
-            text = ((record.error or {}).get("user_message")
-                    or "Das hat leider nicht funktioniert.")
+    def _fast_path_result(self, record: ActionRecord, slots: dict[str, Any] | None = None) -> TurnResult:
         pending = self.confirmations.get(record.confirmation_id) if record.confirmation_id else None
+        slots = {**(slots or {}), **({"prompt": pending.prompt} if pending else {})}
+        text = self.style.action_reply(record, slots)
         return TurnResult(text=text, route="fast_path", actions=[record], pending_confirmation=pending)

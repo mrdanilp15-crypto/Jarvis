@@ -37,6 +37,7 @@ from .logging_setup import configure_logging
 from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingWeights
 from .orchestrator import ConfirmationStore, Orchestrator
 from .pc import AgentHub, register_pc_capabilities
+from .skills import register_assistant_capabilities
 from .persona import Persona
 from .policy import PolicyEngine, Principal
 from .tools import ToolRegistry
@@ -144,15 +145,33 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         session_idle_timeout_s=cfg["context"]["session_idle_timeout_s"],
     )
 
-    # Entwicklungs-Tokens: JARVIS_DEV_TOKENS='{"<token>": {"actor": "user:alex", "role": "adult", "trust": "trusted_user"}}'
-    tokens = {tok: Principal(**p) for tok, p in json.loads(os.environ.get("JARVIS_DEV_TOKENS", "{}")).items()}
+    # Entwicklungs-Tokens: JARVIS_DEV_TOKENS='{"<token>": {"actor": "user:owner", "role": "adult",
+    # "trust": "trusted_user", "name": "Daniel"}}'. JARVIS_USER_NAME gilt für Tokens ohne eigenen Namen.
+    default_name = (os.environ.get("JARVIS_USER_NAME") or "").strip() or None
+    tokens = {tok: Principal(**{**p, "name": p.get("name") or default_name})
+              for tok, p in json.loads(os.environ.get("JARVIS_DEV_TOKENS", "{}")).items()}
 
     def situation(principal: Principal, channel: str) -> Situation:
-        return Situation(now=datetime.now(tz), user_display=principal.actor.split(":", 1)[-1],
+        # Nie die Actor-ID als Namen zeigen (daher kam „Alex“): ohne Namen spricht JARVIS nur mit „Sir“ an
+        return Situation(now=datetime.now(tz), user_display=principal.name,
                          area=principal.area, channel=channel, location=home_location)
 
     container = Container(orchestrator=orchestrator, bus=bus, router=router, tokens=tokens,
                           webhook_secrets={}, situation=situation, agents=agents, tts=_tts(cfg))
+
+    pc_enabled = registry.get("pc.open_app") is not None
+
+    def probes() -> dict[str, str]:  # Systemstatus: nur, was tatsächlich geprüft wird
+        llm = {"ready": "ok", "unknown": "ok", "loading": "loading", "missing_model": "missing",
+               "unavailable": "unavailable"}.get(container.llm_status, "ok")
+        components = {"sprachmodell": llm}
+        if pc_enabled:
+            components["pc_steuerung"] = "ok" if agents.connected else "disconnected"
+        components["stimme"] = getattr(container.tts, "label", "ok") if container.tts is not None else "browser"
+        return components
+
+    weather = registry.get("info.weather")
+    register_assistant_capabilities(registry, probes=probes, weather=weather.handler if weather else None)
 
     async def warm_up_local_model() -> None:
         """Lädt das lokale Modell beim Start und rechnet Regeln und Tools vorab durch, damit schon die erste

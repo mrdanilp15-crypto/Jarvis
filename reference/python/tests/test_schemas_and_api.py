@@ -100,7 +100,7 @@ def test_api_message_fast_path_and_llm(client):
     r = client.post("/v1/conversations/c1/messages", headers=AUTH,
                     json={"text": "Mach das Licht in der Küche an"})
     assert r.status_code == 200 and r.json()["route"] == "fast_path"
-    r = client.post("/v1/conversations/c1/messages", headers=AUTH, json={"text": "Guten Abend"})
+    r = client.post("/v1/conversations/c1/messages", headers=AUTH, json={"text": "Wie war der Tag?"})
     assert r.json()["text"] == "Guten Abend, Sir."
 
 

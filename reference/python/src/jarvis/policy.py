@@ -45,6 +45,7 @@ class Principal:
     trust: str  # system | trusted_user | household | guest | external_untrusted
     voice_confidence: float | None = None
     area: str | None = None
+    name: str | None = None  # Anzeigename („Daniel“); die Actor-ID ist nur eine interne Kennung
 
 
 @dataclass(frozen=True)
