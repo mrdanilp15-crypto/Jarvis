@@ -21,6 +21,7 @@ tags:
   - name: Aufgaben
   - name: Memory
   - name: Plugins
+  - name: Einstellungen
   - name: System
 
 paths:
@@ -322,6 +323,93 @@ paths:
       responses:
         "200": { description: Aktualisiert }
 
+  /v1/settings/llm:
+    get:
+      tags: [Einstellungen]
+      summary: KI-Modell – lokales Modell, Claude und Modus
+      description: |
+        Nur Erwachsene des Haushalts. Der Claude-Schlüssel erscheint nie im Klartext, nur als `key_hint` („…abcd“).
+      operationId: getLlmSettings
+      responses:
+        "200":
+          description: Aktuelle Auswahl
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LlmSettings" }
+        "403": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [Einstellungen]
+      summary: Lokales Modell, Claude-Modell oder Modus wechseln
+      operationId: setLlmSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                local_model: { type: string, maxLength: 120, examples: ["qwen2.5:7b-instruct"] }
+                claude_model: { enum: [claude-opus-5-5, claude-sonnet-5-5, claude-fable-5-1] }
+                mode: { enum: [auto, cloud, local], description: "auto = schwierige Fragen an Claude; Sensibles bleibt immer lokal" }
+      responses:
+        "200":
+          description: Neue Auswahl
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LlmSettings" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /v1/settings/llm/pull:
+    post:
+      tags: [Einstellungen]
+      summary: Lokales Modell herunterladen (Ollama)
+      description: Läuft im Hintergrund; Fortschritt in `local.pull` von GET /v1/settings/llm.
+      operationId: pullModel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model]
+              properties:
+                model: { type: string, maxLength: 120 }
+                activate: { type: boolean, default: true, description: "nach dem Download direkt verwenden" }
+      responses:
+        "202": { description: Download gestartet }
+
+  /v1/settings/llm/claude-key:
+    put:
+      tags: [Einstellungen]
+      summary: Claude-API-Schlüssel prüfen und speichern
+      description: |
+        Prüft den Schlüssel kostenlos über die Models-API und speichert ihn nur bei Erfolg – serverseitig im
+        Datenverzeichnis (Dateirechte 0600). Er hat Vorrang vor `ANTHROPIC_API_KEY`.
+      operationId: setClaudeKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [api_key]
+              properties:
+                api_key: { type: string, minLength: 10, maxLength: 300, writeOnly: true }
+      responses:
+        "200":
+          description: Gespeichert
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LlmSettings" }
+        "400": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [Einstellungen]
+      summary: Gespeicherten Schlüssel entfernen (danach gilt wieder deploy/.env, falls gesetzt)
+      operationId: deleteClaudeKey
+      responses:
+        "200": { description: Entfernt }
+
   /v1/system/health:
     get:
       tags: [System]
@@ -338,6 +426,13 @@ paths:
                 properties:
                   status: { enum: [ok, degraded, down] }
                   cloud_llm: { enum: [closed, open, half_open] }
+                  local_llm: { enum: [unknown, loading, ready, missing_model, unavailable] }
+                  llm:
+                    type: object
+                    properties:
+                      local_model: { type: string }
+                      cloud_model: { type: [string, "null"] }
+                      mode: { enum: [auto, cloud, local] }
 
 components:
   securitySchemes:
@@ -358,12 +453,34 @@ components:
         application/problem+json:
           schema: { $ref: "../schemas/error.schema.json" }
   schemas:
+    LlmSettings:
+      type: object
+      properties:
+        mode: { enum: [auto, cloud, local] }
+        local:
+          type: object
+          properties:
+            model: { type: string }
+            status: { type: string }
+            reachable: { type: boolean }
+            installed: { type: array, items: { type: object } }
+            suggested: { type: array, items: { type: object } }
+            pull: { type: [object, "null"], description: "model, status, completed, total, done, error" }
+        cloud:
+          type: object
+          properties:
+            configured: { type: boolean }
+            source: { enum: [ui, env, null] }
+            key_hint: { type: [string, "null"], examples: ["…a1b2"] }
+            model: { type: string }
+            models: { type: array, items: { type: object } }
+            state: { enum: [closed, open, half_open] }
     TurnResult:
       type: object
       required: [text, route, stop_reason, tainted, actions]
       properties:
         text: { type: string }
-        route: { type: string, description: "fast_path | confirmation_resolver | llm:<provider>" }
+        route: { type: string, description: "fast_path | research | conversation | confirmation_resolver | llm:<provider>[:research]" }
         stop_reason: { enum: [end_turn, tool_use, max_tokens, refusal, max_iterations, timeout] }
         tainted: { type: boolean }
         actions:

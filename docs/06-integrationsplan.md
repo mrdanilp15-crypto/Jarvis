@@ -156,7 +156,7 @@ docker compose exec ollama ollama pull bge-m3
 
 | Thema | Festlegung |
 |-------|-----------|
-| Anbieter/Modell | Anthropic Claude, Standard `claude-opus-5`; Adapter: [`llm/claude.py`](../reference/python/src/jarvis/llm/claude.py) (offizielles `anthropic`-SDK) |
+| Anbieter/Modell | Anthropic Claude, Standard `claude-opus-5-5`; Adapter: [`llm/claude.py`](../reference/python/src/jarvis/llm/claude.py) (offizielles `anthropic`-SDK) |
 | Einsatz | Router-Route `cloud_llm`: Komplexität `complex` (Recherche, Planung, Code, lange Texte) und nicht sensibel |
 | Aufwand | `output_config.effort`: `medium` für Dialoge, `high` für Recherche/Code/Hintergrund-Jobs |
 | Datenminimierung | Sensitivität `sensitive/secret` → nie Cloud; Erinnerungen mit Sensitivität `sensitive` werden für Cloud-Aufrufe herausgefiltert; keine Kamerabilder; nur relevanzgefilterte Gerätezustände |

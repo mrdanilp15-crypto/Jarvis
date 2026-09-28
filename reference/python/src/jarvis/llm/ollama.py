@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from typing import Any
 
 from ..errors import JarvisError
@@ -228,6 +229,41 @@ class OllamaProvider:
             response.raise_for_status()
         except self._httpx.HTTPError as exc:
             raise self._error(exc) from exc
+
+    # -- Modelle verwalten (Einstellungen → KI-Modell) -----------------------------------------------------
+    async def list_models(self) -> list[dict[str, Any]]:
+        """Installierte Modelle (``/api/tags``): Name und Größe in Bytes."""
+        try:
+            response = await self._client.get("/api/tags")
+            response.raise_for_status()
+        except self._httpx.HTTPError as exc:
+            raise self._error(exc) from exc
+        return [{"name": str(m.get("name")), "size": int(m.get("size") or 0)}
+                for m in response.json().get("models") or [] if m.get("name")]
+
+    async def pull(self, model: str, progress: Callable[[dict[str, Any]], None]) -> None:
+        """Modell herunterladen (``/api/pull``); ``progress`` bekommt jede Statuszeile (status, total, completed)."""
+        try:
+            async with self._client.stream("POST", "/api/pull", json={"model": model, "stream": True},
+                                           timeout=self._httpx.Timeout(600.0, connect=10.0)) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    if chunk.get("error"):
+                        raise JarvisError("JRV-LLM-001", f"Download von {model}: {chunk['error']}",
+                                          user_message=f"Ollama konnte {model} nicht laden: {chunk['error']}")
+                    progress(chunk)
+        except self._httpx.HTTPError as exc:
+            raise self._error(exc) from exc
+
+    async def unload(self, model: str) -> None:
+        """Modell sofort aus dem Speicher nehmen (sonst hält ``keep_alive`` es bis zu 24 h)."""
+        try:
+            await self._client.post("/api/generate", json={"model": model, "keep_alive": 0})
+        except self._httpx.HTTPError:
+            pass  # nicht geladen oder Ollama weg: nichts freizugeben
 
     def _payload(self, messages: list[dict[str, Any]], tools: list[ToolSpec], *, stream: bool) -> dict[str, Any]:
         # num_ctx muss bei allen Anfragen gleich sein – ein anderer Wert lädt das Modell neu

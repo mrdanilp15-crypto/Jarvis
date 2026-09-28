@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -44,6 +45,21 @@ from .style import JarvisStyle, PlainStyle
 from .tools import Capability, InvocationContext, ToolRegistry
 
 log = logging.getLogger(__name__)
+
+# Zwischenstände für die Oberfläche („ich schlage nach“, „rufe das Wetter ab“) – sie färbt danach den Kreis ein
+OnStatus = Callable[[dict[str, Any]], Awaitable[None]]
+_ON_STATUS: ContextVar[OnStatus | None] = ContextVar("jarvis_on_status", default=None)
+
+
+async def report(phase: str, **data: Any) -> None:
+    """Zwischenstand melden. Ein Fehler dabei (Fenster zu) darf die Antwort nie stören."""
+    callback = _ON_STATUS.get()
+    if callback is None:
+        return
+    try:
+        await callback({"phase": phase, **data})
+    except Exception:  # noqa: BLE001 – reine Anzeige
+        log.debug("status report failed", exc_info=True)
 
 STRONG_METHODS = {"app", "app_biometric", "pin"}
 
@@ -113,6 +129,14 @@ class TurnResult:
     tainted: bool = False
     awaiting_reply: bool = False  # JARVIS hat nachgefragt – die Oberfläche hört direkt wieder zu
     sources: str = field(default="", repr=False)  # nachgeschlagene Quellen – für Folgefragen im Verlauf
+
+
+@dataclass
+class Sources:
+    """Nachgeschlagenes für das Sprachmodell (vor der Frage) und die Aktionen dahinter (für die Oberfläche)."""
+
+    text: str
+    actions: list[ActionRecord] = field(default_factory=list)
 
 
 @dataclass
@@ -248,10 +272,15 @@ class Orchestrator:
         situation: Situation,
         on_text: OnText | None = None,
         effort: str | None = None,
+        on_status: OnStatus | None = None,
     ) -> TurnResult:
         """Einziger Ausgang: jede Antwort läuft durch den Formatter (Streaming satzweise, Endfassung komplett)."""
         stream = self.style.stream(on_text)
-        result = await self._handle(req, provider=provider, situation=situation, stream=stream, effort=effort)
+        token = _ON_STATUS.set(on_status)
+        try:
+            result = await self._handle(req, provider=provider, situation=situation, stream=stream, effort=effort)
+        finally:
+            _ON_STATUS.reset(token)
         await stream.flush()
         result.text = self.style.finalize(result.text)
         session = self.sessions.get(req.session_id)
@@ -351,6 +380,7 @@ class Orchestrator:
             arguments = self._interpret(match, situation)
             if self.registry.get(match.capability) is None:
                 return TurnResult(text=self.style.unavailable(match.capability), route="fast_path")
+            await report("action", capability=match.capability)
             record = await self.request_action(
                 capability=match.capability, arguments=arguments, principal=req.principal,
                 correlation_id=req.correlation_id, session_id=req.session_id, via="fast_path",
@@ -359,12 +389,13 @@ class Orchestrator:
             return self._fast_path_result(record, match.slots)
 
         # 4) Wissensfragen und Folgesätze zum Thema: nachschlagen statt raten
-        sources = ""
+        sources, researched = "", []
         if intent is None:
             outcome = await self._knowledge(req, session, situation, lookup)
             if isinstance(outcome, TurnResult):
                 return outcome
-            sources = outcome or ""
+            if outcome is not None:
+                sources, researched = outcome.text, outcome.actions
 
         # 5) LLM-Agent-Loop (Antwort wird satzweise durch den Formatter gestreamt)
         start = len(session.transcript)
@@ -375,6 +406,7 @@ class Orchestrator:
             )
             if sources:
                 result.route += ":research"
+                result.actions[:0] = researched  # Quellen für die Oberfläche (Links unter der Antwort)
             return result
         except TimeoutError:
             await self.audit.record("turn.timeout", correlation_id=req.correlation_id, actor=req.principal.actor)
@@ -454,6 +486,7 @@ class Orchestrator:
             return self._tool_error(call, "JRV-NFD-001", f"Unbekanntes Tool {call.name}"), None, None
 
         errors = cap.validate(call.arguments)
+        await report("tool", capability=cap_name)
         if errors:
             # Auch abgeschnittene/ungültige Eingaben (eager input streaming) landen hier.
             err = JarvisError("JRV-VAL-002", "Tool-Eingabe verletzt das Schema", errors=errors)
@@ -589,7 +622,7 @@ class Orchestrator:
         return match
 
     async def _knowledge(self, req: TurnRequest, session: Session, situation: Situation,
-                         lookup: Lookup | None) -> TurnResult | str | None:
+                         lookup: Lookup | None) -> TurnResult | Sources | None:
         """Wissensfragen und Folgesätze zum Thema. Ergebnis: fertige Antwort, Quellen fürs Sprachmodell oder None
         (dann antwortet das Sprachmodell wie bisher)."""
         topic = session.topic
@@ -610,9 +643,9 @@ class Orchestrator:
                     shown, topic.rest = lead(" ".join(topic.rest), count=3)
                     return TurnResult(self.style.knowledge_text(None, shown), route="research")
                 if topic.source == "web":
-                    return (f"Der Nutzer möchte mehr über „{topic.name}“ wissen. Nutze nur die Quellen aus dem "
-                            "bisherigen Gespräch; steht dort nichts weiter, sag das und biete an, im Browser "
-                            "weiterzusuchen.")
+                    return Sources(f"Der Nutzer möchte mehr über „{topic.name}“ wissen. Nutze nur die Quellen aus dem "
+                                   "bisherigen Gespräch; steht dort nichts weiter, sag das und biete an, im Browser "
+                                   "weiterzusuchen.")
                 if topic.source in ("wikipedia", "none"):
                     if topic.url and self.registry.get("pc.open_url") is not None:
                         session.offer = Offer("web", [{"url": topic.url, "title": topic.name}], affirm=True)
@@ -625,10 +658,10 @@ class Orchestrator:
         return await self._research(req, session, situation, lookup)
 
     async def _research(self, req: TurnRequest, session: Session, situation: Situation,
-                        lookup: Lookup) -> TurnResult | str | None:
+                        lookup: Lookup) -> TurnResult | Sources | None:
         """Nachschlagen (Wikipedia mit Titelprüfung und Websuche, parallel) und aus den Quellen antworten."""
         if self.registry.get("info.wikipedia") is None and self.registry.get("web.search") is None:
-            return lookup.note or None  # ohne Internet-Werkzeuge: das Sprachmodell wie bisher
+            return Sources(lookup.note) if lookup.note else None  # ohne Internet-Werkzeuge: Modell wie bisher
         ctx = PolicyContext(tainted=False, allowed_domains=req.allowed_domains, mode=req.mode, now=situation.now)
 
         async def run(capability: str, arguments: dict[str, Any]) -> ActionRecord | None:
@@ -641,6 +674,7 @@ class Orchestrator:
             except JarvisError:
                 return None
 
+        await report("research", query=lookup.query)
         records = await asyncio.gather(run("info.wikipedia", {"query": lookup.query, "name": lookup.name}),
                                        run("web.search", {"query": lookup.query, "count": 5}))
         actions = [r for r in records if r is not None]
@@ -654,7 +688,7 @@ class Orchestrator:
                                datetime.now(UTC))
         if article is None and not hits:
             if not answered:  # nichts erreichbar: das Modell darf antworten, aber nur, was es sicher weiß
-                return "\n".join(filter(None, [lookup.note, OFFLINE]))
+                return Sources("\n".join(filter(None, [lookup.note, OFFLINE])), actions)
             topic.source = "none"
             searched_web = any(r.capability == "web.search" for r in answered)
             return self._offer_browser(session, lookup.query, self.style.not_found_text(
@@ -667,7 +701,7 @@ class Orchestrator:
             return TurnResult(self.style.knowledge_text("Wikipedia", shown), route="research", actions=actions,
                               tainted=True, sources=block)
         topic.source = "web"
-        return block
+        return Sources(block, actions)
 
     def _can_browse(self) -> bool:
         return self.registry.get("pc.search_web") is not None

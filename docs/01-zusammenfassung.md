@@ -51,7 +51,7 @@ Es kombiniert:
 | Kern-Services | Python 3.12, asyncio, FastAPI, Pydantic v2 | Go, Rust (für Edge-Komponenten) |
 | Event-Bus | Redis Streams (intern) + MQTT/Mosquitto (Geräte) | NATS JetStream |
 | Datenbank | PostgreSQL 16 + pgvector | + TimescaleDB für Zeitreihen |
-| Cloud-LLM | Anthropic Claude (`claude-opus-5`, adaptives Denken, Streaming, Tool-Use) | beliebiger Provider über Adapter |
+| Cloud-LLM | Anthropic Claude (`claude-opus-5-5`, adaptives Denken, Streaming, Tool-Use) | beliebiger Provider über Adapter |
 | Lokales LLM | Ollama (z. B. Llama/Qwen/Mistral-Familie, 7–32 B) | llama.cpp-Server, vLLM |
 | Embeddings | lokal (z. B. `bge-m3` via Ollama/sentence-transformers) | – |
 | Wake-Word | openWakeWord („hey_jarvis“) | Porcupine |

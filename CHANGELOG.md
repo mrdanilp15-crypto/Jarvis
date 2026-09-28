@@ -1,5 +1,76 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.5.0 – 2026-09-28
+
+KI-Modell und Claude-Schlüssel direkt in der Oberfläche wählen – und eine Anzeige, die zeigt, was JARVIS gerade tut.
+
+### Neu
+- **KI-Modell in der Oberfläche** (Zahnrad → KI-Modell, `llm_settings.py`, Endpunkte `/v1/settings/llm`):
+  - **Lokales Modell:**
+    - Die Seite listet installierte und empfohlene Ollama-Modelle (qwen2.5 3b/7b/14b, llama3.1 8b) mit Größe und
+      Einordnung.
+    - **Herunterladen** zeigt einen Fortschrittsbalken (GB, Prozent) und schaltet danach um. Auch andere Modelle
+      lassen sich per Name laden.
+    - **Verwenden** wechselt ohne Neustart. Das alte Modell wird aus dem Speicher genommen, das neue vorgewärmt.
+  - **Claude-Schlüssel:**
+    - Eintragen, kostenlos über die Models-API prüfen und nur bei Erfolg speichern. Verständliche Meldungen bei
+      falschem Schlüssel, fehlender Berechtigung oder fehlendem Netz.
+    - Gespeichert wird serverseitig in `data/llm.json` (Dateirechte 0600). Die Oberfläche sieht nur „…abcd“.
+    - Der Schlüssel hat Vorrang vor `ANTHROPIC_API_KEY`; nach dem Entfernen gilt wieder `deploy/.env`.
+  - **Claude-Modell:** Opus 5.5 (empfohlen), Sonnet 5.5 (günstiger), Fable 5.1 (am stärksten), jeweils mit Preis je
+    Million Tokens. Beim Wechsel wird geprüft, ob der Schlüssel das Modell nutzen darf.
+  - **Wer antwortet:** automatisch (schwierige Fragen an Claude), immer Claude oder nur lokal. Sensibles bleibt immer
+    lokal.
+  - Nur Erwachsene des Haushalts dürfen das ändern (Gäste erhalten 403).
+  - Die Auswahl übersteht Neustarts. Die Kopfzeile zeigt das aktive Modell (`/v1/system/health` → `llm`).
+- **Anzeige, die mitdenkt:**
+  - **Farbsprache mit weichen Übergängen** (registrierte CSS-Farbvariablen): Cyan bereit, Weiß hört, Gold denkt,
+    Violett mit Radar-Schwenk schlägt nach, Blau führt aus. Grün leuchtet kurz bei „gefunden/erledigt“, Gold bei
+    „nichts gefunden“, Orange pulsiert bei offener Bestätigung, Rot mit Rütteln bei Fehlern. Hintergrund,
+    Statuszeile und Uhr färben sich mit.
+  - **Zwischenstände vom Server:** Die neue WebSocket-Nachricht `status` meldet `research`, `tool` bzw. `action`.
+    Die Statuszeile sagt, was passiert („Ich schlage nach: „Albert Einstein“ …“, „Ich rufe die Wetterdaten ab …“).
+  - **Wetter-Karte:**
+    - animiertes Symbol (Sonne mit drehenden Strahlen, ziehende Wolken, Regen, Schnee, Blitz, Nebel, Mond bei
+      Nacht), Temperatur, gefühlt, Wind, Luftfeuchte, Regenwahrscheinlichkeit;
+    - 7-Tage-Vorschau mit Symbolen und Temperaturspanne;
+    - bei Regen, Schnee oder Gewitter fallen Tropfen bzw. Flocken hinter dem Kreis, bei Gewitter wetterleuchtet es;
+    - das Wetter liefert dafür jetzt den WMO-Code und Tag/Nacht.
+  - **Wissens-Karte:** Wikipedia-Artikel mit Vorschaubild (nur von upload.wikimedia.org, per Content-Security-Policy
+    erzwungen), Beschreibung und Link. Web-Quellen stehen als Links unter der Antwort, auch wenn das Modell aus
+    ihnen antwortet.
+  - **Timer-Karte** mit Countdown-Ring; beim Ablauf pulsiert sie und zeigt „Abgelaufen“.
+  - **Kopfzeile:** Uhr und Datum, das letzte Wetter (3 Stunden gültig, Klick zeigt die Karte) und das aktive Modell
+    (Klick öffnet die Modellwahl).
+  - Bei offenen Karten wird der Kreis kleiner, Karten schließen sich nach zwei Minuten.
+  - **Einstellungen mit Reitern** (Allgemein · Stimme & Hören · KI-Modell, per Pfeiltasten bedienbar).
+  - **Visuelle Effekte** „voll“, „dezent“ (ohne Partikel) oder „aus“. „Bewegung reduzieren“ des Systems wird
+    beachtet.
+  - **Handy:** kompakte Kopfzeile, die Seite scrollt, die Wochenvorschau scrollt in ihrer Karte. Getestet bei
+    390 px Breite ohne seitliches Scrollen.
+
+### Behoben
+- **Claude mit neuen API-Konten:**
+  - Konten ab dem 31.08.2026 lehnen Denk-Blöcke ab, deren Verlauf sich geändert hat. Bei JARVIS ändert sich der
+    Situationsteil (Uhrzeit) jede Runde, und alte Runden werden gekürzt. Ein neuer Schlüssel wäre deshalb ab der
+    zweiten Frage mit Fehler 400 gescheitert.
+  - Denk-Blöcke gehen jetzt nur innerhalb der laufenden Runde zurück. Zusätzlich verwirft die API unpassende Blöcke,
+    statt abzulehnen (`prefix_mismatch_behavior: drop_block`, Beta `thinking-binding-controls-2026-08-01`).
+  - Assistenten-Nachrichten, die nur aus Denken bestanden, entfallen, statt leer gesendet zu werden.
+- Standardmodell für Claude ist jetzt `claude-opus-5-5`.
+
+### Tests
+- 14 neue Tests, insgesamt 585:
+  - Einstellungs-API: nur Erwachsene, Übersicht, falscher Schlüssel wird weder gespeichert noch zurückgegeben,
+    Dateirechte 0600, Neustart übernimmt die Auswahl, Rückfall auf `deploy/.env`, Download mit Fortschritt und
+    Fehlern, nicht installiertes Modell, Modus steuert den Router, Health nennt die Modelle;
+  - Claude-Adapter: Denk-Blöcke nur aus der laufenden Runde, Schlüsselprüfung über die Models-API;
+  - Statusmeldungen und Wetter-Codes.
+- In Chromium geprüft (Desktop und 390 px): alle Farbzustände mit gemessenen Farbwerten, Wetter-Karte mit
+  Regen- und Schneepartikeln, Radar beim Nachschlagen, Wissens-Karte, Quellen-Links, Timer bis „Abgelaufen“,
+  Fehler-Blitz, Modell-Download mit Fortschritt, falscher und richtiger Schlüssel, Moduswechsel und
+  Modellanzeige.
+
 ## Jarvis-Modul 2.4.0 – 2026-09-28
 
 Nachschlagen statt raten, beim Thema bleiben, und ein Aktivierungswort, das sich die eigene Stimme merkt.

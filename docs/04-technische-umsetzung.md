@@ -148,6 +148,7 @@ kurzlebigen Token im Query-Parameter (≤ 60 s gültig, einmalig), da beim Hands
 | → | `confirmation.resolve` | `confirmation_id`, `decision`, `method` | Bestätigung aus der App |
 | → | `ping` | – | Heartbeat (alle 25 s) |
 | ← | `transcript.partial` / `transcript.final` | `text` | STT-Zwischen-/Endergebnis |
+| ← | `status` | `phase` (`research` \| `tool` \| `action`), `query?`, `capability?` | Zwischenstand: JARVIS schlägt nach, ruft ein Werkzeug auf oder führt einen Befehl aus (die Oberfläche färbt danach den Kreis) |
 | ← | `output.text_delta` | `delta` | Token-Stream der Antwort |
 | ← | `audio.format` + Binärframes | `rate` | TTS-Audio, satzweise |
 | ← | `output.final` | `text`, `route`, `actions`, `pending_confirmation?` | Turn abgeschlossen |
@@ -464,7 +465,7 @@ externes Medium. Die Anwendungsrolle darf nur `INSERT`.
 
 | Aspekt | Cloud (Claude) | Lokal (Ollama) |
 |--------|----------------|----------------|
-| Modell | `claude-opus-5` | z. B. `qwen2.5:14b-instruct` (Hardware-abhängig, siehe 6.5) |
+| Modell | `claude-opus-5-5` | z. B. `qwen2.5:14b-instruct` (Hardware-abhängig, siehe 6.5) |
 | Aufruf | offizielles `anthropic`-SDK, `client.beta.messages.stream(...)` | native `/api/chat` mit `stream: true` |
 | Denken/Aufwand | `thinking: {type: "adaptive"}`, `output_config.effort`: `medium` (Dialog) / `high` (Recherche, Code) | – |
 | Tools | JSON-Schema, `eager_input_streaming: true`; Eingaben werden im Orchestrator gegen das Schema geprüft, bei `max_tokens`/`refusal` nie ausgeführt | `tools` im Ollama-Format |

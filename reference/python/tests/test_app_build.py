@@ -62,7 +62,7 @@ def test_with_api_key_cloud_is_enabled(config_path, monkeypatch):
     container, background = build(config_path)
     for job in background:
         job.close()
-    assert container.router.cloud is not None and container.router.cloud.model == "claude-opus-5"
+    assert container.router.cloud is not None and container.router.cloud.model == "claude-opus-5-5"
 
 
 def test_warm_up_retries_until_model_is_ready(config_path, monkeypatch):

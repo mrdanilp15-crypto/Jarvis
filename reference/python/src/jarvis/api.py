@@ -21,7 +21,7 @@ from .errors import JarvisError
 from .events import CloudEvent, EventBus
 from .llm.base import OnText
 from .llm.router import HeuristicClassifier, ModelRouter
-from .orchestrator import Orchestrator, TurnRequest, TurnResult
+from .orchestrator import OnStatus, Orchestrator, TurnRequest, TurnResult
 from .pc import AgentHub
 from .policy import Principal
 from .timers import Notifier
@@ -53,11 +53,12 @@ class Container:
     agents: AgentHub | None = None  # PC-Agent (Programme/Ordner/Webseiten auf dem PC öffnen)
     tts: Any = None  # Sprachausgabe mit synthesize_wav(text) -> bytes (Piper über Wyoming)
     notifier: Notifier | None = None  # Meldungen an offene Oberflächen (Timer, Erinnerungen)
+    llm_settings: Any = None  # KI-Modell zur Laufzeit wählen (LLMSettings): lokales Modell, Claude-Schlüssel, Modus
 
     async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
-                       location: str | None = None) -> TurnResult:
+                       location: str | None = None, on_status: OnStatus | None = None) -> TurnResult:
         classification = self.classifier.classify(req.text)
-        decision = self.router.decide(classification)
+        decision = self.router.decide(classification, user_override=self.router.override)
         provider = self.router.provider_for(decision)
         effort = "high" if classification.complexity == "complex" else "medium"
         situation = self.situation(req.principal, channel)
@@ -65,14 +66,14 @@ class Container:
             situation.location = location
         try:
             result = await self.orchestrator.handle_turn(req, provider=provider, situation=situation,
-                                                         on_text=on_text, effort=effort)
+                                                         on_text=on_text, effort=effort, on_status=on_status)
         except JarvisError as exc:
             if provider is not self.router.cloud or not exc.retryable:
                 raise
             self.router.cloud_breaker.record_failure()
             # Degradierter Modus: gleiche Anfrage lokal beantworten
             return await self.orchestrator.handle_turn(req, provider=self.router.local, situation=situation,
-                                                       on_text=on_text)
+                                                       on_text=on_text, on_status=on_status)
         if provider is self.router.cloud:
             self.router.cloud_breaker.record_success()
         return result
@@ -92,6 +93,21 @@ def turn_to_json(result: TurnResult) -> dict[str, Any]:
         out["pending_confirmation"] = {"confirmation_id": p.id, "method": p.method, "prompt": p.prompt,
                                        "expires_at": p.expires_at.isoformat()}
     return out
+
+
+class ClaudeKeyIn(BaseModel):
+    api_key: str = Field(min_length=10, max_length=300, description="Anthropic-API-Schlüssel (sk-ant-…)")
+
+
+class LLMSettingsIn(BaseModel):
+    local_model: str | None = Field(default=None, max_length=120, examples=["qwen2.5:7b-instruct"])
+    claude_model: str | None = Field(default=None, max_length=60, examples=["claude-opus-5-5"])
+    mode: Literal["auto", "cloud", "local"] | None = None
+
+
+class ModelPullIn(BaseModel):
+    model: str = Field(min_length=2, max_length=120, examples=["qwen2.5:7b-instruct"])
+    activate: bool = True
 
 
 class MessageIn(BaseModel):
@@ -144,6 +160,53 @@ def create_app(container: Container) -> FastAPI:
         if who is None:
             raise JarvisError("JRV-AUTH-001", "Bearer-Token fehlt oder ist ungültig")
         return who
+
+    def household_adult(who: Principal = Depends(principal)) -> Principal:
+        """KI-Modell und API-Schlüssel ändern nur Erwachsene des Haushalts – keine Gäste, Kinder oder Dienste."""
+        if who.role not in ("admin", "adult") or who.trust in ("guest", "external_untrusted"):
+            raise JarvisError("JRV-POL-002", "Nur Erwachsene im Haushalt dürfen das KI-Modell ändern")
+        return who
+
+    def llm_settings() -> Any:
+        if container.llm_settings is None:
+            raise JarvisError("JRV-NFD-001", "Modellwahl ist in dieser Installation nicht eingerichtet")
+        return container.llm_settings
+
+    @app.get("/v1/settings/llm", tags=["Einstellungen"])
+    async def get_llm_settings(who: Principal = Depends(household_adult)) -> dict:
+        """Lokales Modell (installiert, Vorschläge, Download), Claude (Schlüssel nur als „…abcd“) und Modus."""
+        return await llm_settings().snapshot()
+
+    @app.put("/v1/settings/llm", tags=["Einstellungen"])
+    async def put_llm_settings(body: LLMSettingsIn, who: Principal = Depends(household_adult)) -> dict:
+        settings = llm_settings()
+        if body.mode:
+            settings.set_mode(body.mode)
+        if body.claude_model:
+            await settings.set_claude_model(body.claude_model)
+        if body.local_model:
+            await settings.use_local(body.local_model)
+        return await settings.snapshot()
+
+    @app.post("/v1/settings/llm/pull", status_code=202, tags=["Einstellungen"])
+    async def pull_model(body: ModelPullIn, who: Principal = Depends(household_adult)) -> dict:
+        """Lokales Modell herunterladen (Fortschritt über GET /v1/settings/llm, Feld local.pull)."""
+        settings = llm_settings()
+        settings.start_pull(body.model, activate=body.activate)
+        return await settings.snapshot()
+
+    @app.put("/v1/settings/llm/claude-key", tags=["Einstellungen"])
+    async def put_claude_key(body: ClaudeKeyIn, who: Principal = Depends(household_adult)) -> dict:
+        """Schlüssel prüfen (Models-API, kostenlos) und nur bei Erfolg speichern. Er wird nie zurückgegeben."""
+        settings = llm_settings()
+        checked = await settings.set_claude_key(body.api_key)
+        return {**await settings.snapshot(), "checked": checked}
+
+    @app.delete("/v1/settings/llm/claude-key", tags=["Einstellungen"])
+    async def delete_claude_key(who: Principal = Depends(household_adult)) -> dict:
+        settings = llm_settings()
+        settings.remove_claude_key()
+        return await settings.snapshot()
 
     @app.post("/v1/conversations/{conversation_id}/messages")
     async def post_message(conversation_id: str, body: MessageIn, who: Principal = Depends(principal)) -> dict:
@@ -208,6 +271,9 @@ def create_app(container: Container) -> FastAPI:
             "pc_agent": "connected" if container.agents and container.agents.connected else "disconnected",
             "tts": getattr(container.tts, "label", "configured") if container.tts is not None else "off",
             "style": f"{style.name} {style.version}",
+            "llm": {"local_model": getattr(container.router.local, "model", None),
+                    "cloud_model": getattr(container.router.cloud, "model", None),
+                    "mode": getattr(container.router, "mode", "auto")},
         }
 
     @app.websocket("/v1/stream")
@@ -230,10 +296,13 @@ def create_app(container: Container) -> FastAPI:
                 async def on_text(delta: str) -> None:
                     await send({"type": "output.text_delta", "delta": delta})
 
+                async def on_status(data: dict[str, Any]) -> None:  # „schlägt nach“, „ruft Werkzeug auf“
+                    await send({"type": "status", **data})
+
                 location = msg.get("location")
                 result = await container.run_turn(
                     TurnRequest(text=msg["text"], session_id=msg["session_id"], principal=who),
-                    channel=msg.get("channel", "app"), on_text=on_text,
+                    channel=msg.get("channel", "app"), on_text=on_text, on_status=on_status,
                     location=location[:100] if isinstance(location, str) and location.strip() else None)
                 await send({"type": "output.final", **turn_to_json(result)})
             elif kind == "confirmation.resolve":

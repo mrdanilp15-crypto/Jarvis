@@ -123,7 +123,8 @@ cd Jarvis
 **Mit JARVIS sprechen:** den angezeigten Link `http://127.0.0.1:8080/#token=…` in Chrome oder Edge öffnen, auf den
 leuchtenden Kreis tippen (oder Leertaste), sprechen – JARVIS antwortet mit Stimme und schreibt mit. Tippen geht auch.
 Mit **„Jarvis“-Aktivierung** (Schalter unter dem Kreis) reicht „Jarvis, wie wird das Wetter morgen?“. Im Zahnrad-Menü:
-Stimme, Wohnort fürs Wetter, Sprachausgabe und Dauergespräch. Die Spracherkennung nutzt die des Browsers (Chrome/Edge
+**Allgemein** (Sprachausgabe, Dauergespräch, Wohnort fürs Wetter, visuelle Effekte), **Stimme & Hören** (Stimme,
+„Jarvis“ einlernen) und **KI-Modell** (siehe unten). Die Spracherkennung nutzt die des Browsers (Chrome/Edge
 senden das Audio dafür an Google bzw. Microsoft – mit „Jarvis“-Aktivierung dauerhaft); vollständig lokal über
 Whisper/Piper/openWakeWord ist der nächste Ausbauschritt. API-Beschreibung: `http://127.0.0.1:8080/docs`
 (oben rechts **Authorize** → Token).
@@ -209,6 +210,23 @@ Befehle („Such mal …“) beantwortet JARVIS mit einer Rückfrage und hört d
 Timer, Erinnerungen und eigene Termine liegen im Docker-Volume `jarvis-data` und überstehen Neustarts. Ist der
 Timer abgelaufen, spricht JARVIS die Meldung und Windows zeigt einen Hinweis.
 
+**Was die Anzeige bedeutet:**
+- Der Kreis wechselt weich die Farbe: Cyan = bereit, Weiß = hört zu, Gold = denkt, Violett mit Radar = schlägt nach,
+  Blau = führt ein Werkzeug oder einen Befehl aus. Grün leuchtet er kurz auf, wenn etwas gefunden oder erledigt ist;
+  Gold heißt „nichts gefunden“, Orange „wartet auf Ihre Bestätigung“, Rot mit kurzem Rütteln „Fehler“.
+- Unter dem Kreis steht, was JARVIS gerade tut („Ich schlage nach: „Albert Einstein“ …“, „Ich rufe die Wetterdaten
+  ab …“).
+- **Karten:**
+  - Wetter: animiertes Symbol, Temperatur, gefühlt, Wind, Luftfeuchte, 7-Tage-Vorschau mit Temperaturspanne und
+    Regenwahrscheinlichkeit. Bei Regen oder Schnee fallen im Hintergrund Tropfen bzw. Flocken, bei Gewitter
+    wetterleuchtet es.
+  - Nachgeschlagenes: Wikipedia mit Bild und Link; Web-Quellen als Links unter der Antwort.
+  - Timer mit Countdown-Ring, der beim Ablauf pulsiert.
+- **Kopfzeile:** Uhr und Datum, das zuletzt abgefragte Wetter (Klick zeigt die Karte wieder) und das aktive Modell
+  (Klick öffnet die Modellwahl).
+- Wer es ruhiger mag oder einen langsamen Rechner hat: Zahnrad → Allgemein → Visuelle Effekte „dezent“ oder „aus“.
+  Die Systemeinstellung „Bewegung reduzieren“ wird beachtet.
+
 **Aktivierungswort:**
 - Auf „Jarvis“ antwortet JARVIS mit „Ja, Sir?“. Ohne Sprachausgabe bleibt der kurze Ton.
 - Das Wort wird auch in abweichenden Schreibweisen der Spracherkennung erkannt („Jarwis“, „Javis“, „Charvis“).
@@ -251,10 +269,21 @@ cd Jarvis/reference/node
 JARVIS_URL=ws://127.0.0.1:8080 JARVIS_TOKEN=dev-alex-token node jarvis-client.mjs
 ```
 
-- Anderes Modell: `JARVIS_LLM_MODEL` in `deploy/.env` ändern (z. B. `qwen2.5:3b-instruct` = schneller,
+- **Modell in der Oberfläche wählen:** Zahnrad → **KI-Modell**.
+  - Dort stehen die installierten und die empfohlenen Modelle. **Herunterladen** lädt eines mit Fortschrittsanzeige
+    und schaltet danach um, **Verwenden** wechselt ohne Neustart. Das alte Modell wird aus dem Speicher genommen.
+  - **Claude:** API-Schlüssel eintragen (erstellt auf platform.claude.com unter „API Keys“) → **Prüfen & speichern**.
+    JARVIS prüft ihn kostenlos und speichert ihn nur auf dem Server (Datei `llm.json` im Volume `jarvis-data`, nur
+    für den Dienst lesbar); die Oberfläche zeigt danach nur die letzten vier Zeichen.
+  - Wählbar sind Claude Opus 5.5 (empfohlen), Sonnet 5.5 (günstiger) und Fable 5.1 (am stärksten).
+  - **Wer antwortet:** automatisch (schwierige Fragen an Claude), immer Claude oder nur lokal. Sensibles bleibt immer
+    lokal.
+  - Die Auswahl gilt auch nach einem Neustart. Oben rechts zeigt JARVIS, welches Modell gerade antwortet.
+- Anderes Modell per Datei: `JARVIS_LLM_MODEL` in `deploy/.env` ändern (z. B. `qwen2.5:3b-instruct` = schneller,
   `qwen2.5:14b-instruct` = klüger) und `./deploy/start.sh` erneut ausführen. Das 3b-Modell (ohne Grafikkarte und mit
   wenig Arbeitsspeicher) versteht freie Fragen deutlich schlechter; wenn möglich mindestens `qwen2.5:7b-instruct`.
-- Ohne `ANTHROPIC_API_KEY` arbeitet JARVIS rein lokal; mit Schlüssel gehen komplexe, nicht-sensible Anfragen an Claude.
+- Ohne Claude-Schlüssel arbeitet JARVIS rein lokal; ein Schlüssel in der Oberfläche hat Vorrang vor
+  `ANTHROPIC_API_KEY` in `deploy/.env`.
 - Home Assistant verbinden: Token als `JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN` in `.env` eintragen
   ([Anleitung](docs/06-integrationsplan.md#61-home-assistant)).
 - Sprache, MQTT, Node-RED und Plugins kommen schrittweise dazu: [Inbetriebnahme](docs/06-integrationsplan.md#610-inbetriebnahme-referenz-deployment).
@@ -270,7 +299,7 @@ python tools/validate.py
 # Kernlogik des Python-Skeletts testen (läuft offline, ohne LLM/Home Assistant)
 cd reference/python
 pip install -e ".[dev]"
-pytest                    # 571 Tests
+pytest                    # 585 Tests
 python -m jarvis.demo     # Fast-Path, Tool-Use, R3-Bestätigung, Prompt-Injection-Abwehr, Gastrechte
 
 # Node-Beispiele (Node >= 22)

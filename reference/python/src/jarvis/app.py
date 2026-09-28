@@ -34,6 +34,7 @@ from .fastpath import FastPath
 from .info import InfoConfig, register_info_capabilities
 from .llm.ollama import OllamaProvider
 from .llm.router import ModelRouter
+from .llm_settings import LLMSettings
 from .logging_setup import configure_logging
 from .mail import MailConfig, MailReader, register_mail_capabilities
 from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingWeights
@@ -129,16 +130,22 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
                            num_ctx=local_cfg["num_ctx"], timeout_s=local_cfg["timeout_s"],
                            keep_alive=local_cfg.get("keep_alive", "24h"))
     cloud = None
-    cloud_cfg = providers.get(cfg["llm"]["default_cloud"])
-    api_key = resolve_ref(cloud_cfg.get("api_key")) if cloud_cfg else None
-    if cloud_cfg and cloud_cfg["type"] == "anthropic" and api_key:
-        from .llm.claude import ClaudeProvider
+    cloud_cfg = providers.get(cfg["llm"]["default_cloud"]) or {}
+    api_key = resolve_ref(cloud_cfg.get("api_key")) if cloud_cfg.get("type") == "anthropic" else None
 
-        cloud = ClaudeProvider(model=cloud_cfg["model"], max_tokens=cloud_cfg["max_tokens"],
-                               default_effort=cloud_cfg["effort"]["dialog"], api_key=api_key,
-                               server_side_fallbacks=cloud_cfg.get("server_side_fallbacks") == "default")
-    elif cloud_cfg:
-        log.info("Cloud-LLM deaktiviert (kein API-Schlüssel) – JARVIS arbeitet nur mit dem lokalen Modell")
+    def make_cloud(key: str, model: str | None = None) -> Any:
+        """Claude-Provider – beim Start aus deploy/.env, später auch mit einem Schlüssel aus der Oberfläche."""
+        from .llm.claude import DEFAULT_MODEL, ClaudeProvider
+
+        return ClaudeProvider(model=model or cloud_cfg.get("model") or DEFAULT_MODEL,
+                              max_tokens=cloud_cfg.get("max_tokens", 64000),
+                              default_effort=(cloud_cfg.get("effort") or {}).get("dialog", "medium"), api_key=key,
+                              server_side_fallbacks=cloud_cfg.get("server_side_fallbacks", "default") == "default")
+
+    if api_key:
+        cloud = make_cloud(api_key)
+    else:
+        log.info("Cloud-LLM ohne API-Schlüssel – JARVIS arbeitet lokal (Schlüssel: Zahnrad → KI-Modell)")
     breaker = CircuitBreaker(**{k: v for k, v in cfg["router"]["cloud_circuit_breaker"].items()
                                 if k in ("failure_threshold", "window_s", "cooldown_s")})
     router = ModelRouter(local=local, cloud=cloud, cloud_breaker=breaker,
@@ -239,6 +246,11 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
             container.llm_status = "ready"
             log.info("lokales Modell %s geladen und vorgewärmt", local.model)
             return
+
+    # KI-Modell zur Laufzeit wählen (Zahnrad → KI-Modell): gespeicherte Auswahl gilt schon ab dem ersten Start
+    container.llm_settings = LLMSettings(
+        path=data_dir / "llm.json", router=router, local=local, env_key=api_key, cloud_options=cloud_cfg,
+        make_cloud=make_cloud, warm_up=warm_up_local_model, status=lambda: container.llm_status)
 
     background.append(warm_up_local_model())
     return container, background

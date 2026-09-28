@@ -149,6 +149,8 @@ def test_api_websocket_stream(client):
         ws.send_json({"type": "ping"})
         assert ws.receive_json() == {"type": "pong"}
         ws.send_json({"type": "input.text", "text": "Schalte das Licht im Wohnzimmer an", "session_id": "ws1"})
+        status = ws.receive_json()  # Zwischenstand: die Oberfläche färbt den Kreis, während JARVIS handelt
+        assert status == {"type": "status", "phase": "action", "capability": "home.set_light"}
         final = ws.receive_json()
         assert final["type"] == "output.final" and final["route"] == "fast_path"
         ws.send_json({"type": "confirmation.resolve", "confirmation_id": "cnf_x", "decision": "approve"})

@@ -70,9 +70,10 @@ def test_weather_current_and_forecast():
     result = run(registry, "info.weather", {"location": "Berlin", "days": 2})
     assert result["location"] == "Berlin, Deutschland"  # doppelte Teile zusammengefasst
     assert result["current"]["conditions"] == "bedeckt" and result["current"]["temperature_c"] == 14.3
-    assert result["forecast"][1] == {"date": "2026-09-28", "conditions": "leichter Regen", "temp_max_c": 13.4,
-                                     "temp_min_c": 9.0, "precipitation_probability_pct": 80,
+    assert result["forecast"][1] == {"date": "2026-09-28", "conditions": "leichter Regen", "code": 61,
+                                     "temp_max_c": 13.4, "temp_min_c": 9.0, "precipitation_probability_pct": 80,
                                      "precipitation_mm": 4.6}
+    assert result["current"]["code"] == 3 and result["current"]["is_day"] is True  # für das Wettersymbol
     run(registry, "info.weather", {"location": "Berlin", "days": 2})
     assert len(calls) == 2  # zweiter Aufruf kommt aus dem Cache
 

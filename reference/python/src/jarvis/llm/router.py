@@ -60,6 +60,11 @@ class ModelRouter:
         self.cloud = cloud
         self.cloud_breaker = cloud_breaker or CircuitBreaker()
         self.fast_path_min_confidence = fast_path_min_confidence
+        self.mode = "auto"  # auto | cloud (immer Claude, außer Sensibles) | local – umstellbar in der Oberfläche
+
+    @property
+    def override(self) -> str | None:
+        return None if self.mode == "auto" else self.mode
 
     def decide(
         self,

@@ -83,6 +83,11 @@ def _clean(text: str | None, limit: int) -> str:
     return plain if len(plain) <= limit else plain[: limit - 1].rstrip() + "…"
 
 
+def _wiki_image(url: Any) -> str | None:
+    """Nur Bilder von Wikimedia (die Oberfläche lädt Bilder ausschließlich von dort, siehe Content-Security-Policy)."""
+    return url if isinstance(url, str) and url.startswith("https://upload.wikimedia.org/") else None
+
+
 def parse_feed(xml_text: str, limit: int) -> list[dict[str, str | None]]:
     """RSS 2.0 und Atom: Titel, Kurztext, Datum, Link."""
     root = ET.fromstring(xml_text)
@@ -140,7 +145,7 @@ def register_info_capabilities(registry: ToolRegistry, config: InfoConfig | None
             "latitude": latitude, "longitude": longitude, "timezone": "auto",
             "forecast_days": args.get("days", 1),
             "current": "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,"
-                       "wind_speed_10m",
+                       "wind_speed_10m,is_day",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
                      "precipitation_sum",
         })
@@ -156,6 +161,8 @@ def register_info_capabilities(registry: ToolRegistry, config: InfoConfig | None
             "current": {
                 "time": current.get("time"),
                 "conditions": WEATHER_CODES.get(current.get("weather_code"), "unbekannt"),
+                "code": current.get("weather_code"),  # WMO-Code – die Oberfläche zeigt daraus ein Wettersymbol
+                "is_day": current.get("is_day") != 0,
                 "temperature_c": current.get("temperature_2m"),
                 "feels_like_c": current.get("apparent_temperature"),
                 "humidity_pct": current.get("relative_humidity_2m"),
@@ -166,6 +173,7 @@ def register_info_capabilities(registry: ToolRegistry, config: InfoConfig | None
                 {
                     "date": date,
                     "conditions": WEATHER_CODES.get(day_value("weather_code", i), "unbekannt"),
+                    "code": day_value("weather_code", i),
                     "temp_max_c": day_value("temperature_2m_max", i),
                     "temp_min_c": day_value("temperature_2m_min", i),
                     "precipitation_probability_pct": day_value("precipitation_probability_max", i),
@@ -211,6 +219,7 @@ def register_info_capabilities(registry: ToolRegistry, config: InfoConfig | None
             "description": summary.get("description"),
             "summary": _clean(summary.get("extract"), 1500),
             "url": ((summary.get("content_urls") or {}).get("desktop") or {}).get("page"),
+            "image": _wiki_image((summary.get("thumbnail") or {}).get("source")),  # Vorschaubild für die Karte
             "source": "Wikipedia",
         }
 

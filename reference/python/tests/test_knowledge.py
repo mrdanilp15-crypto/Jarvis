@@ -283,3 +283,28 @@ def test_commands_are_part_of_the_history(orchestrator):
     turn("Was hast du gerade gemacht?")
     texts = [getattr(t, "text", "") for t in llm.requests[-1]["transcript"]]
     assert texts[:2] == ["Öffne Steam", "Sehr wohl. Steam ist geöffnet."]
+
+
+def test_phases_are_reported_for_the_interface(orchestrator):
+    """Die Oberfläche färbt den Kreis nach dem, was JARVIS gerade tut: nachschlagen (violett), Befehl (blau)."""
+    turn, llm, hub, _ = setup(orchestrator)
+    phases = []
+
+    async def on_status(data):
+        phases.append(data)
+
+    def ask(text):
+        request = TurnRequest(text=text, session_id="phasen", principal=ALEX)
+        return asyncio.run(orchestrator.handle_turn(request, provider=llm, situation=Situation(now=NOW),
+                                                    on_status=on_status))
+
+    ask("Wer war Albert Einstein?")
+    assert phases == [{"phase": "research", "query": "Albert Einstein"}]
+    ask("Öffne Steam")
+    assert phases[-1] == {"phase": "action", "capability": "pc.open_app"}
+
+    async def broken(data):
+        raise RuntimeError("Fenster zu")
+    request = TurnRequest(text="Wer war Albert Einstein?", session_id="phasen2", principal=ALEX)
+    result = asyncio.run(orchestrator.handle_turn(request, provider=llm, situation=Situation(now=NOW), on_status=broken))
+    assert result.route == "research"  # eine kaputte Anzeige stört die Antwort nie

@@ -122,18 +122,18 @@ Der WebSocket-Client von Home Assistant im selben Modul authentifiziert sich (`a
 
 ```python
 params = {
-    "model": "claude-opus-5",
+    "model": "claude-opus-5-5",
     "max_tokens": 64000,
     "system": [
         {"type": "text", "text": system.static, "cache_control": {"type": "ephemeral"}},  # Tools + Regeln + Persona
         {"type": "text", "text": system.dynamic},                                         # Situation, Memories
     ],
-    "messages": self._render_messages(transcript),
-    "thinking": {"type": "adaptive"},
+    "messages": self._render_messages(transcript),  # Denk-Blöcke nur aus der laufenden Runde
+    "thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}},
     "output_config": {"effort": effort or "medium"},
     "tools": [{"name": t.name, "description": t.description, "input_schema": t.input_schema,
                "eager_input_streaming": True} for t in tools],
-    "betas": ["server-side-fallback-2026-07-01"],
+    "betas": ["thinking-binding-controls-2026-08-01", "server-side-fallback-2026-07-01"],
     "fallbacks": "default",
 }
 async with self._client.beta.messages.stream(**params) as stream:
@@ -144,7 +144,10 @@ async with self._client.beta.messages.stream(**params) as stream:
 ```
 
 Die Tool-Eingaben werden anschließend im Orchestrator gegen das Schema geprüft; bei `stop_reason` `max_tokens` oder
-`refusal` wird kein Tool ausgeführt. Der Test [`test_llm_providers.py`](../reference/python/tests/test_llm_providers.py)
+`refusal` wird kein Tool ausgeführt. Denk-Blöcke sind an Modell und Verlauf gebunden: Weil sich der Situationsteil des
+System-Prompts bei jeder Frage ändert und alte Runden vorne gekürzt werden, gehen sie nur innerhalb der laufenden
+Tool-Schleife zurück. Passt dennoch einer nicht, verwirft die API ihn (`drop_block`), statt die Anfrage abzulehnen –
+wichtig für Konten ab dem 31.08.2026, bei denen diese Prüfung erzwungen wird. Der Test [`test_llm_providers.py`](../reference/python/tests/test_llm_providers.py)
 prüft Request-Form und Stream-Verarbeitung gegen das echte SDK.
 
 ### 5.2.6 Gedächtnis-Suche in PostgreSQL

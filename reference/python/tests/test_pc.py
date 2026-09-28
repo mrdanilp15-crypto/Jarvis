@@ -425,10 +425,17 @@ def pc_client(orchestrator):
     return testclient.TestClient(create_app(container))
 
 
+def final_of(chat):
+    """Antwort abwarten; davor kommen Zwischenstände („action“ mit der Capability) für die Oberfläche."""
+    while (message := chat.receive_json())["type"] == "status":
+        assert message["phase"] in ("action", "tool", "research")
+    return message
+
+
 def test_voice_command_reaches_the_pc_agent(pc_client):
     with pc_client.websocket_connect("/v1/stream?token=tok_alex") as chat:
         chat.send_json({"type": "input.text", "text": "Öffne den Explorer", "session_id": "pc1"})
-        final = chat.receive_json()
+        final = final_of(chat)
         assert final["route"] == "fast_path" and "nicht verbunden" in final["text"]  # noch kein Agent
 
         with pc_client.websocket_connect("/v1/agent?token=tok_alex") as agent:
@@ -442,7 +449,7 @@ def test_voice_command_reaches_the_pc_agent(pc_client):
             assert invoke["type"] == "agent.invoke" and invoke["action"] == "open_app"
             assert invoke["arguments"] == {"app": "explorer"}
             agent.send_json({"type": "agent.result", "id": invoke["id"], "ok": True, "result": {"opened": "explorer"}})
-            final = chat.receive_json()
+            final = final_of(chat)
             assert final["text"] == "Erledigt." and final["actions"][0]["status"] == "succeeded"
     assert pc_client.get("/v1/system/health").json()["pc_agent"] == "disconnected"
 
@@ -462,14 +469,14 @@ def test_any_installed_program_reaches_the_pc_agent(pc_client):
         invoke = agent.receive_json()
         assert invoke["action"] == "open_app" and invoke["arguments"] == {"app": "Steam"}
         agent.send_json({"type": "agent.result", "id": invoke["id"], "ok": True, "result": {"opened": "Steam"}})
-        final = chat.receive_json()
+        final = final_of(chat)
         assert final["route"] == "fast_path" and final["actions"][0]["status"] == "succeeded"
 
         chat.send_json({"type": "input.text", "text": "Such die Datei Rechnung", "session_id": "pc2"})
         invoke = agent.receive_json()
         assert invoke["action"] == "search_files" and invoke["arguments"] == {"query": "Rechnung"}
         agent.send_json({"type": "agent.result", "id": invoke["id"], "ok": True, "result": {"searched": "Rechnung"}})
-        assert chat.receive_json()["actions"][0]["capability"] == "pc.search_files"
+        assert final_of(chat)["actions"][0]["capability"] == "pc.search_files"
 
 
 def test_agent_needs_a_valid_token(pc_client):

@@ -56,7 +56,7 @@ llm:
   providers:
     claude:
       type: anthropic
-      model: claude-opus-5
+      model: claude-opus-5-5          # in der Oberfläche umstellbar (Zahnrad → KI-Modell)
       api_key: env:ANTHROPIC_API_KEY
       max_tokens: 64000
       effort:                  # output_config.effort je Route/Aufgabe

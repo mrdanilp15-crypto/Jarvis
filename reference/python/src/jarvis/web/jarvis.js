@@ -15,6 +15,14 @@
     pc: $("#pc-status"), pcText: $("#pc-text"),
     heard: $("#heard"), heardText: $("#heard-text"), heardLearn: $("#heard-learn"),
     wakeTrain: $("#wake-train"), wakeForget: $("#wake-forget"), wakeTrainStatus: $("#wake-train-status"),
+    clockTime: $("#clock-time"), clockDate: $("#clock-date"), weatherChip: $("#weather-chip"),
+    modelChip: $("#model-chip"), modelText: $("#model-text"), ambient: $("#ambient"), cards: $("#cards"),
+    optFx: $("#opt-fx"), tabs: [...document.querySelectorAll('.tabs [role="tab"]')],
+    aiNow: $("#ai-now"), aiError: $("#ai-error"), localModels: $("#local-models"), pullProgress: $("#pull-progress"),
+    pullBar: $("#pull-bar"), pullText: $("#pull-text"), customModel: $("#custom-model"), customPull: $("#custom-pull"),
+    claudeState: $("#claude-state"), claudeKey: $("#claude-key"), claudeSave: $("#claude-save"),
+    claudeHttp: $("#claude-http"), claudeError: $("#claude-error"), claudeRemove: $("#claude-remove"),
+    claudeModel: $("#claude-model"), llmModes: $("#llm-modes"),
   };
 
   // ---------------------------------------------------------------- Browser-Speicher (nur Komfort)
@@ -52,7 +60,9 @@
   const settings = {
     speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice.v2", ""),
     wake: store.get("wake", false), location: store.get("location", ""), effect: store.get("effect", "dezent"),
+    fx: store.get("fx", "voll"),
   };
+  document.body.dataset.fx = settings.fx;
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const canListen = Boolean(SpeechRecognition);
@@ -85,7 +95,8 @@
     const previous = state;
     state = next;
     document.body.dataset.state = next;
-    els.status.textContent = text ?? (next === "idle" ? idleText() : STATUS[next]);
+    const phase = next === "thinking" ? turn?.phaseText : null;  // „Ich schlage nach …“ bleibt stehen
+    els.status.textContent = text ?? phase ?? (next === "idle" ? idleText() : STATUS[next]);
     if (next === "speaking" && previous !== "speaking") speakingAnimation.start();
     if (next !== "speaking" && previous === "speaking") speakingAnimation.stop();
     if (next === "idle") wake.schedule();
@@ -166,8 +177,12 @@
     document.querySelectorAll(`.chip[data-action-id="${CSS.escape(action.action_id)}"]`)
       .forEach((chip) => updateChip(chip, action));
     document.querySelectorAll(`.confirm[data-action-id="${CSS.escape(action.action_id)}"]`).forEach((card) => {
-      if (action.status !== "pending_confirmation") closeConfirmation(card, STATUS_DE[action.status] ?? action.status);
+      if (action.status !== "pending_confirmation") {
+        closeConfirmation(card, STATUS_DE[action.status] ?? action.status);
+        flash(action.status === "succeeded" ? "done" : action.status === "rejected" ? null : "error");
+      }
     });
+    setAlert(Boolean(document.querySelector(".confirm:not(.done)")));
   }
 
   function routeLabel(route) {
@@ -180,6 +195,410 @@
     if (route.startsWith("llm:claude")) return `Claude · Cloud${sourced}`;
     if (route.startsWith("llm:")) return `lokales Modell${sourced}`;
     return route;
+  }
+
+  // ---------------------------------------------------------------- Farben, Karten, Wetter
+  // Farbsprache (jarvis.css): Cyan bereit · Weiß hört · Gold denkt · Violett schlägt nach · Blau führt aus ·
+  // Grün gefunden/erledigt · Orange wartet auf Bestätigung · Rot Fehler. Die Phasen meldet der Server („status“).
+  const TOOL_TEXT = {
+    "info.weather": "Ich rufe die Wetterdaten ab …", "info.news": "Ich lade die Nachrichten …",
+    "info.wikipedia": "Ich sehe in der Wikipedia nach …", "web.search": "Ich suche im Internet …",
+    "web.fetch": "Ich lese die Seite …", "pc.search_files": "Ich durchsuche Ihre Dateien …",
+    "pc.find_files": "Ich durchsuche Ihre Dateien …", "pc.open_link": "Ich suche den passenden Link …",
+    calendar: "Ich sehe in Ihren Kalender …", mail: "Ich sehe ins Postfach …", timer: "Timer wird gestellt …",
+    reminder: "Erinnerung wird angelegt …", pc: "Befehl an Ihren PC …", home: "Haussteuerung …",
+    memory: "Einen Moment …", system: "Systemprüfung läuft …", assistant: "Ich stelle Ihren Tag zusammen …",
+  };
+  const toolText = (capability = "") => TOOL_TEXT[capability] ?? TOOL_TEXT[capability.split(".")[0]] ?? "Einen Moment …";
+
+  function onStatus(message) {
+    if (!turn) return;
+    document.body.dataset.phase = message.phase;
+    turn.phaseText = message.phase === "research"
+      ? (message.query ? `Ich schlage nach: „${message.query}“ …` : "Ich schlage nach …")
+      : toolText(message.capability);
+    if (state === "thinking") els.status.textContent = turn.phaseText;
+  }
+
+  let flashTimer = 0;
+  function flash(kind) {  // found | done | miss | error | alert
+    if (!kind) return;
+    clearTimeout(flashTimer);
+    delete document.body.dataset.flash;
+    void document.body.offsetWidth;  // Animation neu starten, auch bei gleicher Art
+    document.body.dataset.flash = kind;
+    flashTimer = setTimeout(() => { delete document.body.dataset.flash; }, kind === "alert" ? 3800 : 1500);
+  }
+
+  function setAlert(on) {
+    if (on) document.body.dataset.alert = "confirm";
+    else delete document.body.dataset.alert;
+  }
+
+  function outcomeOf(result, text) {
+    const actions = result.actions ?? [];
+    if (result.pending_confirmation) return "alert";
+    const failed = actions.some((a) => ["failed", "denied", "timed_out"].includes(a.status));
+    const succeeded = actions.some((a) => a.status === "succeeded");
+    if (/finde ich nichts Verlässliches|steht nichts in der Wikipedia|Mehr steht in meinen Quellen nicht/.test(text)) return "miss";
+    if (failed && !succeeded) return "error";
+    if (result.route === "research" || result.route?.endsWith(":research")) return "found";
+    return succeeded ? "done" : null;
+  }
+
+  // Karten unter dem Kreis (Wetter, Nachgeschlagenes, Timer) – der Kreis wird dafür kleiner
+  const cards = {
+    items: new Map(),
+    show(key, card, lifetimeMs) {
+      this.remove(key, true);
+      card.dataset.key = key;
+      const close = button("×", "close", () => this.remove(key));
+      close.setAttribute("aria-label", "Schließen");
+      card.prepend(close);
+      els.cards.prepend(card);
+      const timer = lifetimeMs ? setTimeout(() => this.remove(key), lifetimeMs) : 0;
+      this.items.set(key, { card, timer });
+      document.body.classList.add("has-cards");
+      return card;
+    },
+    remove(key, instant = false) {
+      const item = this.items.get(key);
+      if (!item) return;
+      this.items.delete(key);
+      clearTimeout(item.timer);
+      if (key === "weather") ambient.stop();
+      const done = () => {
+        item.card.remove();
+        if (!this.items.size) document.body.classList.remove("has-cards");
+      };
+      if (instant) { done(); return; }
+      item.card.classList.add("leaving");
+      setTimeout(done, 340);
+    },
+  };
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  // -- Wetter: WMO-Code -> Himmel, animierte Symbole, Partikel -------------------------------------------------
+  function skyOf(code, conditions = "", isDay = true) {
+    let sky;
+    if (code === null || code === undefined) {
+      const c = conditions.toLowerCase();
+      sky = /gewitter/.test(c) ? "thunder" : /schnee/.test(c) ? "snow" : /niesel/.test(c) ? "drizzle"
+        : /regen|schauer/.test(c) ? "rain" : /nebel/.test(c) ? "fog" : /bedeckt/.test(c) ? "cloud"
+          : /teilweise|überwiegend/.test(c) ? "partly" : "sun";
+    } else if (code === 0) sky = "sun";
+    else if (code <= 2) sky = "partly";
+    else if (code === 3) sky = "cloud";
+    else if (code <= 48) sky = "fog";
+    else if (code <= 57) sky = "drizzle";
+    else if (code <= 67 || (code >= 80 && code <= 82)) sky = "rain";
+    else if (code <= 77 || code === 85 || code === 86) sky = "snow";
+    else sky = "thunder";
+    if (!isDay && sky === "sun") return "night";
+    if (!isDay && sky === "partly") return "partly-night";
+    return sky;
+  }
+
+  const CLOUD = '<g class="cloud{c}" transform="{t}"><circle cx="-14" cy="4" r="14"/><circle cx="4" cy="-5" r="18"/>'
+    + '<circle cx="20" cy="6" r="12"/><rect x="-28" y="4" width="60" height="16" rx="8"/></g>';
+  const cloud = (extra = "", transform = "") => CLOUD.replace("{c}", extra ? ` ${extra}` : "").replace("{t}", transform);
+  const SUN = '<g transform="{t}"><g class="rays">' + Array.from({ length: 8 }, (_, i) => {
+    const a = (i * Math.PI) / 4;
+    return `<line x1="${(30 * Math.cos(a)).toFixed(1)}" y1="${(30 * Math.sin(a)).toFixed(1)}" x2="${(40 * Math.cos(a)).toFixed(1)}" y2="${(40 * Math.sin(a)).toFixed(1)}"/>`;
+  }).join("") + '</g><circle class="sun-core" r="21"/></g>';
+  const MOON = '<path class="moon" transform="{t}" d="M 6 -24 A 24 24 0 1 0 24 8 A 19 19 0 1 1 6 -24 Z"/>';
+  const drops = (cls, n) => [[-16, 24], [-2, 26], [12, 24], [-9, 30]].slice(0, n)
+    .map(([x, y], i) => `<line class="drop d${i + 1}" x1="${x}" y1="${y}" x2="${x - 3}" y2="${y + 8}"/>`).join("").replace(/drop/g, cls);
+  const flakes = () => [[-15, 26], [0, 30], [14, 26]].map(([x, y], i) => `<circle class="flake d${i + 1}" cx="${x}" cy="${y}" r="3"/>`).join("");
+
+  function weatherIcon(sky) {
+    const parts = {
+      sun: SUN.replace("{t}", ""),
+      night: MOON.replace("{t}", ""),
+      partly: SUN.replace("{t}", "translate(-12 -12) scale(0.72)") + cloud("", "translate(6 8) scale(0.85)"),
+      "partly-night": MOON.replace("{t}", "translate(-10 -12) scale(0.7)") + cloud("", "translate(6 8) scale(0.85)"),
+      cloud: cloud("back", "translate(-10 -10) scale(0.7)") + cloud("", "translate(4 4)"),
+      fog: cloud("back", "translate(0 -10)") + '<line class="fogline" x1="-30" y1="22" x2="26" y2="22"/>'
+        + '<line class="fogline d2" x1="-22" y1="31" x2="32" y2="31"/><line class="fogline d3" x1="-32" y1="40" x2="18" y2="40"/>',
+      drizzle: cloud("", "translate(0 -8)") + drops("drop", 3),
+      rain: cloud("dark", "translate(0 -8)") + drops("drop", 4),
+      snow: cloud("", "translate(0 -8)") + flakes(),
+      thunder: cloud("dark", "translate(0 -10)") + '<polygon class="bolt" points="-2,16 -12,34 -2,34 -8,50 10,26 0,26 6,16"/>'
+        + drops("drop", 2),
+    };
+    return `<svg class="wx" viewBox="-50 -50 100 100" aria-hidden="true">${parts[sky] ?? parts.cloud}</svg>`;
+  }
+
+  const WEEKDAY = new Intl.DateTimeFormat("de-DE", { weekday: "short" });
+  const round = (value) => (typeof value === "number" ? Math.round(value) : "–");
+
+  function showWeather(data) {
+    const current = data.current ?? {};
+    const sky = skyOf(current.code, current.conditions, current.is_day !== false);
+    const card = el("section", "card weather");
+    card.dataset.sky = sky.replace("partly-night", "night").replace("partly", "cloud");
+    card.setAttribute("aria-label", `Wetter ${data.location ?? ""}`);
+    card.append(el("p", "kicker", `Wetter · ${data.location ?? ""}`));
+    const now = el("div", "now");
+    now.insertAdjacentHTML("afterbegin", weatherIcon(sky));
+    const info = el("div");
+    const temp = el("div", "temp", `${round(current.temperature_c)}°`);
+    if (typeof current.feels_like_c === "number") temp.append(el("small", "", `gefühlt ${round(current.feels_like_c)}°`));
+    info.append(temp, el("div", "cond", current.conditions ?? ""));
+    const facts = el("div", "facts");
+    const fact = (label, value) => { if (value !== null && value !== undefined) { const f = el("span", "", `${label} `); f.append(el("b", "", value)); facts.append(f); } };
+    fact("Wind", typeof current.wind_kmh === "number" ? `${round(current.wind_kmh)} km/h` : null);
+    fact("Luftfeuchte", typeof current.humidity_pct === "number" ? `${round(current.humidity_pct)} %` : null);
+    const today = (data.forecast ?? [])[0];
+    fact("Regen", today && typeof today.precipitation_probability_pct === "number" ? `${today.precipitation_probability_pct} %` : null);
+    info.append(facts);
+    now.append(info);
+    card.append(now);
+
+    const forecast = data.forecast ?? [];
+    if (forecast.length > 1) {
+      const lows = forecast.map((d) => d.temp_min_c).filter((v) => typeof v === "number");
+      const highs = forecast.map((d) => d.temp_max_c).filter((v) => typeof v === "number");
+      const min = Math.min(...lows), max = Math.max(...highs), span = Math.max(1, max - min);
+      const days = el("div", "days");
+      forecast.slice(0, 7).forEach((day, i) => {
+        const cell = el("div", "day");
+        const name = i === 0 ? "Heute" : i === 1 ? "Morgen" : WEEKDAY.format(new Date(`${day.date}T12:00:00`)).replace(".", "");
+        cell.append(el("div", "", name));
+        cell.insertAdjacentHTML("beforeend", weatherIcon(skyOf(day.code, day.conditions)));
+        const temps = el("div");
+        temps.append(el("b", "", `${round(day.temp_max_c)}°`), document.createTextNode(` ${round(day.temp_min_c)}°`));
+        cell.append(temps);
+        if (typeof day.temp_min_c === "number" && typeof day.temp_max_c === "number") {
+          const bar = el("div", "bar");  // Spanne des Tages im Verhältnis zur ganzen Woche
+          bar.style.marginLeft = `${6 + ((day.temp_min_c - min) / span) * 40}%`;
+          bar.style.marginRight = `${6 + ((max - day.temp_max_c) / span) * 40}%`;
+          cell.append(bar);
+        }
+        if (day.precipitation_probability_pct >= 30) cell.append(el("div", "rain", `☂ ${day.precipitation_probability_pct} %`));
+        days.append(cell);
+      });
+      card.append(days);
+    }
+    cards.show("weather", card, 120000);
+    ambient.start(sky);
+    weatherChip.set(data, sky);
+  }
+
+  // Kleines Wetter in der Kopfzeile (letzte Abfrage, 3 Stunden gültig) – Klick zeigt die Karte wieder
+  const weatherChip = {
+    set(data, sky) {
+      store.set("weather.last", { at: Date.now(), data });
+      els.weatherChip.innerHTML = weatherIcon(sky);
+      els.weatherChip.append(document.createTextNode(`${round(data.current?.temperature_c)}°`));
+      els.weatherChip.title = `${data.location ?? ""}: ${data.current?.conditions ?? ""} – anzeigen`;
+      els.weatherChip.hidden = false;
+    },
+    restore() {
+      const last = store.get("weather.last", null);
+      if (!last || Date.now() - last.at > 3 * 3600 * 1000 || !last.data?.current) return;
+      const current = last.data.current;
+      this.set(last.data, skyOf(current.code, current.conditions, current.is_day !== false));
+    },
+  };
+  els.weatherChip.addEventListener("click", () => {
+    const last = store.get("weather.last", null);
+    if (last?.data) showWeather(last.data);
+  });
+
+  // Regen, Schnee, Blitze hinter dem Kreis, solange die Wetterkarte offen ist
+  const ambient = {
+    frame: 0, particles: [], kind: null, bolt: 0,
+    start(sky) {
+      this.stop(true);
+      const kind = { rain: "rain", drizzle: "rain", thunder: "rain", snow: "snow" }[sky];
+      if (!kind || settings.fx !== "voll" || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const canvas = els.ambient;
+      const ratio = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = canvas.clientWidth * ratio;
+      canvas.height = canvas.clientHeight * ratio;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(ratio, ratio);
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      const count = kind === "snow" ? 90 : sky === "drizzle" ? 70 : 150;
+      this.kind = kind;
+      this.thunder = sky === "thunder";
+      this.particles = Array.from({ length: count }, () => ({
+        x: Math.random() * w, y: Math.random() * h, v: kind === "snow" ? 0.4 + Math.random() * 0.8 : 7 + Math.random() * 6,
+        r: kind === "snow" ? 1 + Math.random() * 2.2 : 10 + Math.random() * 12, d: Math.random() * Math.PI * 2,
+      }));
+      canvas.classList.add("on");
+      const tick = () => {
+        ctx.clearRect(0, 0, w, h);
+        if (this.thunder && Math.random() < 0.004) this.bolt = 1;
+        if (this.bolt > 0.02) {  // Wetterleuchten
+          ctx.fillStyle = `rgba(200, 215, 255, ${this.bolt * 0.18})`;
+          ctx.fillRect(0, 0, w, h);
+          this.bolt *= 0.85;
+        }
+        ctx.strokeStyle = "rgba(120, 180, 255, 0.35)";
+        ctx.fillStyle = "rgba(235, 248, 255, 0.75)";
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        for (const p of this.particles) {
+          if (this.kind === "snow") {
+            p.d += 0.01;
+            p.x += Math.sin(p.d) * 0.4;
+            p.y += p.v;
+            ctx.moveTo(p.x + p.r, p.y);
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+          } else {
+            p.x -= p.v * 0.18;
+            p.y += p.v;
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(p.x + p.r * 0.18, p.y - p.r);
+          }
+          if (p.y > h + 20) { p.y = -20; p.x = Math.random() * (w + 60); }
+        }
+        if (this.kind === "snow") ctx.fill(); else ctx.stroke();
+        this.frame = requestAnimationFrame(tick);
+      };
+      tick();
+    },
+    stop(instant = false) {
+      cancelAnimationFrame(this.frame);
+      this.frame = 0;
+      els.ambient.classList.remove("on");
+      if (instant) els.ambient.getContext("2d")?.clearRect(0, 0, els.ambient.width, els.ambient.height);
+    },
+  };
+
+  // -- Nachgeschlagen: Wikipedia-Karte und Quellen unter der Antwort ----------------------------------------------
+  function hostOf(url) {
+    try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; }
+  }
+
+  function showKnowledge(article) {
+    const card = el("section", `card knowledge${article.image ? "" : " noimg"}`);
+    if (article.image?.startsWith("https://upload.wikimedia.org/")) {
+      const img = el("img");
+      img.alt = "";
+      img.loading = "lazy";
+      img.referrerPolicy = "no-referrer";
+      img.src = article.image;
+      img.addEventListener("error", () => { img.remove(); card.classList.add("noimg"); });
+      card.append(img);
+    }
+    const text = el("div");
+    text.append(el("p", "kicker", "Nachgeschlagen · Wikipedia"), el("h4", "", article.title ?? ""));
+    if (article.description) text.append(el("p", "desc", article.description));
+    if (/^https:\/\/[a-z-]+\.wikipedia\.org\//.test(article.url ?? "")) {
+      const link = el("a", "", "Artikel öffnen ↗");
+      link.href = article.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      text.append(link);
+    }
+    card.append(text);
+    cards.show("knowledge", card, 120000);
+  }
+
+  function sourceLinks(results) {
+    const box = el("div", "sources");
+    const seen = new Set();
+    for (const hit of results) {
+      const host = hostOf(hit.url);
+      if (!host || seen.has(host) || !/^https?:\/\//.test(hit.url)) continue;
+      seen.add(host);
+      const link = el("a", "", host);
+      link.href = hit.url;
+      link.title = hit.title ?? host;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      box.append(link);
+      if (seen.size >= 4) break;
+    }
+    return seen.size ? box : null;
+  }
+
+  // -- Timer mit Countdown-Ring --------------------------------------------------------------------------------
+  const RING = 2 * Math.PI * 22;
+  const timers = {
+    tick: 0,
+    add(result) {
+      // „due“ kommt minutengenau – bei bekannter Dauer zählt die Zeit ab Empfang (auf die Sekunde)
+      const due = result.duration_s ? Date.now() + result.duration_s * 1000 : Date.parse(result.due);
+      if (!Number.isFinite(due)) return;
+      const card = el("section", "card timer");
+      card.dataset.due = String(due);
+      card.dataset.total = String((result.duration_s || Math.max(1, (due - Date.now()) / 1000)) * 1000);
+      card.dataset.label = result.label ?? "";
+      card.insertAdjacentHTML("afterbegin", `<svg viewBox="0 0 54 54" aria-hidden="true"><circle class="ring-bg" cx="27" cy="27" r="22"/>`
+        + `<circle class="ring-fg" cx="27" cy="27" r="22" stroke-dasharray="${RING.toFixed(1)}" stroke-dashoffset="0"/></svg>`);
+      const text = el("div");
+      text.append(el("div", "left", "--:--"), el("div", "label", result.label ? `Timer „${result.label}“` : "Timer"));
+      card.append(text);
+      cards.show(`timer:${result.id}`, card);
+      this.update();
+      if (!this.tick) this.tick = setInterval(() => this.update(), 1000);
+    },
+    update() {
+      const running = [...cards.items].filter(([key]) => key.startsWith("timer:"));
+      if (!running.length) { clearInterval(this.tick); this.tick = 0; return; }
+      for (const [, { card }] of running) {
+        if (card.dataset.done) continue;  // „Abgelaufen“ bleibt stehen
+        const left = Math.max(0, Number(card.dataset.due) - Date.now());
+        const s = Math.ceil(left / 1000);
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+        card.querySelector(".left").textContent = h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
+          : `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+        card.querySelector(".ring-fg").setAttribute("stroke-dashoffset", (RING * (1 - left / Number(card.dataset.total))).toFixed(1));
+        if (!left) card.classList.add("due");
+      }
+    },
+    done(id) {  // Meldung vom Server: abgelaufen
+      const item = cards.items.get(`timer:${id}`);
+      if (!item) return;
+      item.card.classList.add("due");
+      item.card.dataset.done = "1";
+      item.card.querySelector(".left").textContent = "Abgelaufen";
+      setTimeout(() => cards.remove(`timer:${id}`), 8000);
+    },
+    cancel(labels) {
+      for (const [key, { card }] of [...cards.items]) {
+        if (key.startsWith("timer:") && (!labels.length || labels.includes(card.dataset.label))) cards.remove(key);
+      }
+    },
+  };
+
+  // Aus den Aktionen einer Antwort die passenden Karten zeigen
+  function showResults(result, item) {
+    const actions = result.actions ?? [];
+    for (const action of actions) {
+      if (action.status !== "succeeded" || !action.result || typeof action.result !== "object") continue;
+      const data = action.result;
+      if (action.capability === "info.weather" && data.current) showWeather(data);
+      else if (action.capability === "assistant.day_plan" && data.weather?.current) showWeather(data.weather);
+      else if (action.capability === "info.wikipedia" && data.found) showKnowledge(data);
+      else if (action.capability === "timer.start" && data.id) timers.add(data);
+      else if (action.capability === "timer.cancel") timers.cancel((data.cancelled ?? []).map((t) => t.label ?? ""));
+    }
+    const researched = result.route === "research" || result.route?.endsWith(":research");
+    const web = actions.find((a) => a.capability === "web.search" && a.status === "succeeded");
+    if (researched && web?.result?.results?.length && item) {
+      const links = sourceLinks(web.result.results);
+      if (links) item.append(links);
+    }
+  }
+
+  // -- Uhr in der Kopfzeile ----------------------------------------------------------------------------------------
+  const DATE = new Intl.DateTimeFormat("de-DE", { weekday: "short", day: "numeric", month: "short" });
+  function tickClock() {
+    const now = new Date();
+    els.clockTime.textContent = now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    els.clockDate.textContent = DATE.format(now).replace(/\./g, "");
+    setTimeout(tickClock, 60000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50);
   }
 
   // ---------------------------------------------------------------- Bestätigungen
@@ -658,6 +1077,9 @@
       const waiting = actions.find((a) => a.status === "pending_confirmation");
       addConfirmation(current.item, result.pending_confirmation, waiting?.action_id);
     }
+    showResults(result, current.item);  // Wetter, Nachgeschlagenes, Timer als Karten
+    flash(outcomeOf(result, finalText));
+    setAlert(Boolean(document.querySelector(".confirm:not(.done)")));
     expectReply = Boolean(result.awaiting_reply) && current.spoken && canListen;
     scrollLog();
     if (!tts.busy) onSpeechDone();
@@ -668,6 +1090,7 @@
     const current = endTurn();
     current.item.classList.add("error");
     current.body.textContent = current.streamed ? `${current.streamed}\n\n${message}` : message;
+    flash("error");
     tts.stop();
     tts.speak(message);
     if (!tts.busy) onSpeechDone();
@@ -678,6 +1101,7 @@
     turn = null;
     clearTimeout(current.slowTimer);
     current.item.classList.remove("pending");
+    delete document.body.dataset.phase;
     lastTurnSpoken = current.spoken;
     updateComposer();
     return current;
@@ -1169,6 +1593,7 @@
       ttsProvider = health.tts ?? "off";
       ttsConfigured = ttsProvider !== "off";
       setPcStatus(health.pc_agent === "connected");
+      setModelChip(health.llm);
       acknowledgement.prepare();
     } catch {
       llmStatus = "unknown";
@@ -1250,6 +1675,7 @@
     switch (message.type) {
       case "output.text_delta": onDelta(message.delta ?? ""); break;
       case "output.final": onFinal(message); break;
+      case "status": onStatus(message); break;
       case "action.update": onActionUpdate(message.action); break;
       case "notification": onNotification(message); break;
       case "error": onServerError(message.error ?? {}); break;
@@ -1263,6 +1689,8 @@
     if (!text) return;
     const item = addMessage("jarvis", text, `JARVIS · ${timeNow()} · ${NOTICE_LABELS[message.kind] ?? "Hinweis"}`);
     item.classList.add("notice");
+    flash("alert");
+    if (message.kind === "timer" && message.id) timers.done(message.id);
     if (settings.speak && !turn?.muted) {
       if (!tts.busy && !turn) wake.stop();
       chime();
@@ -1322,15 +1750,52 @@
     els.optEffect.disabled = !jarvis;
   }
 
-  els.settingsBtn.addEventListener("click", () => {
+  function openSettings(tab) {
     els.optSpeak.checked = settings.speak;
     els.optConvo.checked = settings.convo;
     els.optConvo.disabled = !canListen;
     els.optLocation.value = settings.location;
+    els.optFx.value = settings.fx;
     els.wakeTrainStatus.textContent = "";
     showLearned();
     fillVoices();
-    els.settings.showModal();
+    selectTab(tab ?? currentTab);
+    if (!els.settings.open) els.settings.showModal();
+  }
+  els.settingsBtn.addEventListener("click", () => openSettings());
+  els.modelChip.addEventListener("click", () => openSettings("ai"));
+  els.settings.addEventListener("close", () => clearTimeout(ai.timer));
+
+  // Reiter: Allgemein · Stimme & Hören · KI-Modell (Pfeiltasten wechseln wie bei Reitern üblich)
+  let currentTab = store.get("settings.tab", "general");
+  function selectTab(name) {
+    if (!els.tabs.some((tab) => tab.id === `tab-${name}`)) name = "general";
+    currentTab = name;
+    store.set("settings.tab", name);
+    for (const tab of els.tabs) {
+      const on = tab.id === `tab-${name}`;
+      tab.setAttribute("aria-selected", String(on));
+      tab.tabIndex = on ? 0 : -1;
+      document.getElementById(tab.getAttribute("aria-controls")).hidden = !on;
+    }
+    if (name === "ai") ai.load();
+    else clearTimeout(ai.timer);
+  }
+  els.tabs.forEach((tab, i) => {
+    tab.addEventListener("click", () => selectTab(tab.id.slice(4)));
+    tab.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      const next = els.tabs[(i + (event.key === "ArrowRight" ? 1 : els.tabs.length - 1)) % els.tabs.length];
+      selectTab(next.id.slice(4));
+      next.focus();
+    });
+  });
+
+  els.optFx.addEventListener("change", () => {
+    settings.fx = els.optFx.value;
+    store.set("fx", settings.fx);
+    document.body.dataset.fx = settings.fx;
+    if (settings.fx !== "voll") ambient.stop(true);
   });
   els.optSpeak.addEventListener("change", () => {
     settings.speak = els.optSpeak.checked;
@@ -1352,6 +1817,196 @@
     settings.location = els.optLocation.value.trim();
     store.set("location", settings.location);
   });
+
+  // ---------------------------------------------------------------- KI-Modell (Einstellungen)
+  async function api(method, path, body) {
+    const response = await fetch(path, {
+      method, cache: "no-store", body: body ? JSON.stringify(body) : undefined,
+      headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = Array.isArray(data.detail) ? "Die Eingabe ist ungültig." : data.detail;
+      const error = new Error(data.user_message || detail || data.title || `HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  }
+
+  const PULL_STEPS = [[/manifest/, "Vorbereitung"], [/verifying|digest/, "Prüfe Download"], [/writing|removing/, "Speichere"],
+    [/success|fertig/, "Fertig"], [/pulling|download/, "Lade herunter"]];
+  const LOCAL_STATE = { ready: "bereit", loading: "lädt …", missing_model: "fehlt", unavailable: "nicht erreichbar", unknown: "" };
+  const gb = (bytes) => (bytes / 1e9).toLocaleString("de-DE", { maximumFractionDigits: 1 });
+  const onLocalhost = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+
+  const ai = {
+    data: null, timer: 0,
+    async load() {
+      clearTimeout(this.timer);
+      try {
+        this.data = await api("GET", "/v1/settings/llm");
+      } catch (err) {
+        els.aiNow.textContent = err.status === 403 ? "Nur Erwachsene des Haushalts können das KI-Modell ändern."
+          : `Die Modellwahl ist gerade nicht erreichbar: ${err.message}`;
+        return;
+      }
+      this.render();
+      const pull = this.data.local.pull;
+      const busy = (pull && !pull.done) || this.data.local.status === "loading";
+      if (els.settings.open && currentTab === "ai") this.timer = setTimeout(() => this.load(), busy ? 1000 : 5000);
+    },
+    render() {
+      const { local, cloud, mode } = this.data;
+      const pull = local.pull;
+      const pulling = Boolean(pull && !pull.done);
+      const cloudName = cloud.models.find((m) => m.id === cloud.model)?.name ?? cloud.model;
+      const who = !cloud.configured || mode === "local" ? `Es antwortet nur das lokale Modell ${local.model}.`
+        : mode === "cloud" ? `Es antwortet ${cloudName} (Sensibles bleibt lokal bei ${local.model}).`
+          : `${local.model} antwortet, schwierige Fragen gehen an ${cloudName}.`;
+      els.aiNow.textContent = local.reachable ? `${who} Lokales Modell: ${LOCAL_STATE[local.status] ?? local.status}.`
+        : "Ollama ist nicht erreichbar – läuft JARVIS über ./deploy/start.sh?";
+
+      // lokale Modelle: Vorschläge und alles, was sonst installiert ist
+      const installed = new Map(local.installed.map((m) => [m.name, m]));
+      const rows = local.suggested.map((m) => ({ ...m, size: m.installed && installed.get(m.name) ? `${gb(installed.get(m.name).size_gb * 1e9)} GB` : m.size }));
+      for (const m of local.installed) {
+        if (!rows.some((r) => r.name === m.name || `${r.name}:latest` === m.name)) {
+          rows.push({ name: m.name, size: `${gb(m.size_gb * 1e9)} GB`, note: "installiert", installed: true });
+        }
+      }
+      els.localModels.replaceChildren(...rows.map((m) => {
+        const li = el("li");
+        const active = m.name === local.model || `${m.name}:latest` === local.model;
+        li.classList.toggle("active", active);
+        li.append(el("span", "name", m.name), el("span", "note", `${m.size} · ${m.note}`));
+        const side = el("span", "side");
+        if (active) side.append(el("span", `badge ${local.status === "ready" ? "ok" : "busy"}`, `aktiv · ${LOCAL_STATE[local.status] || "…"}`));
+        else if (m.installed) {
+          side.append(el("span", "badge", "installiert"));
+          const use = button("Verwenden", "btn small", () => this.change({ local_model: m.name }));
+          use.disabled = pulling;
+          side.append(use);
+        } else {
+          const get = button("Herunterladen", "btn small", () => this.pull(m.name));
+          get.disabled = pulling;
+          side.append(get);
+        }
+        li.append(side);
+        return li;
+      }));
+      els.customPull.disabled = pulling;
+
+      // Download-Fortschritt
+      els.pullProgress.hidden = !pull;
+      if (pull) {
+        const pct = pull.total ? Math.round((pull.completed / pull.total) * 100) : 0;
+        els.pullBar.style.width = `${pull.done && !pull.error ? 100 : pct}%`;
+        const step = PULL_STEPS.find(([re]) => re.test(pull.status))?.[1] ?? pull.status;
+        els.pullText.textContent = pull.error ? `${pull.model}: ${pull.error}`
+          : pull.done ? `${pull.model} ist geladen${pull.activate ? " und aktiv" : ""}.`
+            : `${pull.model}: ${step}${pull.total ? ` – ${gb(pull.completed)} von ${gb(pull.total)} GB (${pct} %)` : " …"}`;
+        els.pullText.classList.toggle("warn", Boolean(pull.error));
+      }
+
+      // Claude
+      els.claudeState.textContent = cloud.configured
+        ? `Verbunden – Schlüssel ${cloud.key_hint} (${cloud.source === "ui" ? "hier gespeichert" : "aus deploy/.env"})`
+          + (cloud.state === "open" ? ". Claude ist gerade gestört; JARVIS antwortet vorübergehend lokal." : ".")
+        : "Kein Schlüssel hinterlegt – JARVIS antwortet nur lokal.";
+      els.claudeRemove.hidden = cloud.source !== "ui";
+      els.claudeHttp.hidden = onLocalhost;
+      els.claudeModel.replaceChildren(...cloud.models.map((m) => new Option(
+        `${m.name} – ${m.note} (${m.price_in} $ / ${m.price_out} $ je Mio. Tokens)`, m.id, false, m.id === cloud.model)));
+      for (const radio of els.llmModes.querySelectorAll("input")) {
+        radio.checked = radio.value === mode;
+        radio.disabled = !cloud.configured && radio.value !== "local";
+      }
+    },
+    async change(body) {
+      els.aiError.hidden = true;
+      try {
+        this.data = await api("PUT", "/v1/settings/llm", body);
+        this.render();
+        checkHealth();
+      } catch (err) {
+        els.aiError.textContent = err.message;
+        els.aiError.hidden = false;
+        this.load();
+      }
+    },
+    async pull(model) {
+      els.aiError.hidden = true;
+      try {
+        this.data = await api("POST", "/v1/settings/llm/pull", { model, activate: true });
+        this.render();
+        this.timer = setTimeout(() => this.load(), 800);
+      } catch (err) {
+        els.aiError.textContent = err.message;
+        els.aiError.hidden = false;
+      }
+    },
+  };
+
+  els.customPull.addEventListener("click", () => {
+    const model = els.customModel.value.trim();
+    if (model) ai.pull(model);
+  });
+  els.claudeSave.addEventListener("click", async () => {
+    const key = els.claudeKey.value.trim();
+    els.claudeError.hidden = true;
+    if (!key) { els.claudeKey.focus(); return; }
+    els.claudeSave.disabled = true;
+    els.claudeSave.textContent = "Prüfe …";
+    try {
+      const data = await api("PUT", "/v1/settings/llm/claude-key", { api_key: key });
+      els.claudeKey.value = "";
+      ai.data = data;
+      ai.render();
+      els.claudeState.textContent = `✓ Verbunden mit ${data.checked}. ${els.claudeState.textContent}`;
+      flash("done");
+      checkHealth();
+    } catch (err) {
+      els.claudeError.textContent = err.message;
+      els.claudeError.hidden = false;
+    } finally {
+      els.claudeSave.disabled = false;
+      els.claudeSave.textContent = "Prüfen & speichern";
+    }
+  });
+  els.claudeKey.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); els.claudeSave.click(); }
+  });
+  els.claudeRemove.addEventListener("click", async () => {
+    try {
+      ai.data = await api("DELETE", "/v1/settings/llm/claude-key");
+      ai.render();
+      checkHealth();
+    } catch (err) {
+      els.claudeError.textContent = err.message;
+      els.claudeError.hidden = false;
+    }
+  });
+  els.claudeModel.addEventListener("change", () => ai.change({ claude_model: els.claudeModel.value }));
+  els.llmModes.addEventListener("change", (event) => {
+    if (event.target.name === "llm-mode") ai.change({ mode: event.target.value });
+  });
+
+  // Modell-Anzeige in der Kopfzeile
+  const CLAUDE_SHORT = { "claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-fable-5-1": "Fable 5.1" };
+  function setModelChip(llm) {
+    els.modelChip.hidden = !llm;
+    if (!llm) return;
+    const local = (llm.local_model || "lokal").replace(/-instruct$/, "").replace(":", " ");
+    const cloud = llm.cloud_model ? `Claude ${CLAUDE_SHORT[llm.cloud_model] ?? ""}`.trim() : null;
+    let text = local, kind = "local";
+    if (cloud && llm.mode === "cloud") { text = cloud; kind = "cloud"; }
+    else if (cloud && llm.mode !== "local") { text = `${local} + Claude`; kind = "cloud"; }
+    if (LLM_STATUS[llmStatus]) kind = "loading";
+    els.modelText.textContent = text;
+    els.modelChip.dataset.conn = kind;
+    els.modelChip.title = `KI-Modell: ${llm.local_model}${cloud ? ` · ${cloud} (${llm.mode === "cloud" ? "immer" : llm.mode === "local" ? "aus" : "für schwierige Fragen"})` : ""} – ändern im Zahnrad-Menü`;
+  }
   els.voiceTest.addEventListener("click", () => {
     const speakSetting = settings.speak;
     settings.speak = true;
@@ -1425,6 +2080,8 @@
   });
 
   updateComposer();
+  tickClock();
+  weatherChip.restore();
   setWake(settings.wake);
   setState("offline", "Verbinde …");
   connect();

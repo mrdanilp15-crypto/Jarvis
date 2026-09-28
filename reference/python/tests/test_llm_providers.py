@@ -21,7 +21,7 @@ def sse(*events: dict) -> bytes:
 
 STREAM = sse(
     {"type": "message_start", "message": {
-        "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-opus-5", "content": [],
+        "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-opus-5-5", "content": [],
         "stop_reason": None, "stop_sequence": None,
         "usage": {"input_tokens": 1200, "output_tokens": 1, "cache_read_input_tokens": 1000,
                   "cache_creation_input_tokens": 0}}},
@@ -66,8 +66,9 @@ def test_request_shape_and_stream_parsing():
                                              tools=[tool], on_text=on_text, effort="medium"))
 
     body = captured["body"]
-    assert body["model"] == "claude-opus-5"
-    assert body["thinking"] == {"type": "adaptive"}
+    assert body["model"] == "claude-opus-5-5"
+    assert body["thinking"] == {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    assert "thinking-binding-controls-2026-08-01" in captured["headers"]["anthropic-beta"]
     assert body["output_config"] == {"effort": "medium"}
     assert body["system"][0] == {"type": "text", "text": "REGELN", "cache_control": {"type": "ephemeral"}}
     assert body["system"][1] == {"type": "text", "text": "SITUATION"}
@@ -88,6 +89,47 @@ def test_request_shape_and_stream_parsing():
     # Eigene Antwort geht beim nächsten Aufruf unverändert (raw) zurück
     rendered = provider._render_messages([UserTurn("x"), response.assistant_turn])
     assert rendered[1]["content"] is response.assistant_turn.raw
+
+
+def test_thinking_blocks_only_from_the_current_round():
+    """Neue Konten lehnen Denk-Blöcke ab, deren Verlauf sich geändert hat (Situation, Kürzung): frühere Runden ohne."""
+    provider = ClaudeProvider(client=object())
+    thought = {"type": "thinking", "thinking": "", "signature": "sig-alt"}
+    earlier = AssistantTurn("Gern.", [], "claude", raw=[thought, {"type": "text", "text": "Gern."}])
+    only_thinking = AssistantTurn("", [], "claude", raw=[thought])
+    call = ToolCall("toolu_2", "home__set_light", {"on": True})
+    current = AssistantTurn("", [call], "claude", raw=[{"type": "thinking", "thinking": "", "signature": "sig-neu"},
+                                                       {"type": "tool_use", "id": "toolu_2", "name": "home__set_light",
+                                                        "input": {"on": True}}])
+    rendered = provider._render_messages([
+        UserTurn("Hallo"), earlier, UserTurn("Hm"), only_thinking, UserTurn("Licht an"), current,
+        ToolResultsTurn([ToolResult("toolu_2", "home__set_light", "ok")]),
+    ])
+    assert rendered[1]["content"] == [{"type": "text", "text": "Gern."}]
+    assert [m["role"] for m in rendered] == ["user", "assistant", "user", "user", "assistant", "user"]  # nur Denken: weg
+    assert rendered[4]["content"][0]["signature"] == "sig-neu"  # laufende Tool-Schleife: unverändert
+
+
+def test_key_check_uses_the_models_api():
+    from jarvis.errors import JarvisError
+
+    def handler(request):
+        assert request.url.path == "/v1/models/claude-opus-5-5"
+        if request.headers["x-api-key"] == "gut":
+            return httpx2.Response(200, json={"type": "model", "id": "claude-opus-5-5", "display_name": "Claude Opus 5.5",
+                                              "created_at": "2026-09-01T00:00:00Z"})
+        return httpx2.Response(401, json={"type": "error", "error": {"type": "authentication_error",
+                                                                     "message": "invalid x-api-key"}})
+
+    def provider(key):
+        client = anthropic.AsyncAnthropic(api_key=key, max_retries=0, http_client=anthropic.DefaultAsyncHttpxClient(
+            transport=httpx2.MockTransport(handler)))
+        return ClaudeProvider(client=client)
+
+    assert asyncio.run(provider("gut").check()) == "Claude Opus 5.5"
+    with pytest.raises(JarvisError) as exc:
+        asyncio.run(provider("falsch").check())
+    assert exc.value.user_message == "Dieser API-Schlüssel wird von Anthropic nicht angenommen."
 
 
 def test_rate_limit_maps_to_retryable_error():

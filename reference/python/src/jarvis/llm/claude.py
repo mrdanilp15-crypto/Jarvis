@@ -5,6 +5,10 @@
 - Prompt-Caching: Tools + statischer Systemprompt bilden den cachebaren Präfix
 - ``eager_input_streaming`` für Tools; die Eingaben werden danach im Orchestrator gegen das Schema geprüft
 - serverseitiger Refusal-Fallback (Beta ``server-side-fallback-2026-07-01``)
+- Denk-Blöcke sind an Modell und Gesprächsverlauf gebunden. Der Situationsteil des System-Prompts (Uhrzeit) ändert
+  sich bei jeder Frage, und alte Runden werden vorne gekürzt – deshalb gehen Denk-Blöcke nur innerhalb der laufenden
+  Runde (Tool-Schleife) zurück, frühere nicht. Passt trotzdem einer nicht mehr, verwirft die API ihn statt mit 400
+  abzulehnen (``prefix_mismatch_behavior: drop_block``, Beta ``thinking-binding-controls-2026-08-01``).
 """
 
 from __future__ import annotations
@@ -26,6 +30,16 @@ from .base import (
 )
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+BINDING_BETA = "thinking-binding-controls-2026-08-01"
+_THINKING = ("thinking", "redacted_thinking")
+
+# Auswahl in der Oberfläche: (Modell-ID, Name, Einordnung, $ pro Mio. Eingabe-/Ausgabe-Tokens)
+MODELS = [
+    ("claude-opus-5-5", "Claude Opus 5.5", "empfohlen", 4.0, 20.0),
+    ("claude-sonnet-5-5", "Claude Sonnet 5.5", "schnell und günstiger", 2.0, 10.0),
+    ("claude-fable-5-1", "Claude Fable 5.1", "stärkstes Modell, teuer", 10.0, 50.0),
+]
+DEFAULT_MODEL = MODELS[0][0]
 
 
 class ClaudeProvider:
@@ -35,7 +49,7 @@ class ClaudeProvider:
     def __init__(
         self,
         *,
-        model: str = "claude-opus-5",
+        model: str = DEFAULT_MODEL,
         max_tokens: int = 64000,
         default_effort: str = "medium",
         server_side_fallbacks: bool = True,
@@ -55,20 +69,25 @@ class ClaudeProvider:
     # ------------------------------------------------------------------
     def _render_messages(self, transcript: list[Turn]) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
-        for turn in transcript:
+        current = max((i for i, t in enumerate(transcript) if isinstance(t, UserTurn)), default=-1)
+        for i, turn in enumerate(transcript):
             if isinstance(turn, UserTurn):
                 messages.append({"role": "user", "content": turn.with_sources()})
             elif isinstance(turn, AssistantTurn):
                 if turn.provider == self.name and turn.raw is not None:
-                    # Unverändert zurückgeben – enthält ggf. Denk-Blöcke, die gebunden bleiben müssen
-                    messages.append({"role": "assistant", "content": turn.raw})
-                    continue
+                    # Laufende Runde: unverändert zurückgeben (Denk-Blöcke bleiben an die Tool-Schleife gebunden).
+                    # Frühere Runden ohne Denk-Blöcke – ihr Verlauf hat sich seitdem geändert (Situation, Kürzung).
+                    content = turn.raw if i > current else [b for b in turn.raw if _block_type(b) not in _THINKING]
+                    if content:
+                        messages.append({"role": "assistant", "content": content})
+                        continue
                 content: list[dict[str, Any]] = []
                 if turn.text:
                     content.append({"type": "text", "text": turn.text})
                 for call in turn.tool_calls:
                     content.append({"type": "tool_use", "id": call.id, "name": call.name, "input": call.arguments})
-                messages.append({"role": "assistant", "content": content})
+                if content:  # leere Assistenten-Nachrichten lehnt die API ab; Nutzer-Nachrichten verschmelzen dann
+                    messages.append({"role": "assistant", "content": content})
             elif isinstance(turn, ToolResultsTurn):
                 # Alle Ergebnisse eines Schritts in *einer* Nachricht zurückgeben
                 messages.append({
@@ -104,8 +123,9 @@ class ClaudeProvider:
             "max_tokens": self.max_tokens,
             "system": self._render_system(system),
             "messages": self._render_messages(transcript),
-            "thinking": {"type": "adaptive"},
+            "thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}},
             "output_config": {"effort": effort or self.default_effort},
+            "betas": [BINDING_BETA],
         }
         if tools:
             params["tools"] = [
@@ -118,7 +138,7 @@ class ClaudeProvider:
                 for t in tools
             ]
         if self.server_side_fallbacks:
-            params["betas"] = [FALLBACK_BETA]
+            params["betas"].append(FALLBACK_BETA)
             params["fallbacks"] = "default"
 
         message = await self._stream_with_json_retry(params, on_text)
@@ -154,6 +174,28 @@ class ClaudeProvider:
             model=message.model,
         )
 
+    async def check(self) -> str:
+        """Schlüssel und Modellzugang prüfen, ohne Tokens zu verbrauchen (Models-API). Gibt den Anzeigenamen zurück."""
+        anthropic = self._anthropic
+        try:
+            model = await self._client.models.retrieve(self.model)
+        except anthropic.AuthenticationError as exc:
+            raise JarvisError("JRV-LLM-003", "API-Schlüssel ungültig",
+                              user_message="Dieser API-Schlüssel wird von Anthropic nicht angenommen.") from exc
+        except anthropic.PermissionDeniedError as exc:
+            raise JarvisError("JRV-LLM-003", "Keine Berechtigung",
+                              user_message="Der Schlüssel hat keinen Zugriff auf dieses Modell.") from exc
+        except anthropic.NotFoundError as exc:
+            raise JarvisError("JRV-LLM-003", f"Modell {self.model} unbekannt",
+                              user_message=f"Das Modell {self.model} ist für diesen Schlüssel nicht verfügbar.") from exc
+        except anthropic.APIStatusError as exc:
+            raise JarvisError("JRV-LLM-001", f"HTTP {exc.status_code}",
+                              user_message="Anthropic antwortet gerade nicht. Bitte später erneut versuchen.") from exc
+        except anthropic.APIConnectionError as exc:
+            raise JarvisError("JRV-LLM-001", "Verbindung fehlgeschlagen",
+                              user_message="Anthropic ist nicht erreichbar. Besteht eine Internetverbindung?") from exc
+        return str(getattr(model, "display_name", None) or self.model)
+
     async def _stream_with_json_retry(self, params: dict[str, Any], on_text: OnText | None) -> Any:
         anthropic = self._anthropic
         for attempt in range(3):
@@ -183,3 +225,7 @@ class ClaudeProvider:
             except anthropic.APIConnectionError as exc:
                 raise JarvisError("JRV-LLM-001", "Verbindung zum Cloud-Modell fehlgeschlagen") from exc
         raise AssertionError("unreachable")
+
+
+def _block_type(block: Any) -> str | None:
+    return block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
