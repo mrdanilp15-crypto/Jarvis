@@ -24,8 +24,10 @@ from .fastpath import (
     confirmation_reply,
     conversation_intent,
     correction_term,
+    incomplete_search,
     selection_reply,
 )
+from .knowledge import OFFLINE, Lookup, Topic, followup, knowledge_question, lead, mentions, sources_block, vague_query
 from .llm.base import (
     AssistantTurn,
     LLMProvider,
@@ -110,13 +112,14 @@ class TurnResult:
     stop_reason: str = "end_turn"
     tainted: bool = False
     awaiting_reply: bool = False  # JARVIS hat nachgefragt – die Oberfläche hört direkt wieder zu
+    sources: str = field(default="", repr=False)  # nachgeschlagene Quellen – für Folgefragen im Verlauf
 
 
 @dataclass
 class Offer:
     """Zuletzt genannte Trefferliste (Dateien oder Links), aus der der Nutzer im nächsten Satz wählen kann."""
 
-    kind: str  # files | web
+    kind: str  # files | web | mail | search (Browser-Suche nach dem Thema)
     items: list[dict[str, Any]]
     affirm: bool = False  # „ja“ = erster Eintrag
 
@@ -124,10 +127,14 @@ class Offer:
 # Capabilities, deren Trefferliste JARVIS zur Auswahl anbietet („die zweite“, „ja“)
 OFFER_SOURCES = {"pc.find_files": "files", "pc.search_files": "files", "web.search": "web", "mail.list_unread": "mail"}
 # Was die Auswahl auslöst: Art -> (Capability, Argument aus dem Listeneintrag)
-OFFER_ACTIONS = {"files": ("pc.open_file", "id"), "web": ("pc.open_url", "url"), "mail": ("mail.read", "id")}
+OFFER_ACTIONS = {"files": ("pc.open_file", "id"), "web": ("pc.open_url", "url"), "mail": ("mail.read", "id"),
+                 "search": ("pc.search_web", "query")}
 # Suchen und Öffnen, die ein kurzer Folgesatz korrigieren kann („ARTERIION“, „ich meinte Steam“): Capability -> Feld
+LOOKUP = "knowledge.lookup"  # Wissensfrage, die JARVIS selbst nachschlägt (keine Capability, siehe _research)
 CORRECTABLE = {"pc.search_web": "query", "pc.open_link": "query", "pc.search_files": "query", "pc.find_files": "query",
-               "web.search": "query", "pc.open_app": "app"}
+               "web.search": "query", "pc.open_app": "app", LOOKUP: "query"}
+# Suchen, die ein Thema setzen – und die ohne eigenen Begriff („Such nach mehr Infos“) das Thema meinen
+TOPIC_SEARCHES = {"pc.search_web", "web.search", "pc.open_link"}
 CORRECTION_WINDOW_S = 300
 
 
@@ -141,6 +148,7 @@ class Session:
     expect: str | None = None  # Befehlsanfang nach einer Rückfrage („such nach“), ergänzt um den nächsten Satz
     last_search: tuple[str, dict[str, Any], datetime] | None = None  # für Korrekturen im nächsten Satz
     recent_terms: list[str] = field(default_factory=list)  # zuletzt allein geschriebene Begriffe („ARTERIION“)
+    topic: Topic | None = None  # worüber gerade gesprochen wird („Erzähl mir mehr“, „Das ist ein Künstler“)
 
 
 class AuditSink(Protocol):
@@ -248,6 +256,11 @@ class Orchestrator:
         result.text = self.style.finalize(result.text)
         session = self.sessions.get(req.session_id)
         result.awaiting_reply = bool(session and (session.expect or (session.offer and session.offer.affirm)))
+        if session is not None and result.text and not result.route.startswith("llm"):
+            # Auch Sofortbefehle und Nachgeschlagenes gehören in den Verlauf – sonst weiß das Sprachmodell bei der
+            # nächsten Frage nicht, was JARVIS eben getan oder gesagt hat („Wie alt ist er?“)
+            session.transcript += [UserTurn(req.text, sources=result.sources),
+                                   AssistantTurn(result.text, [], provider="system")]
         return result
 
     async def _handle(
@@ -300,6 +313,10 @@ class Orchestrator:
             match = self.fast_path.match(f"{expect} {req.text}", default_area=req.principal.area,
                                          now=situation.now) or match
         match = self._correct(match, intent, req.text, session, now)
+        match = self._on_topic(match, req.text, session)
+        lookup = None
+        if match is not None and match.capability == LOOKUP:  # Korrektur einer Wissensfrage („ich meinte …“)
+            lookup, match = Lookup(match.arguments["query"], match.arguments.get("hint")), None
         if match is not None and match.grammar == "refuse_password":
             return TurnResult(text=self.style.system_text("no_passwords"), route="fast_path")
         if match is not None and match.grammar == "incomplete":
@@ -341,12 +358,24 @@ class Orchestrator:
             )
             return self._fast_path_result(record, match.slots)
 
-        # 4) LLM-Agent-Loop (Antwort wird satzweise durch den Formatter gestreamt)
+        # 4) Wissensfragen und Folgesätze zum Thema: nachschlagen statt raten
+        sources = ""
+        if intent is None:
+            outcome = await self._knowledge(req, session, situation, lookup)
+            if isinstance(outcome, TurnResult):
+                return outcome
+            sources = outcome or ""
+
+        # 5) LLM-Agent-Loop (Antwort wird satzweise durch den Formatter gestreamt)
         start = len(session.transcript)
         try:
-            return await asyncio.wait_for(
-                self._agent_loop(req, session, provider, situation, stream, effort), timeout=self.turn_timeout_s
+            result = await asyncio.wait_for(
+                self._agent_loop(req, session, provider, situation, stream, effort, sources),
+                timeout=self.turn_timeout_s,
             )
+            if sources:
+                result.route += ":research"
+            return result
         except TimeoutError:
             await self.audit.record("turn.timeout", correlation_id=req.correlation_id, actor=req.principal.actor)
             del session.transcript[start:]  # halbfertige Tool-Runden verwerfen; Aktionen stehen im Audit-Log
@@ -359,7 +388,7 @@ class Orchestrator:
 
     async def _agent_loop(
         self, req: TurnRequest, session: Session, provider: LLMProvider, situation: Situation,
-        on_text: OnText | None, effort: str | None,
+        on_text: OnText | None, effort: str | None, sources: str = "",
     ) -> TurnResult:
         memories: list[str] = []
         if self.memory is not None:
@@ -372,7 +401,7 @@ class Orchestrator:
                 log.warning("memory recall failed; continuing without memories", exc_info=True,
                             extra={"correlation_id": req.correlation_id})
         system = self.context.system_prompt(situation, memories)
-        session.transcript.append(UserTurn(req.text, context=system.dynamic))
+        session.transcript.append(UserTurn(req.text, context=system.dynamic, sources=sources))
         tools = self.registry.tool_specs(req.allowed_domains)
         result = TurnResult(text="", route=f"llm:{provider.name}", tainted=session.tainted)
 
@@ -543,6 +572,112 @@ class Orchestrator:
             session.recent_terms = [*session.recent_terms, term][-3:]
         return match
 
+    def _on_topic(self, match: FastPathMatch | None, text: str, session: Session) -> FastPathMatch | None:
+        """Suchen ohne eigenen Begriff („Such nach mehr Infos“, „Google das“, „Such mehr darüber“) meinen das Thema,
+        über das gerade gesprochen wird. Ohne Thema fragt JARVIS nach, statt nach „mehr Infos“ zu suchen."""
+        topic = session.topic
+        if match is not None and match.capability in TOPIC_SEARCHES and (
+                kind := vague_query(str(match.arguments.get("query", "")))) is not None:
+            if topic is None:
+                return incomplete_search(match.arguments.get("site"))
+            query = f"{topic.name} {kind}" if kind else topic.query
+            return replace(match, arguments={**match.arguments, "query": query}, slots={**match.slots, "query": query})
+        if (match is None or match.grammar == "incomplete") and topic is not None and \
+                followup(text, topic.name) == ("search", None):
+            capability = "pc.search_web" if self.registry.get("pc.search_web") is not None else "web.search"
+            return FastPathMatch(capability, {"query": topic.query}, 0.9, "topic_search", {"query": topic.query})
+        return match
+
+    async def _knowledge(self, req: TurnRequest, session: Session, situation: Situation,
+                         lookup: Lookup | None) -> TurnResult | str | None:
+        """Wissensfragen und Folgesätze zum Thema. Ergebnis: fertige Antwort, Quellen fürs Sprachmodell oder None
+        (dann antwortet das Sprachmodell wie bisher)."""
+        topic = session.topic
+        if lookup is None:
+            question = knowledge_question(req.text)
+            follow = followup(req.text, topic.name) if topic is not None and question is None else None
+            if question is not None and question.name is not None:
+                lookup = Lookup(question.name, question.hint, direct=question.direct)
+            elif question is not None:  # „Wer ist das?“ – ohne Thema kennt nur das Sprachmodell den Verlauf
+                if topic is None:
+                    return None
+                lookup = Lookup(topic.name, question.hint or topic.hint)
+            elif follow is not None and topic is not None and follow[0] == "kind":
+                lookup = Lookup(topic.name, follow[1], note=f"Der Nutzer stellt klar: Gemeint ist „{topic.name}“ "
+                                                            f"({follow[1]}). Die vorige Antwort dazu war falsch.")
+            elif follow is not None and topic is not None and follow[0] == "more":
+                if topic.rest:
+                    shown, topic.rest = lead(" ".join(topic.rest), count=3)
+                    return TurnResult(self.style.knowledge_text(None, shown), route="research")
+                if topic.source == "web":
+                    return (f"Der Nutzer möchte mehr über „{topic.name}“ wissen. Nutze nur die Quellen aus dem "
+                            "bisherigen Gespräch; steht dort nichts weiter, sag das und biete an, im Browser "
+                            "weiterzusuchen.")
+                if topic.source in ("wikipedia", "none"):
+                    if topic.url and self.registry.get("pc.open_url") is not None:
+                        session.offer = Offer("web", [{"url": topic.url, "title": topic.name}], affirm=True)
+                        return TurnResult(self.style.no_more_text(offer="article"), route="research")
+                    return self._offer_browser(session, topic.query, self.style.no_more_text(
+                        offer="search" if self._can_browse() else None), [])
+                lookup = Lookup(topic.name, topic.hint)  # Thema aus einer Suche: jetzt nachschlagen
+            else:
+                return None
+        return await self._research(req, session, situation, lookup)
+
+    async def _research(self, req: TurnRequest, session: Session, situation: Situation,
+                        lookup: Lookup) -> TurnResult | str | None:
+        """Nachschlagen (Wikipedia mit Titelprüfung und Websuche, parallel) und aus den Quellen antworten."""
+        if self.registry.get("info.wikipedia") is None and self.registry.get("web.search") is None:
+            return lookup.note or None  # ohne Internet-Werkzeuge: das Sprachmodell wie bisher
+        ctx = PolicyContext(tainted=False, allowed_domains=req.allowed_domains, mode=req.mode, now=situation.now)
+
+        async def run(capability: str, arguments: dict[str, Any]) -> ActionRecord | None:
+            if self.registry.get(capability) is None:
+                return None
+            try:
+                return await self.request_action(capability=capability, arguments=arguments, principal=req.principal,
+                                                 correlation_id=req.correlation_id, session_id=req.session_id,
+                                                 via="research", ctx=ctx)
+            except JarvisError:
+                return None
+
+        records = await asyncio.gather(run("info.wikipedia", {"query": lookup.query, "name": lookup.name}),
+                                       run("web.search", {"query": lookup.query, "count": 5}))
+        actions = [r for r in records if r is not None]
+        answered = [r for r in actions if r.status == "succeeded" and isinstance(r.result, dict)]
+        article = next((r.result for r in answered if r.capability == "info.wikipedia" and r.result.get("found")),
+                       None)
+        hits = [h for r in answered if r.capability == "web.search" for h in r.result.get("results") or []
+                if isinstance(h, dict) and mentions(lookup.name, f"{h.get('title', '')} {h.get('snippet', '')}")]
+        topic = session.topic = Topic(lookup.name, lookup.hint, url=(article or {}).get("url"))
+        session.last_search = (LOOKUP, {"query": lookup.name, **({"hint": lookup.hint} if lookup.hint else {})},
+                               datetime.now(UTC))
+        if article is None and not hits:
+            if not answered:  # nichts erreichbar: das Modell darf antworten, aber nur, was es sicher weiß
+                return "\n".join(filter(None, [lookup.note, OFFLINE]))
+            topic.source = "none"
+            searched_web = any(r.capability == "web.search" for r in answered)
+            return self._offer_browser(session, lookup.query, self.style.not_found_text(
+                lookup.name, offer=self._can_browse(), searched_web=searched_web), actions)
+        session.tainted = True  # Fremdinhalte im Verlauf: ab jetzt R2-Aktionen des Modells nur mit Bestätigung
+        block = sources_block(lookup, article, hits[:5])
+        shown, rest = lead(str((article or {}).get("summary") or ""))
+        if article is not None and lookup.direct and shown:
+            topic.rest, topic.source = rest, "wikipedia"
+            return TurnResult(self.style.knowledge_text("Wikipedia", shown), route="research", actions=actions,
+                              tainted=True, sources=block)
+        topic.source = "web"
+        return block
+
+    def _can_browse(self) -> bool:
+        return self.registry.get("pc.search_web") is not None
+
+    def _offer_browser(self, session: Session, query: str, text: str, actions: list[ActionRecord]) -> TurnResult:
+        """Antwort mit dem Angebot „Soll ich im Browser danach suchen?“ – „ja“ öffnet die Suche."""
+        if self._can_browse():
+            session.offer = Offer("search", [{"query": query}], affirm=True)
+        return TurnResult(text, route="research", actions=actions)
+
     def _remember(self, session_id: str | None, record: ActionRecord, via: str) -> None:
         """Für den nächsten Satz merken: die Suche (für Korrekturen) und die Trefferliste („die zweite“).
         „Ja“ gilt nur, wenn JARVIS selbst gefragt hat (Sofortbefehl) – nach einer LLM-Antwort kann ein „Ja“ auch
@@ -551,6 +686,10 @@ class Orchestrator:
         key = CORRECTABLE.get(record.capability)
         if session is not None and key and record.status == "succeeded" and record.arguments.get(key):
             session.last_search = (record.capability, dict(record.arguments), datetime.now(UTC))
+            query = record.arguments.get("query")
+            if record.capability in TOPIC_SEARCHES and via != "research" and query and not (
+                    session.topic and query == session.topic.query):
+                session.topic = Topic(query)  # „Such nach Arteriion“ -> danach „Wer ist das?“
         kind = OFFER_SOURCES.get(record.capability)
         if session is None or kind is None or record.status != "succeeded" or not isinstance(record.result, dict):
             return

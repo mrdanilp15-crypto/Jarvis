@@ -1,5 +1,72 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.4.0 – 2026-09-28
+
+Nachschlagen statt raten, beim Thema bleiben, und ein Aktivierungswort, das sich die eigene Stimme merkt.
+
+### Behoben
+- **„ARTERIION ist ein deutsches Unternehmen, das Medikamente gegen Herz-Kreislauf-Erkrankungen herstellt …“ war
+  erfunden.**
+  - Ursache: Die Wikipedia-Suche lieferte den ähnlich geschriebenen Artikel „Arterie“, und das kleine Modell machte
+    daraus eine Firma.
+  - `info.wikipedia` nimmt jetzt nur Artikel, deren Titel zum Namen passt, und meldet sonst `found: false`.
+    Begriffsklärungsseiten gelten als mehrdeutig.
+- **„Nein, das ist ein Künstler“** führte zu einer Rückfrage des Modells statt zu einer neuen Suche. Jetzt schlägt
+  JARVIS mit der Art erneut nach („ARTERIION Künstler“) und weist das Modell darauf hin, dass die vorige Antwort falsch
+  war.
+- **„Such nach mehr Infos“** suchte wörtlich nach „mehr Infos“.
+  - Suchen ohne eigenen Begriff („mehr Infos“, „das“, „darüber“, „diesen Künstler“) meinen jetzt das aktuelle Thema.
+  - Ohne Thema fragt JARVIS nach („Wonach soll ich suchen, Sir?“).
+- **Das Sprachmodell wusste nichts von Direktbefehlen.** Befehle, Gesprächs-Antworten und Nachgeschlagenes stehen
+  jetzt im Verlauf. Folgefragen wie „Wie alt ist er geworden?“ oder „Was hast du gerade gemacht?“ haben damit Kontext.
+
+### Neu
+- **Wissensfragen werden nachgeschlagen** (`knowledge.py`), z. B. „Wer ist …?“, „Was ist …?“, „Kennst du …?“,
+  „Erzähl mir etwas über …“, „Was bedeutet …?“ und „Wer ist der Rapper …?“.
+  - Wikipedia (mit Titelprüfung) und Websuche laufen parallel.
+  - **Passender Wikipedia-Artikel:** Die ersten Sätze werden wörtlich vorgelesen („Laut Wikipedia: …“), ohne
+    Sprachmodell und damit sofort. Klammern mit Lautschrift und Lebensdaten fallen weg.
+  - **Nur Web-Treffer, die den Namen enthalten:** Das Sprachmodell bekommt genau diese Treffer als markierte
+    Fremdinhalte vor die Frage, dazu die Regel, nur daraus zu antworten und die Quelle zu nennen. Das funktioniert
+    lokal wie mit Claude (neues Feld `UserTurn.sources`).
+  - **Nichts Passendes:** „Zu „…“ finde ich nichts Verlässliches, Sir – weder in der Wikipedia noch in der
+    Websuche. Soll ich im Browser danach suchen?“ – „Ja“ öffnet die Suche. Ist die Websuche blockiert, sagt JARVIS
+    genau das.
+  - **Ohne Internet** antwortet das Modell mit dem Hinweis, nur Sicheres zu sagen.
+  - „Wer ist der Bundeskanzler?“ fragt nach einer Person, nicht nach dem Amt. Hier fasst das Modell die Quellen
+    zusammen, statt den Artikelanfang vorzulesen.
+- **Gesprächsthema:**
+  - „Erzähl mir mehr“ liest die nächsten Sätze. Danach bietet JARVIS an, den Wikipedia-Artikel zu öffnen.
+  - „Wer ist das?“ nach einer Suche schlägt den gesuchten Namen nach.
+  - „Nein, ich meinte …“ und ein einzelnes korrigiertes Wort schlagen erneut nach.
+  - Ausrufe wie „Krass“ oder „Interessant“ gelten nicht als neuer Begriff.
+- **Oberfläche:** Antworten tragen „nachgeschlagen“ bzw. „lokales Modell · nachgeschlagen“ in der Kopfzeile.
+- **Aktivierungswort „Jarvis“:**
+  - Unter dem Schalter steht kurz, was die Spracherkennung gehört hat (etwa „Gehört: „Service““). **Das war
+    „Jarvis“** merkt sich diese Schreibweise.
+  - **„Jarvis“ einlernen** im Zahnrad-Menü: Man sagt viermal „Jarvis“, und JARVIS merkt sich, was die Erkennung bei
+    dieser Stimme daraus macht. Gelerntes lässt sich wieder löschen.
+  - Gespeichert wird nur im Browser. Gewöhnliche Wörter („ja“, „das“) lassen sich nicht lernen.
+  - Enthielt ein Zwischenergebnis „Jarvis“ und schreibt Chrome es in der Endfassung um („Davis, such …“), gilt das
+    Zwischenergebnis. Kommt gar keine Endfassung, antwortet JARVIS nach 2 s trotzdem.
+  - Fünf statt drei Erkennungsalternativen.
+  - Wo Chrome es unterstützt, wird „Jarvis“ als erwartetes Wort vorgegeben (`SpeechRecognitionPhrase`). Lehnt Chrome
+    das ab, geht es ohne weiter.
+
+### Persona
+- Stehen nachgeschlagene Quellen vor der Frage, antwortet JARVIS nur daraus und nennt sie.
+- `found=false` von Wikipedia heißt „kein passender Artikel“: Ähnlich geschriebene Begriffe meinen etwas anderes.
+
+### Tests
+- 51 neue Tests (`tests/test_knowledge.py`), insgesamt 571:
+  - Fragen, Folgesätze und vage Suchbegriffe erkennen;
+  - Titelprüfung und Satzgrenzen („17. Juli“, „z. B.“, „Dr.“);
+  - das Protokoll als Dialog über die echte Pipeline: unbekannter Künstler, Klarstellung, „Such nach mehr Infos“;
+  - Wikipedia-Antwort mit „mehr“ und Artikel-Angebot, nichts gefunden, Websuche blockiert, offline;
+  - Befehle im Verlauf.
+- In Chromium geprüft: „Gehört: …“ und Lernen per Klick, Einlernen und Vergessen, Zwischenergebnis ohne Endfassung,
+  umgeschriebene Endfassung, abgelehnte Wortvorgabe.
+
 ## Jarvis-Modul 2.3.1 – 2026-09-28
 
 Korrekturen verstehen und keine Tool-Aufrufe mehr als Text – aus einem echten Gesprächsprotokoll.

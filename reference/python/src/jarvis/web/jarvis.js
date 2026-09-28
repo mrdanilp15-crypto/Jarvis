@@ -13,6 +13,8 @@
     optSpeak: $("#opt-speak"), optConvo: $("#opt-convo"), optLocation: $("#opt-location"), logout: $("#logout"),
     wakeToggle: $("#wake-toggle"), wakeText: $("#wake-text"), optEffect: $("#opt-effect"),
     pc: $("#pc-status"), pcText: $("#pc-text"),
+    heard: $("#heard"), heardText: $("#heard-text"), heardLearn: $("#heard-learn"),
+    wakeTrain: $("#wake-train"), wakeForget: $("#wake-forget"), wakeTrainStatus: $("#wake-train-status"),
   };
 
   // ---------------------------------------------------------------- Browser-Speicher (nur Komfort)
@@ -171,9 +173,12 @@
   function routeLabel(route) {
     if (!route) return "";
     if (route === "fast_path") return "Direktbefehl";
+    if (route === "research") return "nachgeschlagen";
+    if (route === "conversation") return "Gespräch";
     if (route === "confirmation_resolver") return "Bestätigung";
-    if (route.startsWith("llm:claude")) return "Claude · Cloud";
-    if (route.startsWith("llm:")) return "lokales Modell";
+    const sourced = route.endsWith(":research") ? " · nachgeschlagen" : "";  // Modell antwortet aus Quellen
+    if (route.startsWith("llm:claude")) return `Claude · Cloud${sourced}`;
+    if (route.startsWith("llm:")) return `lokales Modell${sourced}`;
     return route;
   }
 
@@ -845,6 +850,7 @@
   }
   function findWake(text) {  // -> Textende des Aktivierungsworts oder -1
     const words = [...text.matchAll(/\p{L}+/gu)];
+    const personal = learned.sounds();
     for (let i = 0; i < words.length; i += 1) {
       const single = words[i];
       const pair = words[i + 1] && `${single[0]}${words[i + 1][0]}`;
@@ -853,17 +859,70 @@
         if (!candidate) continue;
         const sound = phonetic(candidate);
         if (sound.length >= 4 && sound.length <= 8 && sound[0] === "j" && distance(sound, "jarvis") <= 1) return end;
+        if (personal.some((known) => known === sound || (known.length >= 5 && distance(sound, known) <= 1))) return end;
       }
     }
     return -1;
   }
+
+  // Persönliche Schreibweisen: was die Spracherkennung bei diesem Nutzer aus „Jarvis“ macht („Service“, „Davis“).
+  // Nur im Browser gespeichert; gewöhnliche Wörter („ja“, „das“) lassen sich nicht lernen.
+  const WAKE_STOP = new Set(["ja", "sir", "der", "die", "das", "und", "ist", "es", "ich", "du", "er", "sie", "hallo",
+    "hey", "okay", "ok", "nein", "bitte", "danke", "so", "na", "oh", "ah", "äh", "hm", "mal", "jetzt", "hier", "was",
+    "wie", "wo", "gut", "an", "aus", "auf", "in", "im", "mit", "noch", "doch", "schon", "also"]);
+  const learned = {
+    words: store.get("wakeWords", []),
+    sounds() { return this.words.map((word) => phonetic(word.replace(/\s+/g, ""))); },
+    add(text) {  // -> "learned" | "known" | "rejected"
+      const word = text.toLowerCase().replace(/[^\p{L}\s]/gu, " ").replace(/\s+/g, " ").trim();
+      const parts = word.split(" ");
+      if (!word || parts.length > 2 || parts.some((part) => WAKE_STOP.has(part)) || word.replace(/\s/g, "").length < 4) {
+        return "rejected";
+      }
+      if (findWake(word) >= 0) return "known";
+      this.words = [...this.words, word].slice(-12);
+      store.set("wakeWords", this.words);
+      return "learned";
+    },
+    reset() { this.words = []; store.set("wakeWords", []); },
+  };
+
+  // Chrome ab 2025: „Jarvis“ als erwartetes Wort vorgeben (Contextual Biasing) – wo nicht unterstützt, ohne weiter
+  let phraseBoost = typeof window.SpeechRecognitionPhrase === "function";
+  function boost(rec) {
+    if (!phraseBoost) return;
+    try { rec.phrases = [new window.SpeechRecognitionPhrase("Jarvis", 5)]; } catch { phraseBoost = false; }
+  }
+
+  // Was die Dauer-Erkennung gerade gehört hat, wenn kein „Jarvis“ darin war – mit „Das war „Jarvis““ lernbar
+  const heard = {
+    text: "", timer: 0,
+    show(text) {
+      if (!hasWords(text) || text.split(/\s+/).length > 2) return;
+      this.text = text;
+      els.heardText.textContent = `Gehört: „${text}“`;
+      els.heardLearn.hidden = false;
+      els.heard.hidden = false;
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => this.hide(), 8000);
+    },
+    note(message) {
+      els.heardText.textContent = message;
+      els.heardLearn.hidden = true;
+      els.heard.hidden = false;
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => this.hide(), 5000);
+    },
+    hide() { els.heard.hidden = true; this.text = ""; },
+  };
   window.jarvisFindWake = findWake;  // für Tests
+  window.jarvisLearnWake = (text) => learned.add(text);
 
   const wake = {
-    rec: null, timer: 0, settle: 0, failures: 0, collecting: false, buffer: "",
+    rec: null, timer: 0, settle: 0, failures: 0, collecting: false, buffer: "", interim: null, interimTimer: 0,
     wanted() {
       return settings.wake && canListen && state === "idle" && !turn && !recognition && !tts.busy
-        && ws?.readyState === WebSocket.OPEN;
+        && !trainer.running && ws?.readyState === WebSocket.OPEN;
     },
     schedule(delay = 300) {
       clearTimeout(this.timer);
@@ -875,7 +934,8 @@
       rec.lang = "de-DE";
       rec.continuous = true;
       rec.interimResults = true;
-      rec.maxAlternatives = 3;  // „Jarvis“ steht oft nur in einer der Alternativen
+      rec.maxAlternatives = 5;  // „Jarvis“ steht oft nur in einer der Alternativen
+      boost(rec);
       const startedAt = Date.now();
       let failure = null;
       rec.onresult = (event) => {
@@ -891,9 +951,33 @@
             const end = findWake(text);
             if (end >= 0) hit = { text, end };
           }
-          if (!hit) continue;
+          if (!hit) {
+            if (!result.isFinal) continue;
+            const text = result[0].transcript.trim();
+            if (this.interim && Date.now() - this.interim.at < 2500 && hasWords(text)) {
+              // Das Zwischenergebnis enthielt „Jarvis“, die Endfassung nicht mehr („Davis, such …“): ihm glauben
+              const rest = text.split(/\s+/).slice(this.interim.words).join(" ");
+              this.interim = null;
+              clearTimeout(this.interimTimer);
+              if (hasWords(rest)) { this.collecting = true; this.collect(rest, true); continue; }
+              this.acknowledge();
+              return;
+            }
+            heard.show(text);
+            continue;
+          }
           this.failures = 0;
-          if (!result.isFinal) { document.body.classList.add("wake-heard"); continue; }
+          if (!result.isFinal) {
+            document.body.classList.add("wake-heard");
+            this.interim = { at: Date.now(), words: hit.text.slice(0, hit.end).trim().split(/\s+/).length };
+            // Kurze Einzelwörter verschluckt Chrome manchmal ganz: Kommt keine Endfassung, trotzdem antworten
+            clearTimeout(this.interimTimer);
+            this.interimTimer = setTimeout(() => { if (this.interim && !this.collecting) this.acknowledge(); }, 2000);
+            continue;
+          }
+          this.interim = null;
+          clearTimeout(this.interimTimer);
+          heard.hide();
           const command = hit.text.slice(hit.end).replace(/^[\s,.!?:;-]+/, "");
           if (hasWords(command)) {
             this.collecting = true;
@@ -910,6 +994,11 @@
         this.rec = null;
         if (this.collecting && hasWords(this.buffer)) { this.hand(this.buffer); return; }
         this.reset();
+        if (failure === "phrases-not-supported") {  // Wortvorgabe hier nicht möglich: ohne sie neu starten
+          phraseBoost = false;
+          this.schedule(100);
+          return;
+        }
         if (["not-allowed", "service-not-allowed", "audio-capture"].includes(failure)) {
           setWake(false);
           addSystem(RECOGNITION_ERRORS[failure], true);
@@ -962,6 +1051,8 @@
     reset() {
       this.collecting = false;
       this.buffer = "";
+      this.interim = null;
+      clearTimeout(this.interimTimer);
       clearTimeout(this.settle);
       document.body.classList.remove("wake-heard");
     },
@@ -977,6 +1068,80 @@
       }
     },
   };
+
+  // „Jarvis“ einlernen: viermal sagen, JARVIS merkt sich die Schreibweisen der Spracherkennung
+  function listenOnce() {
+    return new Promise((resolve) => {
+      const rec = new SpeechRecognition();
+      rec.lang = "de-DE";
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.maxAlternatives = 5;
+      boost(rec);
+      const found = [];
+      let failure = null;
+      const limit = setTimeout(() => rec.stop(), 5000);
+      rec.onresult = (event) => {
+        for (const result of event.results) {
+          for (let k = 0; k < result.length; k += 1) found.push(result[k].transcript.trim());
+        }
+      };
+      rec.onerror = (event) => { failure = event.error; };
+      rec.onend = () => {
+        clearTimeout(limit);
+        if (failure === "phrases-not-supported" && phraseBoost) { phraseBoost = false; listenOnce().then(resolve); return; }
+        resolve({ found, failure });
+      };
+      try { rec.start(); } catch { clearTimeout(limit); resolve({ found, failure: "busy" }); }
+    });
+  }
+
+  const trainer = {
+    running: false,
+    async start() {
+      if (this.running || !canListen) return;
+      this.running = true;
+      wake.stop();
+      if (recognition) recognition.abort();
+      tts.stop();
+      els.wakeTrain.disabled = true;
+      const counts = new Map();
+      let rounds = 0;
+      let problem = null;
+      for (let round = 1; round <= 4; round += 1) {
+        els.wakeTrainStatus.textContent = `Sagen Sie jetzt „Jarvis“ (${round} von 4) …`;
+        const { found, failure } = await listenOnce();
+        if (failure && RECOGNITION_ERRORS[failure]) { problem = RECOGNITION_ERRORS[failure]; break; }
+        if (found.length) rounds += 1;
+        for (const text of new Set(found.map((t) => t.toLowerCase()))) counts.set(text, (counts.get(text) || 0) + 1);
+        await new Promise((r) => setTimeout(r, 350));
+      }
+      const newWords = [];
+      let known = 0;
+      for (const text of counts.keys()) {
+        const outcome = learned.add(text);
+        if (outcome === "learned") newWords.push(text);
+        if (outcome === "known") known += 1;
+      }
+      this.running = false;
+      els.wakeTrain.disabled = false;
+      if (problem) els.wakeTrainStatus.textContent = problem;
+      else if (!rounds) els.wakeTrainStatus.textContent = "Ich habe nichts gehört. Ist das richtige Mikrofon ausgewählt?";
+      else if (newWords.length) {
+        els.wakeTrainStatus.textContent = `Gelernt: ${newWords.map((w) => `„${w}“`).join(", ")} gilt jetzt als „Jarvis“.`;
+      } else if (known) els.wakeTrainStatus.textContent = "„Jarvis“ wird bereits zuverlässig erkannt.";
+      else els.wakeTrainStatus.textContent = "Nichts Brauchbares gehört – bitte noch einmal deutlich „Jarvis“ sagen.";
+      showLearned();
+      wake.schedule(500);
+    },
+  };
+
+  function showLearned() {
+    els.wakeForget.hidden = !learned.words.length;
+    if (!els.wakeTrainStatus.textContent && learned.words.length) {
+      els.wakeTrainStatus.textContent = `Gelernte Schreibweisen: ${learned.words.map((w) => `„${w}“`).join(", ")}`;
+    }
+  }
 
   function setWake(on) {
     settings.wake = on;
@@ -1162,6 +1327,8 @@
     els.optConvo.checked = settings.convo;
     els.optConvo.disabled = !canListen;
     els.optLocation.value = settings.location;
+    els.wakeTrainStatus.textContent = "";
+    showLearned();
     fillVoices();
     els.settings.showModal();
   });
@@ -1210,6 +1377,20 @@
   els.hud.addEventListener("click", onHudActivate);
   els.wakeToggle.hidden = !canListen;
   els.wakeToggle.addEventListener("click", () => setWake(!settings.wake));
+  els.heardLearn.addEventListener("click", () => {
+    const text = heard.text;
+    const outcome = learned.add(text);
+    heard.note(outcome === "learned" ? `Gelernt: „${text}“ weckt JARVIS jetzt.`
+      : outcome === "known" ? "Das erkennt JARVIS bereits."
+        : `„${text}“ ist zu kurz oder zu gewöhnlich für ein Aktivierungswort.`);
+  });
+  els.wakeTrain.hidden = !canListen;
+  els.wakeTrain.addEventListener("click", () => trainer.start());
+  els.wakeForget.addEventListener("click", () => {
+    learned.reset();
+    els.wakeTrainStatus.textContent = "Gelernte Schreibweisen gelöscht.";
+    showLearned();
+  });
   els.mic.addEventListener("click", onHudActivate);
   els.form.addEventListener("submit", (event) => {
     event.preventDefault();

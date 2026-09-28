@@ -286,7 +286,7 @@ def test_persona_selects_style_and_version():
     jarvis = Persona.load(REPO / "config" / "persona.jarvis.yaml", schema_path=REPO / "schemas" / "persona.schema.json")
     neutral = Persona.load(REPO / "config" / "persona.neutral.yaml")
     assert isinstance(JarvisStyle.from_persona(jarvis), JarvisStyle)
-    assert jarvis.config["version"] == STYLE_VERSION == "2.3.1"
+    assert jarvis.config["version"] == STYLE_VERSION == "2.4.0"
     assert type(JarvisStyle.from_persona(neutral)) is PlainStyle
 
 

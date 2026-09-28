@@ -144,7 +144,7 @@ class OllamaProvider:
         for i, turn in enumerate(transcript):
             if isinstance(turn, UserTurn):
                 context = turn.context or (system.dynamic if i == current else "")
-                text = f"{context}\n\n{turn.text}" if context else turn.text
+                text = f"{context}\n\n{turn.with_sources()}" if context else turn.with_sources()
                 messages.append({"role": "user", "content": text})
             elif isinstance(turn, AssistantTurn):
                 msg: dict[str, Any] = {"role": "assistant", "content": turn.text}

@@ -40,6 +40,11 @@ class UserTurn:
     # Situation/Erinnerungen zum Zeitpunkt der Frage. Lokale Modelle bekommen sie mit der Nachricht, damit der
     # gerenderte Verlauf unverändert bleibt und Ollama ihn nicht bei jeder Frage neu durchrechnen muss.
     context: str = ""
+    # Nachgeschlagene Quellen zu dieser Frage (Wikipedia, Websuche) – jedes Modell bekommt sie direkt vor der Frage
+    sources: str = ""
+
+    def with_sources(self) -> str:
+        return f"{self.sources}\n\n{self.text}" if self.sources else self.text
 
 
 @dataclass

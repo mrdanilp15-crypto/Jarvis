@@ -131,6 +131,15 @@ Whisper/Piper/openWakeWord ist der nächste Ausbauschritt. API-Beschreibung: `ht
 Eingebaut und ohne API-Schlüssel: **Wetter** (Open-Meteo), **Nachrichten** (Tagesschau-RSS, weitere Feeds in
 `config/jarvis.example.yaml`) und **Wikipedia**.
 
+**Wissensfragen schlägt JARVIS nach, statt zu raten** („Wer ist …?“, „Was ist …?“, „Kennst du …?“):
+- Gibt es einen passenden Wikipedia-Artikel, liest JARVIS dessen Anfang vor, ohne Sprachmodell und damit sofort.
+- Gibt es nur Web-Treffer, die den Namen enthalten, fasst das Sprachmodell genau diese Treffer zusammen.
+- Findet er nichts, sagt er das und bietet die Suche im Browser an.
+- Ähnlich geschriebene Artikel zählen nicht: Bei „ARTERIION“ liefert die Wikipedia-Suche „Arterie“, und daraus hat ein
+  kleines Modell früher eine Pharmafirma erfunden.
+- Das Thema bleibt stehen: „Erzähl mir mehr“, „Nein, das ist ein Künstler“ (sucht neu) und „Such nach mehr Infos“
+  (Browser-Suche zum Thema) beziehen sich darauf.
+
 **Stimme:** „Automatisch“ (Zahnrad-Menü) nimmt die beste verfügbare – eine tiefe, ruhige Männerstimme im Stil des
 Film-JARVIS (die Stimme eines realen Sprechers wird bewusst nicht nachgebildet):
 
@@ -165,7 +174,7 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Links zur Auswahl | „Such mir ein paar Links zu Kürbissuppe“ → „den zweiten“ | PC-Agent, Internet |
 | Dateien finden & öffnen | „Öffne die Datei Bewerbung“, „Öffne die PDF Rechnung“, „Wo ist meine Steuererklärung?“ → „die zweite“ / „ja“, „Öffne den Ordner Projekte“, „Ordner Minecraft“ | PC-Agent |
 | Suchen | „Such nach Pizza“, „Suche mir nach Arteriion auf Spotify“ (in der Spotify-App), „Such auf Amazon nach Kopfhörern“, „Schau auf Netflix nach Dark“, „Such die Datei Rechnung“ (Explorer-Suche) | PC-Agent |
-| Korrigieren | Direkt nach einer Suche nur das richtige Wort sagen („Arteriion“), „Nein, ich meinte Spotify“, „Such das so, wie ich es geschrieben habe“ (nimmt das zuletzt getippte Wort) | – |
+| Korrigieren | Direkt nach einer Suche nur das richtige Wort sagen („Arteriion“), „Nein, ich meinte Spotify“, „Such das so, wie ich es geschrieben habe“ (nimmt das zuletzt getippte Wort), „Such nach mehr Infos“ (zum aktuellen Thema) | – |
 | Programme schließen | „Schließ Steam“, „Mach den Browser zu“, „Schließ den Tab“ | PC-Agent |
 | Tippen & Klicken | „Tippe Pizza Berlin und drück Enter“, „Klick auf Anmelden“, „Klick auf Alle akzeptieren“, „Drück zweimal Tab“ | PC-Agent |
 | Musik & Lautstärke | „Pause“, „Nächstes Lied“, „Mach lauter“, „Etwas leiser“, „Ton aus“ | PC-Agent |
@@ -174,7 +183,7 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Kalender | „Trag morgen um 15 Uhr Zahnarzt ein“, „Welche Termine habe ich am Freitag?“, „Wann ist mein nächster Termin?“, „Sag den Friseur ab“ | – (Abos: ICS-Adresse) |
 | E-Mails | „Schreib eine Mail an Mama mit dem Betreff Sonntag“ (Entwurf), „Habe ich neue Mails?“ → „Lies die erste vor“ | Mailprogramm; Lesen: IMAP |
 | Anmelden | „Melde mich bei Netflix an“ öffnet die Anmeldeseite – Passwörter gibt JARVIS nie ein (das übernimmt der Passwortmanager des Browsers) | PC-Agent |
-| Wissen | „Wie wird das Wetter morgen?“, „Was gibt es Neues?“, „Wer war Ada Lovelace?“ | Internet |
+| Wissen | „Wie wird das Wetter morgen?“, „Was gibt es Neues?“, „Wer war Ada Lovelace?“ (nachgeschlagen) → „Erzähl mir mehr“, „Wer ist ARTERIION?“ → „Nein, das ist ein Künstler“ | Internet |
 | Assistenz | „Status?“, „Plan für morgen?“ (mit Terminen und Wetter), „Wie spät ist es?“, „Was kannst du?“ | – |
 | Haus | „Mach das Licht in der Küche an“ | Home Assistant |
 | Noch nicht | E-Mails selbst versenden (bewusst: nur Entwürfe), Termine in Google/Outlook eintragen (nur lesen), Formulare mit Passwörtern ausfüllen | – |
@@ -204,6 +213,12 @@ Timer abgelaufen, spricht JARVIS die Meldung und Windows zeigt einen Hinweis.
 - Auf „Jarvis“ antwortet JARVIS mit „Ja, Sir?“. Ohne Sprachausgabe bleibt der kurze Ton.
 - Das Wort wird auch in abweichenden Schreibweisen der Spracherkennung erkannt („Jarwis“, „Javis“, „Charvis“).
 - Kurze Sprechpausen beenden einen Befehl nicht mehr.
+- Hört JARVIS nicht auf seinen Namen, zeigt er unter dem Schalter, was er gehört hat (etwa „Gehört: „Service““). Ein
+  Klick auf **Das war „Jarvis“** merkt sich diese Schreibweise.
+- Im Zahnrad-Menü gibt es **„Jarvis“ einlernen**: Man sagt viermal „Jarvis“, und JARVIS merkt sich, was die
+  Spracherkennung bei dieser Stimme daraus macht. Gelerntes lässt sich dort wieder löschen.
+- Hört Chrome „Jarvis“ zunächst richtig und schreibt es danach um (oder verschluckt das kurze Wort), reagiert JARVIS
+  trotzdem.
 
 **Automatisch beim Anmelden starten (Windows):** `./deploy/start.sh autostart` (oder `… autostart edge`) – danach startet Windows Docker
 Desktop, den PC-Agenten und JARVIS als eigenes Fenster, ohne Konsole; zusätzlich liegt eine Verknüpfung „JARVIS“ auf
@@ -237,7 +252,8 @@ JARVIS_URL=ws://127.0.0.1:8080 JARVIS_TOKEN=dev-alex-token node jarvis-client.mj
 ```
 
 - Anderes Modell: `JARVIS_LLM_MODEL` in `deploy/.env` ändern (z. B. `qwen2.5:3b-instruct` = schneller,
-  `qwen2.5:14b-instruct` = klüger) und `./deploy/start.sh` erneut ausführen.
+  `qwen2.5:14b-instruct` = klüger) und `./deploy/start.sh` erneut ausführen. Das 3b-Modell (ohne Grafikkarte und mit
+  wenig Arbeitsspeicher) versteht freie Fragen deutlich schlechter; wenn möglich mindestens `qwen2.5:7b-instruct`.
 - Ohne `ANTHROPIC_API_KEY` arbeitet JARVIS rein lokal; mit Schlüssel gehen komplexe, nicht-sensible Anfragen an Claude.
 - Home Assistant verbinden: Token als `JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN` in `.env` eintragen
   ([Anleitung](docs/06-integrationsplan.md#61-home-assistant)).
@@ -254,7 +270,7 @@ python tools/validate.py
 # Kernlogik des Python-Skeletts testen (läuft offline, ohne LLM/Home Assistant)
 cd reference/python
 pip install -e ".[dev]"
-pytest                    # 520 Tests
+pytest                    # 571 Tests
 python -m jarvis.demo     # Fast-Path, Tool-Use, R3-Bestätigung, Prompt-Injection-Abwehr, Gastrechte
 
 # Node-Beispiele (Node >= 22)

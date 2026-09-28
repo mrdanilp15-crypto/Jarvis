@@ -57,7 +57,7 @@ class ClaudeProvider:
         messages: list[dict[str, Any]] = []
         for turn in transcript:
             if isinstance(turn, UserTurn):
-                messages.append({"role": "user", "content": turn.text})
+                messages.append({"role": "user", "content": turn.with_sources()})
             elif isinstance(turn, AssistantTurn):
                 if turn.provider == self.name and turn.raw is not None:
                     # Unverändert zurückgeben – enthält ggf. Denk-Blöcke, die gebunden bleiben müssen

@@ -53,7 +53,7 @@ verfügbar · Capability-IDs sind die kanonischen Namen in Tool-Registry, Polici
 | API-Abfragen | generischer HTTP-Client für freigegebene APIs (Allowlist), Antwort gegen Schema | `http.request` | R0 (GET) · R2 (schreibend) | nein |
 | Nachrichten | personalisierter Nachrichtenüberblick aus RSS/APIs, Zusammenfassung, Themenfilter | `info.news` | R0 | nein |
 | Wetter | aktuell, Vorhersage, Warnungen, Regenradar-Hinweise | `info.weather` | R0 | nein (Cache 1 h) |
-| Nachschlagen | Fakten zu Personen, Orten, Begriffen aus Wikipedia; Ergebnis als *untrusted* markiert | `info.wikipedia` | R0 | nein |
+| Nachschlagen | Fakten zu Personen, Orten, Begriffen aus Wikipedia; nur Artikel, deren Titel zum Namen passt; Wissensfragen schlägt der Orchestrator selbst nach (Wikipedia und Websuche parallel, Antwort aus den Quellen, sonst „nichts gefunden“); Ergebnis als *untrusted* markiert | `info.wikipedia` | R0 | nein |
 | Verkehr | Fahrzeit mit Verkehr, ÖPNV-Verbindungen, Störungen | `info.traffic` | R0 | nein |
 | Kalender | lesen, anlegen, verschieben, Konflikte erkennen, Einladungen (CalDAV, Google, Microsoft 365) | `calendar.list`, `calendar.create_event`, `calendar.update_event` | R0 / R2 | Cache |
 | Aufgaben | To-dos, Projekte, Einkaufsliste, Fälligkeiten, Delegation an Haushaltsmitglieder | `task.create`, `task.update`, `task.list` | R1 / R0 | ja |

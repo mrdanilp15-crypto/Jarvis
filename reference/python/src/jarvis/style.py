@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.3.1"
+STYLE_VERSION = "2.4.0"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -369,6 +369,26 @@ class PlainStyle:
         if kind == "search" and site:
             return f"Wonach soll ich auf {SEARCH_LABELS.get(site, site.capitalize()).replace('-', ' ')} suchen{sir}?"
         return CLARIFY.get(kind, "Worum geht es{sir}?").format(sir=sir)
+
+    # -- Nachgeschlagenes Wissen ----------------------------------------------------------------------------
+    def knowledge_text(self, source: str | None, text: str) -> str:
+        """Quelle wörtlich vorlesen: „Laut Wikipedia: …“ (Folgesätze bei „mehr“ ohne Quellenangabe)."""
+        return f"Laut {source}: {verbatim(text)}" if source else verbatim(text)
+
+    def not_found_text(self, name: str, *, offer: bool, searched_web: bool = True) -> str:
+        sir = f", {self.address}" if self.address else ""
+        text = (f"Zu „{verbatim(name)}“ finde ich nichts Verlässliches{sir} – weder in der Wikipedia noch in der "
+                "Websuche." if searched_web else
+                f"Zu „{verbatim(name)}“ steht nichts in der Wikipedia{sir}, und die Websuche ist gerade nicht "
+                "erreichbar.")
+        return f"{text} Soll ich im Browser danach suchen?" if offer else text
+
+    def no_more_text(self, *, offer: str | None) -> str:
+        """Kein weiterer Text zum Thema; ``offer``: „article“ (Artikel öffnen), „search“ (Browser-Suche) oder None."""
+        sir = f", {self.address}" if self.address else ""
+        text = f"Mehr steht in meinen Quellen nicht{sir}."
+        question = {"article": " Soll ich den Wikipedia-Artikel öffnen?", "search": " Soll ich im Browser weitersuchen?"}
+        return text + question.get(offer or "", "")
 
     # -- Gesprächs-Intents ---------------------------------------------------------------------------------
     def conversation(self, intent: str, situation: Any, *, capabilities: Iterable[str] = ()) -> str:

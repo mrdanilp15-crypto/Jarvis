@@ -121,7 +121,7 @@ class ContextBuilder:
 
 def _turn_text(turn: Turn) -> str:
     if isinstance(turn, UserTurn):
-        return f"{turn.context}{turn.text}"
+        return f"{turn.context}{turn.sources}{turn.text}"
     if isinstance(turn, AssistantTurn):
         return turn.text + "".join(f"{c.name}{c.arguments}" for c in turn.tool_calls)
     if isinstance(turn, ToolResultsTurn):

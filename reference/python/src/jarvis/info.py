@@ -17,6 +17,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .errors import JarvisError
+from .knowledge import strip_kinds, title_fits, title_matches
 from .tools import Capability, InvocationContext, ToolRegistry
 
 USER_AGENT = "JARVIS-Referenz/0.1 (+https://github.com/mrdanilp15-crypto/Jarvis)"  # Wikimedia verlangt einen UA
@@ -189,12 +190,23 @@ def register_info_capabilities(registry: ToolRegistry, config: InfoConfig | None
 
     async def wikipedia(args: dict[str, Any], ctx: InvocationContext) -> Any:
         base = f"https://{config.wikipedia_language}.wikipedia.org"
-        search = await fetch.get(f"{base}/w/rest.php/v1/search/page", {"q": args["query"], "limit": 1})
-        pages = search.get("pages") or []
-        if not pages:
-            return {"error": f"Nichts gefunden zu „{args['query']}“."}
-        summary = await fetch.get(f"{base}/api/rest_v1/page/summary/{quote(pages[0]['key'], safe='')}")
+        name = args.get("name") or strip_kinds(args["query"])
+        fits = (lambda t: title_matches(t, name)) if args.get("name") else (lambda t: title_fits(t, args["query"]))
+        search = await fetch.get(f"{base}/w/rest.php/v1/search/page", {"q": args["query"], "limit": 3})
+        # Die Volltextsuche liefert auch ähnlich geschriebene Artikel („ARTERIION“ -> „Arterie“). Nur ein Artikel,
+        # dessen Titel zum Namen passt, zählt – sonst mischt ein kleines Modell daraus erfundene Fakten.
+        page = next((p for p in search.get("pages") or []
+                     if any(fits(str(p.get(key) or "")) for key in ("title", "matched_title"))), None)
+        if page is None:
+            return {"found": False, "query": args["query"],
+                    "note": f"Kein Wikipedia-Artikel zu „{name}“. Ähnlich geschriebene Artikel meinen etwas anderes "
+                            "– nichts daraus übernehmen und nichts erfinden."}
+        summary = await fetch.get(f"{base}/api/rest_v1/page/summary/{quote(page['key'], safe='')}")
+        if summary.get("type") == "disambiguation":
+            return {"found": False, "ambiguous": True, "title": summary.get("title"),
+                    "note": "Begriffsklärung: Der Name hat mehrere Bedeutungen – nachfragen, welche gemeint ist."}
         return {
+            "found": True,
             "title": summary.get("title"),
             "description": summary.get("description"),
             "summary": _clean(summary.get("extract"), 1500),
@@ -226,9 +238,12 @@ def register_info_capabilities(registry: ToolRegistry, config: InfoConfig | None
     registry.register(Capability(
         name="info.wikipedia", domain="info", risk_class="R0", output_trust="untrusted", timeout_s=15.0,
         description="Schlägt Fakten zu Personen, Orten, Begriffen und Ereignissen in Wikipedia nach. Verwenden, "
-                    "wenn nach Wissen gefragt wird, bei dem Genauigkeit zählt.",
+                    "wenn nach Wissen gefragt wird, bei dem Genauigkeit zählt. found=false heißt: kein passender "
+                    "Artikel – dann nichts erfinden.",
         input_schema={"type": "object", "additionalProperties": False, "required": ["query"], "properties": {
             "query": {"type": "string", "minLength": 2, "maxLength": 200},
+            "name": {"type": "string", "minLength": 1, "maxLength": 120,
+                     "description": "Genauer Name, der im Artikeltitel stehen muss (wenn query Zusätze enthält)"},
         }},
         handler=wikipedia,
     ))

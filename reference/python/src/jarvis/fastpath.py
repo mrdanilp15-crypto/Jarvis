@@ -708,6 +708,11 @@ def _incomplete(verb: str, site: str | None) -> FastPathMatch:
     return FastPathMatch("", {}, 0.9, "incomplete", {"kind": kind, "prefix": prefix, "site": site})
 
 
+def incomplete_search(site: str | None = None) -> FastPathMatch:
+    """„Such nach mehr Infos“ ohne Thema: nachfragen, wonach."""
+    return _incomplete("such", site)
+
+
 def _web_query(query: str) -> str:
     """„einem Lasagne-Rezept“ -> „Lasagne-Rezept“: Artikel am Anfang stören die Suche nur."""
     return re.sub(r"^(?:einen|einem|einer|eines|eine|ein|den|dem|der|die|das|des)\s+", "", query.strip(), flags=re.I)
@@ -737,7 +742,8 @@ _NOT_TERMS = set("""es das der die den dem des ein eine einen ist sind war gab g
 wir ihr mal noch nicht ja nein so wie was wo wer wann warum gut okay ok super danke cool toll prima schön perfekt passt
 genau stopp stop weiter nichts egal hallo jarvis sir bitte na hm hmm äh ähm also richtig falsch klar sicher vielleicht auch
 nur jetzt hier da dort mehr weniger gerne gern sehr zu auf in im an am mit von für bei nach um wieder nochmal nochmals schon
-doch fertig los alles""".split())
+doch fertig los alles wow krass interessant spannend wahnsinn oha aha achso echt nice geil verstehe verstanden
+faszinierend unglaublich lustig schade stark heftig irre mega top witzig ah oh""".split())
 
 
 def bare_term(text: str) -> str | None:

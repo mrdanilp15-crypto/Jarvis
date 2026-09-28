@@ -70,6 +70,8 @@
               title="Hört dauerhaft auf „Jarvis“. Dafür sendet Chrome bzw. Edge das Mikrofon-Audio laufend an Google bzw. Microsoft.">
         <span class="dot" aria-hidden="true"></span><span id="wake-text">„Jarvis“-Aktivierung aus</span>
       </button>
+      <p class="heard" id="heard" hidden><span id="heard-text"></span>
+        <button class="link-btn" id="heard-learn" type="button">Das war „Jarvis“</button></p>
     </section>
 
     <section class="log-panel" aria-label="Gesprächsprotokoll">
@@ -117,6 +119,15 @@
       <label class="field">Ihr Ort (für das Wetter)
         <input id="opt-location" type="text" maxlength="100" placeholder="z. B. Hamburg" autocomplete="address-level2">
       </label>
+      <div class="field">„Jarvis“-Erkennung
+        <p class="hint">Hört JARVIS schlecht auf seinen Namen? Beim Einlernen sagen Sie viermal „Jarvis“; JARVIS merkt
+          sich, was die Spracherkennung bei Ihrer Stimme daraus macht (etwa „Service“ oder „Davis“).</p>
+        <div class="train">
+          <button class="btn" type="button" id="wake-train">„Jarvis“ einlernen</button>
+          <button class="btn" type="button" id="wake-forget">Gelerntes vergessen</button>
+        </div>
+        <p class="hint" id="wake-train-status" aria-live="polite"></p>
+      </div>
       <p class="hint">Stimme „Automatisch“ nimmt die beste verfügbare: Microsoft Conrad über Azure (falls in
         <code>deploy/.env</code> eingerichtet), in Microsoft Edge die kostenlose Conrad-Browserstimme, sonst die lokale
         Piper-Stimme. Spracheingabe funktioniert in Chrome und Edge; deren Spracherkennung läuft über die Server von
