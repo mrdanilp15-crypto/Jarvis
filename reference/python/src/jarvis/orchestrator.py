@@ -101,6 +101,7 @@ class TurnResult:
     pending_confirmation: PendingConfirmation | None = None
     stop_reason: str = "end_turn"
     tainted: bool = False
+    awaiting_reply: bool = False  # JARVIS hat nachgefragt – die Oberfläche hört direkt wieder zu
 
 
 @dataclass
@@ -113,7 +114,9 @@ class Offer:
 
 
 # Capabilities, deren Trefferliste JARVIS zur Auswahl anbietet („die zweite“, „ja“)
-OFFER_SOURCES = {"pc.find_files": "files", "pc.search_files": "files", "web.search": "web"}
+OFFER_SOURCES = {"pc.find_files": "files", "pc.search_files": "files", "web.search": "web", "mail.list_unread": "mail"}
+# Was die Auswahl auslöst: Art -> (Capability, Argument aus dem Listeneintrag)
+OFFER_ACTIONS = {"files": ("pc.open_file", "id"), "web": ("pc.open_url", "url"), "mail": ("mail.read", "id")}
 
 
 @dataclass
@@ -123,6 +126,7 @@ class Session:
     tainted: bool = False
     last_active: datetime = field(default_factory=lambda: datetime.now(UTC))
     offer: Offer | None = None  # gilt nur für den direkt folgenden Satz
+    expect: str | None = None  # Befehlsanfang nach einer Rückfrage („such nach“), ergänzt um den nächsten Satz
 
 
 class AuditSink(Protocol):
@@ -228,6 +232,8 @@ class Orchestrator:
         result = await self._handle(req, provider=provider, situation=situation, stream=stream, effort=effort)
         await stream.flush()
         result.text = self.style.finalize(result.text)
+        session = self.sessions.get(req.session_id)
+        result.awaiting_reply = bool(session and (session.expect or (session.offer and session.offer.affirm)))
         return result
 
     async def _handle(
@@ -259,8 +265,8 @@ class Orchestrator:
         choice = selection_reply(req.text, len(offer.items), affirm=offer.affirm) if offer is not None else None
         if offer is not None and choice is not None:
             item = offer.items[choice - 1]
-            match = (FastPathMatch("pc.open_file", {"id": item["id"]}, 0.95, "selection")
-                     if offer.kind == "files" else FastPathMatch("pc.open_url", {"url": item["url"]}, 0.95, "selection"))
+            capability, key = OFFER_ACTIONS[offer.kind]
+            match = FastPathMatch(capability, {key: item[key]}, 0.95, "selection")
             if self.registry.get(match.capability) is not None:
                 # Der Nutzer hat den Eintrag selbst gewählt: kein Taint, auch wenn die Liste aus dem Web stammt
                 record = await self.request_action(
@@ -272,7 +278,19 @@ class Orchestrator:
 
         # 2) Intent-Erkennung: Gesprächs-Intents und Befehle deterministisch, ohne LLM
         intent = conversation_intent(req.text)
-        match = self.fast_path.match(req.text, default_area=req.principal.area) if self.fast_path else None
+        match = (self.fast_path.match(req.text, default_area=req.principal.area, now=situation.now)
+                 if self.fast_path else None)
+        expect, session.expect = session.expect, None
+        if expect and self.fast_path and (match is None or match.grammar == "incomplete") and intent is None:
+            # Antwort auf „Wonach soll ich suchen?“: „Arteriion auf Spotify“ -> „such nach Arteriion auf Spotify“
+            match = self.fast_path.match(f"{expect} {req.text}", default_area=req.principal.area,
+                                         now=situation.now) or match
+        if match is not None and match.grammar == "refuse_password":
+            return TurnResult(text=self.style.system_text("no_passwords"), route="fast_path")
+        if match is not None and match.grammar == "incomplete":
+            session.expect = match.slots["prefix"]
+            return TurnResult(text=self.style.clarify(match.slots["kind"], match.slots.get("site")),
+                              route="fast_path")
         if intent == "how_are_you" and self.registry.get("system.status") is not None:
             match = FastPathMatch("system.status", {}, 0.9, "how_are_you", {"intro": "how_are_you"})
         elif intent is not None and match is None:
@@ -492,8 +510,9 @@ class Orchestrator:
         if session is None or kind is None or record.status != "succeeded" or not isinstance(record.result, dict):
             return
         items = [i for i in record.result.get("results") or [] if isinstance(i, dict)]
-        valid = (lambda i: isinstance(i.get("id"), int)) if kind == "files" else (
-            lambda i: str(i.get("url", "")).startswith(("https://", "http://")))
+        valid = {"files": lambda i: isinstance(i.get("id"), int),
+                 "web": lambda i: str(i.get("url", "")).startswith(("https://", "http://")),
+                 "mail": lambda i: str(i.get("id", "")).isdigit()}[kind]
         if items and all(valid(i) for i in items):
             session.offer = Offer(kind, items, affirm=via == "fast_path")
 

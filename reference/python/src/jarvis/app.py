@@ -16,13 +16,14 @@ import logging
 import os
 import re
 from collections.abc import AsyncIterator, Coroutine
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import yaml
 
+from .agenda import CalendarService, day_plan_entries, register_calendar_capabilities
 from .api import Container, create_app
 from .capabilities import register_memory_capabilities
 from .connectors.homeassistant import HomeAssistantClient, register_home_capabilities, state_changed_to_event
@@ -34,10 +35,12 @@ from .info import InfoConfig, register_info_capabilities
 from .llm.ollama import OllamaProvider
 from .llm.router import ModelRouter
 from .logging_setup import configure_logging
+from .mail import MailConfig, MailReader, register_mail_capabilities
 from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingWeights
 from .orchestrator import ConfirmationStore, Orchestrator
 from .pc import AgentHub, register_pc_capabilities
 from .skills import register_assistant_capabilities
+from .timers import Alarm, AlarmScheduler, Notifier, register_timer_capabilities
 from .persona import Persona
 from .policy import PolicyEngine, Principal
 from .tools import ToolRegistry
@@ -107,11 +110,16 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
                         region=web_cfg.get("region", "de-de"))
         register_web_capabilities(registry, web)
 
+    assistant_cfg = cfg.get("assistant") or {}
+    contacts = {**(assistant_cfg.get("contacts") or {}), **_named(os.environ.get("JARVIS_CONTACTS"), "@")}
     agents = AgentHub()
-    pc_enabled = (cfg.get("pc_agent") or {}).get("enabled", True)
+    pc_cfg = cfg.get("pc_agent") or {}
+    pc_enabled = pc_cfg.get("enabled", True)
     if pc_enabled:
-        register_pc_capabilities(registry, agents, web=web, search_url=(cfg.get("pc_agent") or {}).get(
-            "search_url", "https://www.google.com/search?q={query}"))
+        register_pc_capabilities(
+            registry, agents, web=web, contacts=contacts,
+            search_url=pc_cfg.get("search_url", "https://www.google.com/search?q={query}"),
+            mail_compose=os.environ.get("JARVIS_MAIL_COMPOSE") or pc_cfg.get("mail_compose", "mailto"))
 
     providers = cfg["llm"]["providers"]
     local_cfg = providers[cfg["llm"]["default_local"]]
@@ -180,8 +188,37 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         components["stimme"] = getattr(container.tts, "label", "ok") if container.tts is not None else "browser"
         return components
 
+    # Timer, Erinnerungen, Kalender, E-Mail – Daten im Datenordner (Docker: Volume „jarvis-data“)
+    data_dir = Path(os.environ.get("JARVIS_DATA_DIR") or (root / "data"))
+    notifier = container.notifier = Notifier()
+
+    async def announce(alarm: Alarm) -> None:
+        style = orchestrator.style
+        text = style.finalize(style.alarm_text(alarm.kind, alarm.label, duration_s=alarm.duration_s,
+                                               due=alarm.due.astimezone(tz), late=alarm.late))
+        await notifier.send(alarm.actor, {"type": "notification", "kind": alarm.kind, "id": alarm.id, "text": text})
+        await agents.notify("JARVIS", text)  # Windows-Hinweis, auch ohne offenes JARVIS-Fenster
+
+    scheduler = AlarmScheduler(notify=announce, path=data_dir / "alarms.json")
+    register_timer_capabilities(registry, scheduler, tz)
+    background.append(scheduler.run())
+    cal_cfg = assistant_cfg.get("calendar") or {}
+    calendar = CalendarService(tz=tz, path=data_dir / "calendar.json", scheduler=scheduler,
+                               ics={**(cal_cfg.get("ics") or {}), **_named(os.environ.get("JARVIS_CALENDAR_ICS"), "://")},
+                               remind_minutes=int(cal_cfg.get("remind_minutes", 15)))
+    register_calendar_capabilities(registry, calendar)
+    mail_host = os.environ.get("JARVIS_MAIL_IMAP_HOST") or (assistant_cfg.get("mail") or {}).get("imap_host")
+    if mail_host and os.environ.get("JARVIS_MAIL_USER") and os.environ.get("JARVIS_MAIL_PASSWORD"):
+        register_mail_capabilities(registry, MailReader(MailConfig(
+            mail_host, os.environ["JARVIS_MAIL_USER"], os.environ["JARVIS_MAIL_PASSWORD"],
+            port=int(os.environ.get("JARVIS_MAIL_IMAP_PORT") or 993))))
+
+    async def calendar_entries(day: date, ctx: Any) -> list[str]:
+        return await day_plan_entries(calendar, day)
+
     weather = registry.get("info.weather")
-    register_assistant_capabilities(registry, probes=probes, weather=weather.handler if weather else None)
+    register_assistant_capabilities(registry, probes=probes, weather=weather.handler if weather else None,
+                                    calendar=calendar_entries)
 
     async def warm_up_local_model() -> None:
         """Lädt das lokale Modell beim Start und rechnet Regeln und Tools vorab durch, damit schon die erste
@@ -205,6 +242,22 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
 
     background.append(warm_up_local_model())
     return container, background
+
+
+def _named(value: str | None, marker: str) -> dict[str, str]:
+    """„Mama=mama@example.de; Max=max@example.de“ bzw. „Arbeit=https://…, https://…“ -> {Name: Wert}.
+    Einträge ohne Namen werden durchnummeriert; ``marker`` erkennt den Wert (Adressen enthalten selbst „=“)."""
+    out: dict[str, str] = {}
+    for number, item in enumerate(re.split(r"[;,\n]\s*(?=[^;,\n]*" + re.escape(marker) + ")", value or ""), 1):
+        item = item.strip().strip(",;")
+        if not item:
+            continue
+        name, sep, rest = item.partition("=")
+        if sep and marker not in name and marker in rest:
+            out[name.strip()] = rest.strip()
+        elif marker in item:
+            out[f"Kalender {number}"] = item
+    return out
 
 
 def _tts(cfg: dict[str, Any]) -> Any:

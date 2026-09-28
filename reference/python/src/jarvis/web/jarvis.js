@@ -489,7 +489,48 @@
     addSystem("Damit JARVIS sprechen darf, klicken Sie einmal irgendwo auf diese Seite.", true);
   }
 
-  function chime() {  // kurzer Ton: „Jarvis“ wurde gehört
+  // Nach „Jarvis“ antwortet JARVIS kurz („Ja, Sir?“) – mit der JARVIS-Stimme vorab geladen, damit es sofort klingt.
+  // Ohne Sprachausgabe bleibt der kurze Ton.
+  const ACKS = ["Ja, Sir?", "Sir?", "Ja, Sir?"];
+  const acknowledgement = {
+    cache: new Map(), preparing: false,
+    async prepare() {
+      if (this.preparing || this.cache.size || !useJarvisVoice()) return;
+      this.preparing = true;
+      for (const text of new Set(ACKS)) {
+        try { this.cache.set(text, await fetchSpeech(text)); } catch { break; }
+      }
+      this.preparing = false;
+    },
+    say(then) {
+      let finished = false;
+      const done = () => { if (!finished) { finished = true; then(); } };
+      const text = ACKS[Math.floor(Math.random() * ACKS.length)];
+      if (!settings.speak) { chime(); setTimeout(done, 200); return; }
+      const buffer = this.cache.get(text);
+      if (buffer && useJarvisVoice()) {
+        tts.play(buffer).then(done, done);
+        return;
+      }
+      if (canSpeak) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        const voice = pickVoice();
+        utterance.lang = voice?.lang ?? "de-DE";
+        if (voice) utterance.voice = voice;
+        utterance.pitch = 0.9;
+        utterance.onend = done;
+        utterance.onerror = done;
+        setState("speaking");
+        speechSynthesis.speak(utterance);
+        setTimeout(done, 2500);  // Sicherheitsnetz, falls „end“ ausbleibt
+        return;
+      }
+      chime();
+      setTimeout(done, 200);
+    },
+  };
+
+  function chime() {  // kurzer Ton: „Jarvis“ wurde gehört (ohne Sprachausgabe)
     try {
       chime.context = chime.context || new AudioContext();
       const context = chime.context;
@@ -545,6 +586,7 @@
   // ---------------------------------------------------------------- Gesprächsrunde
   let turn = null;           // aktuelle Anfrage an JARVIS
   let lastTurnSpoken = false;
+  let expectReply = false;  // JARVIS hat nachgefragt („Wonach soll ich suchen?“)
 
   function sendText(raw, spoken) {
     const text = raw.trim();
@@ -611,6 +653,7 @@
       const waiting = actions.find((a) => a.status === "pending_confirmation");
       addConfirmation(current.item, result.pending_confirmation, waiting?.action_id);
     }
+    expectReply = Boolean(result.awaiting_reply) && current.spoken && canListen;
     scrollLog();
     if (!tts.busy) onSpeechDone();
   }
@@ -638,8 +681,9 @@
   function onSpeechDone() {
     if (turn) { setState("thinking"); return; }        // Antwort läuft noch, nächster Satz kommt
     if (!ws || ws.readyState !== WebSocket.OPEN) { setState("offline"); return; }
-    if (lastTurnSpoken && settings.convo && canListen && state !== "listening") {
+    if (((lastTurnSpoken && settings.convo) || expectReply) && canListen && state !== "listening") {
       lastTurnSpoken = false;
+      expectReply = false;
       setTimeout(() => { if (state !== "listening" && !turn) startListening(); }, 300);
       setState("idle");
       return;
@@ -712,27 +756,33 @@
     tts.stop();
     let heard = "";
     let failure = null;
+    let settle = 0;
     const rec = new SpeechRecognition();
     rec.lang = "de-DE";
     rec.interimResults = true;
-    rec.continuous = false;
+    rec.continuous = true;  // Pausen im Satz beenden die Aufnahme nicht – das entscheidet settleDelay()
     rec.maxAlternatives = 1;
-    rec.onstart = () => { setState("listening"); meter.start(); };
+    const quiet = setTimeout(() => { if (!heard.trim()) rec.stop(); }, 7000);  // gar nichts gesagt
+    rec.onstart = () => { setState("listening", listenHint); listenHint = undefined; meter.start(); };
     rec.onresult = (event) => {
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const result = event.results[i];
-        if (result.isFinal) heard += result[0].transcript;
+        if (result.isFinal) heard += ` ${result[0].transcript}`;
         else interim += result[0].transcript;
       }
       els.caption.textContent = `${heard} ${interim}`.trim();
+      clearTimeout(settle);  // spricht noch – erst nach einer Pause abschicken
+      settle = setTimeout(() => rec.stop(), interim ? SETTLE_OPEN_MS + 700 : settleDelay(heard));
     };
     rec.onerror = (event) => { failure = event.error; };
     rec.onend = () => {
+      clearTimeout(settle);
+      clearTimeout(quiet);
       recognition = null;
       meter.stop();
       els.caption.textContent = "";
-      if (heard.trim()) { sendText(heard, true); return; }
+      if (heard.trim()) { sendText(heard.trim(), true); return; }
       if (state === "listening") setState(ws?.readyState === WebSocket.OPEN ? "idle" : "offline");
       if (failure === "no-speech" && !settings.wake) {
         els.status.textContent = "Ich habe nichts gehört. Tippen Sie auf den Kreis, um es erneut zu versuchen.";
@@ -750,6 +800,14 @@
 
   function stopListening() { recognition?.stop(); }
 
+  // Sprechpausen: Chrome meldet schon nach kurzem Zögern ein „fertiges“ Teilstück. Abgeschickt wird erst nach dieser
+  // Stille – länger, wenn der Satz hörbar weitergeht („Such mir nach …“, „… auf“).
+  const SETTLE_MS = 1300;
+  const SETTLE_OPEN_MS = 2800;
+  const OPEN_END = /(?:^|\s)(?:nach|auf|zu|zum|zur|von|vom|für|mit|und|oder|bei|in|im|mir|mal|den|die|das|der|dem|des|ein|eine|einen|einem|über|an|am|namens|such|suche|öffne|spiel|zeig|schreib|tippe?|schließe?)$/i;
+  const settleDelay = (text) => (OPEN_END.test(text.trim()) ? SETTLE_OPEN_MS : SETTLE_MS);
+  let listenHint;
+
   function onHudActivate() {
     if (recognition) { stopListening(); return; }
     if (turn) {  // Antwort läuft: Stimme stummschalten, Text läuft weiter ins Protokoll
@@ -765,11 +823,44 @@
   // ---------------------------------------------------------------- Aktivierungswort „Jarvis“
   // Dauer-Erkennung über den Browser (Chrome/Edge senden das Audio dafür an Google bzw. Microsoft). Läuft nur,
   // solange JARVIS bereit ist – nicht während er denkt, spricht oder einem Befehl zuhört.
-  const WAKE_WORD = /\b(?:jarvis|jarwis|javis|jervis|jarves|charvis|dschawis|dschavis|tschawis)\b/i;
+  // Aktivierungswort unscharf erkennen: Die Spracherkennung schreibt „Jarvis“ oft als „Jarwis“, „Javis“, „Jervis“,
+  // „Charvis“ oder in zwei Silben („Jar wies“). Verglichen wird eine Lautschrift mit höchstens einem Unterschied.
   const hasWords = (text) => /[\p{L}\p{N}]{2,}/u.test(text);
+  const phonetic = (word) => word.toLowerCase()
+    .replace(/^(?:dsch|tsch|sch|ch|dj|dz|j|y|g(?=[ae]))/, "j")
+    .replace(/ph|w|f/g, "v").replace(/[zßc]/g, "s").replace(/ie/g, "i").replace(/e(?=r)/g, "a")
+    .replace(/h/g, "").replace(/(.)\1+/g, "$1");
+  function distance(a, b) {
+    const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i += 1) {
+      let previous = row[0];
+      row[0] = i;
+      for (let j = 1; j <= b.length; j += 1) {
+        const current = row[j];
+        row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1));
+        previous = current;
+      }
+    }
+    return row[b.length];
+  }
+  function findWake(text) {  // -> Textende des Aktivierungsworts oder -1
+    const words = [...text.matchAll(/\p{L}+/gu)];
+    for (let i = 0; i < words.length; i += 1) {
+      const single = words[i];
+      const pair = words[i + 1] && `${single[0]}${words[i + 1][0]}`;
+      for (const [candidate, end] of [[single[0], single.index + single[0].length],
+                                      [pair, pair && words[i + 1].index + words[i + 1][0].length]]) {
+        if (!candidate) continue;
+        const sound = phonetic(candidate);
+        if (sound.length >= 4 && sound.length <= 8 && sound[0] === "j" && distance(sound, "jarvis") <= 1) return end;
+      }
+    }
+    return -1;
+  }
+  window.jarvisFindWake = findWake;  // für Tests
 
   const wake = {
-    rec: null, timer: 0, awaitTimer: 0, failures: 0, awaiting: false,
+    rec: null, timer: 0, settle: 0, failures: 0, collecting: false, buffer: "",
     wanted() {
       return settings.wake && canListen && state === "idle" && !turn && !recognition && !tts.busy
         && ws?.readyState === WebSocket.OPEN;
@@ -784,41 +875,40 @@
       rec.lang = "de-DE";
       rec.continuous = true;
       rec.interimResults = true;
-      rec.maxAlternatives = 1;
+      rec.maxAlternatives = 3;  // „Jarvis“ steht oft nur in einer der Alternativen
       const startedAt = Date.now();
       let failure = null;
       rec.onresult = (event) => {
         for (let i = event.resultIndex; i < event.results.length; i += 1) {
           const result = event.results[i];
-          const text = result[0].transcript.trim();
-          if (this.awaiting) {  // nach „Jarvis“: das Nächste ist der Befehl
-            els.caption.textContent = text;
-            if (result.isFinal && hasWords(text)) { this.hand(text); return; }
+          if (this.collecting) {  // Befehl im selben Atemzug („Jarvis, such mir nach …“): Pausen abwarten
+            this.collect(result[0].transcript.trim(), result.isFinal);
             continue;
           }
-          const match = WAKE_WORD.exec(text);
-          if (!match) continue;
+          let hit = null;
+          for (let k = 0; k < result.length && !hit; k += 1) {
+            const text = result[k].transcript.trim();
+            const end = findWake(text);
+            if (end >= 0) hit = { text, end };
+          }
+          if (!hit) continue;
           this.failures = 0;
           if (!result.isFinal) { document.body.classList.add("wake-heard"); continue; }
-          const command = text.slice(match.index + match[0].length).replace(/^[\s,.!?:;-]+/, "");
-          if (hasWords(command)) { this.hand(command); return; }  // „Jarvis, wie ist das Wetter?“
-          this.awaiting = true;                                   // nur „Jarvis“: auf den Befehl warten
-          document.body.classList.remove("wake-heard");
-          chime();
-          setState("listening", "Ja? Ich höre …");
-          clearTimeout(this.awaitTimer);
-          this.awaitTimer = setTimeout(() => {
-            if (!this.awaiting) return;
-            this.awaiting = false;
-            els.caption.textContent = "";
-            setState("idle");
-          }, 8000);
+          const command = hit.text.slice(hit.end).replace(/^[\s,.!?:;-]+/, "");
+          if (hasWords(command)) {
+            this.collecting = true;
+            this.collect(command, true);
+            continue;
+          }
+          this.acknowledge();  // nur „Jarvis“: „Ja, Sir?“ – dann zuhören
+          return;
         }
       };
       rec.onerror = (event) => { failure = event.error; };
       rec.onend = () => {
         if (this.rec !== rec) return;  // bewusst gestoppt
         this.rec = null;
+        if (this.collecting && hasWords(this.buffer)) { this.hand(this.buffer); return; }
         this.reset();
         if (["not-allowed", "service-not-allowed", "audio-capture"].includes(failure)) {
           setWake(false);
@@ -841,14 +931,38 @@
         this.schedule(2000);
       }
     },
+    collect(text, final) {
+      document.body.classList.remove("wake-heard");
+      if (state !== "listening") setState("listening");
+      clearTimeout(this.settle);
+      if (final) {
+        this.buffer = `${this.buffer} ${text}`.trim();
+        els.caption.textContent = this.buffer;
+        this.settle = setTimeout(() => this.hand(this.buffer), settleDelay(this.buffer));
+      } else {
+        els.caption.textContent = `${this.buffer} ${text}`.trim();
+        this.settle = setTimeout(() => this.hand(`${this.buffer} ${text}`.trim()), SETTLE_OPEN_MS + 700);
+      }
+    },
+    acknowledge() {
+      this.stop();
+      document.body.classList.remove("wake-heard");
+      acknowledgement.say(() => {
+        if (turn || recognition) return;
+        listenHint = "Ja? Ich höre …";
+        startListening();
+      });
+    },
     hand(command) {  // Befehl an JARVIS übergeben
       this.stop();
       els.caption.textContent = "";
-      sendText(command, true);
+      if (hasWords(command)) sendText(command, true);
+      else setState("idle");
     },
     reset() {
-      this.awaiting = false;
-      clearTimeout(this.awaitTimer);
+      this.collecting = false;
+      this.buffer = "";
+      clearTimeout(this.settle);
       document.body.classList.remove("wake-heard");
     },
     stop() {
@@ -890,6 +1004,7 @@
       ttsProvider = health.tts ?? "off";
       ttsConfigured = ttsProvider !== "off";
       setPcStatus(health.pc_agent === "connected");
+      acknowledgement.prepare();
     } catch {
       llmStatus = "unknown";
     }
@@ -971,10 +1086,28 @@
       case "output.text_delta": onDelta(message.delta ?? ""); break;
       case "output.final": onFinal(message); break;
       case "action.update": onActionUpdate(message.action); break;
+      case "notification": onNotification(message); break;
       case "error": onServerError(message.error ?? {}); break;
       default: break;
     }
   }
+
+  // Timer abgelaufen, Erinnerung, Termin: JARVIS meldet sich von selbst – auch mitten in einer Antwort
+  function onNotification(message) {
+    const text = (message.text || "").trim();
+    if (!text) return;
+    const item = addMessage("jarvis", text, `JARVIS · ${timeNow()} · ${NOTICE_LABELS[message.kind] ?? "Hinweis"}`);
+    item.classList.add("notice");
+    if (settings.speak && !turn?.muted) {
+      if (!tts.busy && !turn) wake.stop();
+      chime();
+      setTimeout(() => tts.speak(text), 350);
+    }
+    if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+      try { new Notification("JARVIS", { body: text, icon: "favicon.svg" }); } catch { /* ohne Desktop-Hinweis */ }
+    }
+  }
+  const NOTICE_LABELS = { timer: "Timer", reminder: "Erinnerung", event: "Termin" };
 
   function onServerError(problem) {
     const text = problem.user_message || problem.detail || problem.title || "Unbekannter Fehler";
@@ -1092,7 +1225,7 @@
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || document.querySelector("dialog[open]")) return;
     if (recognition) recognition.abort();
-    if (wake.awaiting) { wake.reset(); els.caption.textContent = ""; }
+    if (wake.collecting) { wake.reset(); els.caption.textContent = ""; }
     if (turn) { turn.muted = true; tts.stop(); return; }
     tts.stop();
     if (state !== "offline") setState("idle");

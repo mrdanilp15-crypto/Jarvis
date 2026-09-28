@@ -16,7 +16,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
-from urllib.parse import quote_plus, urlsplit
+from urllib.parse import quote, quote_plus, urlsplit
 
 from .errors import JarvisError
 from .events import new_id
@@ -29,13 +29,62 @@ SendJson = Callable[[dict[str, Any]], Awaitable[None]]
 DEFAULT_APPS = ["explorer", "browser", "editor", "rechner", "paint", "einstellungen", "taskmanager", "systemsteuerung",
                 "kamera", "uhr", "store", "snipping", "spotify", "word", "excel", "powerpoint", "outlook"]
 FOLDERS = ["desktop", "documents", "downloads", "pictures", "music", "videos", "home", "pc"]
+# Such-Adressen je Dienst: {query} = Formular-Kodierung, {path} = Pfad-Kodierung
 SEARCH_SITES = {
     "google": "https://www.google.com/search?q={query}",
     "youtube": "https://www.youtube.com/results?search_query={query}",
     "amazon": "https://www.amazon.de/s?k={query}",
     "wikipedia": "https://de.wikipedia.org/w/index.php?search={query}",
     "ebay": "https://www.ebay.de/sch/i.html?_nkw={query}",
+    "spotify": "https://open.spotify.com/search/{path}",
+    "netflix": "https://www.netflix.com/search?q={query}",
+    "twitch": "https://www.twitch.tv/search?term={query}",
+    "github": "https://github.com/search?q={query}",
+    "reddit": "https://www.reddit.com/search/?q={query}",
+    "maps": "https://www.google.com/maps/search/{path}",
+    "idealo": "https://www.idealo.de/preisvergleich/MainSearchProductCategory.html?q={query}",
+    "chefkoch": "https://www.chefkoch.de/rs/s0/{path}/Rezepte.html",
+    "tiktok": "https://www.tiktok.com/search?q={query}",
+    "bing": "https://www.bing.com/search?q={query}",
+    "soundcloud": "https://soundcloud.com/search?q={query}",
+    "steam": "https://store.steampowered.com/search/?term={query}",
+    "zalando": "https://www.zalando.de/katalog/?q={query}",
+    "otto": "https://www.otto.de/suche/{path}/",
+    "mediamarkt": "https://www.mediamarkt.de/de/search.html?query={query}",
+    "kleinanzeigen": "https://www.kleinanzeigen.de/s-{path}/k0",
+    "pinterest": "https://www.pinterest.de/search/pins/?q={query}",
+    "imdb": "https://www.imdb.com/find/?q={query}",
+    "duckduckgo": "https://duckduckgo.com/?q={query}",
 }
+SITE_NAMES = {"maps": "Google Maps", "youtube": "YouTube", "github": "GitHub", "tiktok": "TikTok", "imdb": "IMDb",
+              "mediamarkt": "MediaMarkt", "soundcloud": "SoundCloud", "duckduckgo": "DuckDuckGo", "ebay": "eBay"}
+APP_SEARCH = ("spotify",)  # Dienste mit eigener App: dort suchen, wenn installiert (sonst im Browser)
+
+
+KEYS = ["enter", "tab", "escape", "space", "backspace", "delete", "up", "down", "left", "right", "page_up", "page_down",
+        "home", "end", "refresh", "fullscreen", "copy", "paste", "cut", "undo", "redo", "select_all", "save", "find",
+        "print", "new_tab", "close_tab", "reopen_tab", "next_tab", "previous_tab", "back", "forward", "zoom_in",
+        "zoom_out", "switch_window", "close_window", "play_pause", "next_track", "previous_track", "stop_media",
+        "volume_up", "volume_down", "mute"]
+MAIL_WEB = {  # E-Mail-Entwurf im Browser statt im Mailprogramm (pc_agent.mail_compose)
+    "gmail": "https://mail.google.com/mail/?view=cm&fs=1&to={to}&su={subject}&body={body}",
+    "outlook": "https://outlook.live.com/mail/0/deeplink/compose?to={to}&subject={subject}&body={body}",
+}
+EMAIL = re.compile(r"^[^@\s<>\"]+@[^@\s<>\"]+\.[A-Za-z]{2,}$")
+
+
+def spoken_email(text: str) -> str | None:
+    """„max punkt mustermann at gmail punkt com“ -> „max.mustermann@gmail.com“ (so schreibt die Spracherkennung)."""
+    value = f" {text.strip().lower()} "
+    for spoken, char in ((" at ", "@"), (" ät ", "@"), (" et ", "@"), (" punkt ", "."), (" dot ", "."),
+                         (" minus ", "-"), (" bindestrich ", "-"), (" unterstrich ", "_")):
+        value = value.replace(spoken, char)
+    value = re.sub(r"\s+", "", value)
+    return value if EMAIL.match(value) else None
+
+
+def build_search_url(template: str, query: str) -> str:
+    return template.format(query=quote_plus(query), path=quote(query, safe=""))
 NOT_CONNECTED = ("Die PC-Steuerung ist nicht verbunden. Starten Sie JARVIS über die Desktop-Verknüpfung "
                  "(einrichten mit ./deploy/start.sh autostart).")
 OUTDATED = ("Der PC-Agent ist veraltet. Bitte führen Sie ./deploy/start.sh autostart erneut aus – "
@@ -128,6 +177,16 @@ class AgentHub:
         if not self.supports(action):
             raise JarvisError("JRV-INT-001", f"PC-Agent kennt die Aktion {action} nicht", user_message=OUTDATED)
 
+    async def notify(self, title: str, text: str) -> bool:
+        """Windows-Hinweis über den Agenten (Timer, Erinnerungen); ohne Agent oder bei Fehlern still False."""
+        if not self.connected or not self.supports("notify"):
+            return False
+        try:
+            await self.invoke("notify", {"title": title, "text": text})
+        except JarvisError:
+            return False
+        return True
+
     def supports(self, action: str) -> bool:
         return action in (self.info.get("actions") or LEGACY_ACTIONS)
 
@@ -162,7 +221,10 @@ class AgentHub:
 
 
 def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
-                             search_url: str = SEARCH_SITES["google"], web: WebSearch | None = None) -> None:
+                             search_url: str = SEARCH_SITES["google"], web: WebSearch | None = None,
+                             mail_compose: str = "mailto", contacts: dict[str, str] | None = None) -> None:
+    search_url_default = search_url
+    known = {k.strip().lower(): v for k, v in (contacts or {}).items() if EMAIL.match(str(v))}
     async def open_url(args: dict[str, Any], ctx: InvocationContext) -> Any:
         parts = urlsplit(args["url"])
         if parts.scheme not in ("http", "https") or not parts.netloc:
@@ -172,8 +234,14 @@ def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
 
     async def search_web(args: dict[str, Any], ctx: InvocationContext) -> Any:
         site = args.get("site", "google")
-        template = search_url if site == "google" else SEARCH_SITES[site]
-        return await hub.invoke("open_url", {"url": template.format(query=quote_plus(args["query"]))})
+        if site in APP_SEARCH and hub.supports("app_search"):
+            # „Such Arteriion auf Spotify“: in der Spotify-App, falls installiert – sonst der Web-Player
+            result = await hub.invoke("app_search", {"app": site, "query": args["query"]})
+            if isinstance(result, dict) and result.get("opened"):
+                return {"site": site, "in_app": True}
+        template = search_url_default if site == "google" else SEARCH_SITES[site]
+        await hub.invoke("open_url", {"url": build_search_url(template, args["query"])})
+        return {"site": site, "in_app": False}
 
     async def search_files(args: dict[str, Any], ctx: InvocationContext) -> Any:
         return await hub.invoke("search_files", {"query": args["query"].strip()})
@@ -203,6 +271,31 @@ def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
             raise JarvisError("JRV-VAL-002", "query oder id erforderlich",
                               user_message="Welche Datei soll ich öffnen?")
         return await hub.invoke("open_file", {k: v for k, v in args.items() if v not in (None, "")})
+
+    async def close_app(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        name = args["app"].strip()
+        return await hub.invoke("close_app", {"app": hub.find_app(name) or name})
+
+    async def type_text(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        return await hub.invoke("type_text", {"text": args["text"], "enter": bool(args.get("enter"))})
+
+    async def press_key(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        return await hub.invoke("press_key", {"key": args["key"], "times": args.get("times", 1)})
+
+    async def click(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        return await hub.invoke("click", {"label": args["label"].strip()})
+
+    async def compose_mail(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        """Entwurf öffnen – abschicken muss der Nutzer selbst (JARVIS versendet nie in seinem Namen)."""
+        wanted = (args.get("to") or "").strip()
+        address = spoken_email(wanted) or known.get(wanted.lower()) or (wanted if EMAIL.match(wanted) else "")
+        draft = {"to": address, "subject": args.get("subject", ""), "body": args.get("body", "")}
+        if mail_compose in MAIL_WEB:
+            url = MAIL_WEB[mail_compose].format(**{k: quote(v, safe="") for k, v in draft.items()})
+            await hub.invoke("open_url", {"url": url})
+        else:
+            await hub.invoke("compose_mail", {k: v for k, v in draft.items() if v})
+        return {"draft": True, "to": address, "unknown_recipient": wanted if wanted and not address else None}
 
     async def open_app(args: dict[str, Any], ctx: InvocationContext) -> Any:
         name = args["app"].strip()
@@ -242,8 +335,8 @@ def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
     ))
     registry.register(Capability(
         name="pc.search_web", domain="pc", risk_class="R1", side_effects="reversible", timeout_s=15.0,
-        description="Sucht im Internet und zeigt die Ergebnisse im Browser des PCs: Google (Standard) oder direkt "
-                    "auf YouTube, Amazon, Wikipedia bzw. eBay (site).",
+        description="Sucht und zeigt die Ergebnisse auf dem PC: Google (Standard) oder direkt auf einem Dienst "
+                    "(site), z. B. spotify (in der App, falls installiert), youtube, amazon, netflix, maps.",
         input_schema={"type": "object", "additionalProperties": False, "required": ["query"], "properties": {
             "query": {"type": "string", "minLength": 1, "maxLength": 300},
             "site": {"enum": list(SEARCH_SITES)},
@@ -282,6 +375,58 @@ def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
             "show": {"type": "boolean"},
         }},
         handler=open_file,
+    ))
+    registry.register(Capability(
+        # R2: nach dem Lesen fremder Inhalte nur mit Bestätigung – ungespeicherte Arbeit fragt das Programm selbst ab
+        name="pc.close_app", domain="pc", risk_class="R2", side_effects="reversible", timeout_s=15.0,
+        description="Schließt ein Programm auf dem PC sanft (wie das X oben rechts), z. B. Steam, Chrome, Word; "
+                    "„explorer“ schließt die Explorer-Fenster. JARVIS selbst bleibt offen.",
+        input_schema={"type": "object", "additionalProperties": False, "required": ["app"], "properties": {
+            "app": {"type": "string", "minLength": 2, "maxLength": 80, "pattern": "^[^<>|\"*?\\\\/\\u0000-\\u001f]+$"},
+        }},
+        handler=close_app,
+    ))
+    registry.register(Capability(
+        name="pc.type_text", domain="pc", risk_class="R2", side_effects="reversible", timeout_s=15.0,
+        description="Fügt Text in das aktive Fenster des PCs ein (z. B. Suchfeld, Dokument, Chat); enter=true "
+                    "drückt danach Enter. Nie in Konsolen, nie Passwörter.",
+        input_schema={"type": "object", "additionalProperties": False, "required": ["text"], "properties": {
+            "text": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "enter": {"type": "boolean"},
+        }},
+        handler=type_text,
+    ))
+    registry.register(Capability(
+        name="pc.press_key", domain="pc", risk_class="R1", side_effects="reversible", timeout_s=15.0,
+        description="Drückt eine Taste oder ein Tastenkürzel im aktiven Fenster (Enter, Tab, Pfeile, Kopieren, "
+                    "Einfügen, Rückgängig, Speichern, Tabs, Zoom, Zurück) oder eine Medientaste (Wiedergabe/Pause, "
+                    "nächster/vorheriger Titel, lauter, leiser, stumm).",
+        input_schema={"type": "object", "additionalProperties": False, "required": ["key"], "properties": {
+            "key": {"enum": KEYS},
+            "times": {"type": "integer", "minimum": 1, "maximum": 10},
+        }},
+        risk_rules=[{"when": {"key": "close_window"}, "risk_class": "R2"}],
+        handler=press_key,
+    ))
+    registry.register(Capability(
+        name="pc.click", domain="pc", risk_class="R2", side_effects="reversible", timeout_s=20.0,
+        description="Klickt im aktiven Fenster (auch auf Webseiten) auf eine Schaltfläche, einen Link oder "
+                    "Menüpunkt mit dieser Beschriftung, z. B. „Anmelden“, „Weiter“, „Alle akzeptieren“.",
+        input_schema={"type": "object", "additionalProperties": False, "required": ["label"], "properties": {
+            "label": {"type": "string", "minLength": 1, "maxLength": 120},
+        }},
+        handler=click,
+    ))
+    registry.register(Capability(
+        name="pc.compose_mail", domain="pc", risk_class="R1", side_effects="reversible", timeout_s=15.0,
+        description="Öffnet einen E-Mail-Entwurf (Empfänger als Adresse oder bekannter Kontakt, Betreff, Text) im "
+                    "Mailprogramm bzw. Webmail. Abschicken muss der Nutzer selbst.",
+        input_schema={"type": "object", "additionalProperties": False, "properties": {
+            "to": {"type": "string", "maxLength": 200},
+            "subject": {"type": "string", "maxLength": 300},
+            "body": {"type": "string", "maxLength": 5000},
+        }},
+        handler=compose_mail,
     ))
     registry.register(Capability(
         # R2 wie pc.open_url: nach dem Lesen fremder Inhalte nur mit Bestätigung. Ohne Taint (der Nutzer fragt

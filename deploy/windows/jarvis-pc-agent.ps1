@@ -4,7 +4,10 @@
 # (erweiterbar über %LOCALAPPDATA%\JARVIS\apps.json, z. B. {"mein tool": "C:\\Tools\\tool.exe"}), Programme aus dem
 # Windows-Startmenü (per Name, ohne Deinstallations- und Setup-Einträge), bekannte Ordner, Dateien im Benutzerordner
 # (Suche über den Windows-Suchindex; Programme und Skripte darunter werden nur im Explorer markiert, nie gestartet)
-# und die Explorer-Suche. JARVIS schickt nur Namen, Suchbegriffe und Trefferummern – nie Pfade oder Befehle.
+# und die Explorer-Suche. Dazu: Programme sanft schließen (wie das X oben rechts), Text in das aktive Fenster
+# einfügen und Tasten drücken (nie in Konsolen), Schaltflächen per Beschriftung anklicken (UI Automation),
+# E-Mail-Entwürfe öffnen (senden muss der Nutzer selbst) und Windows-Hinweise anzeigen.
+# JARVIS schickt nur Namen, Suchbegriffe, Texte und Trefferummern – nie Pfade oder Befehle.
 # Wird vom Startskript (jarvis-launch.ps1) unsichtbar gestartet. Protokoll: %LOCALAPPDATA%\JARVIS\pc-agent.log
 # Kompatibel mit Windows PowerShell 5.1.
 
@@ -13,7 +16,7 @@ $jarvisHome = Join-Path $env:LOCALAPPDATA 'JARVIS'
 $logFile = Join-Path $jarvisHome 'pc-agent.log'
 $config = Get-Content -Raw -Encoding UTF8 (Join-Path $jarvisHome 'config.json') | ConvertFrom-Json
 
-$agentVersion = '2.2.0'
+$agentVersion = '2.3.0'
 $mutex = New-Object System.Threading.Mutex($false, 'Local\JarvisPcAgent')
 try { $owned = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }   # Vorgänger beendet
 if (-not $owned) { exit 0 }   # läuft bereits
@@ -273,6 +276,214 @@ function Get-Kind($arguments) {
     return $kind
 }
 
+# ---------------------------------------------------------------- Fenster, Tastatur, Maus
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class JarvisNative {
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+    [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+    public static void Key(byte vk) { keybd_event(vk, 0, 0, UIntPtr.Zero); keybd_event(vk, 0, 2, UIntPtr.Zero); }
+    public static void Click(int x, int y) {
+        SetCursorPos(x, y);
+        mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+    }
+    public static string Title(IntPtr hWnd) { var text = new StringBuilder(512); GetWindowText(hWnd, text, 512); return text.ToString(); }
+}
+'@
+
+# Programme, deren Fenster nie Tastatureingaben von JARVIS bekommen: Konsolen führen Getipptes als Befehl aus
+$noTyping = @('cmd', 'powershell', 'pwsh', 'powershell_ise', 'windowsterminal', 'openconsole', 'conhost', 'wt', 'mintty',
+              'bash', 'wsl', 'wslhost', 'ubuntu', 'regedit', 'mmc', 'putty', 'kitty', 'alacritty', 'wezterm-gui')
+# Nie schließen: Windows selbst, JARVIS und seine Helfer
+$noClose = @('explorer', 'csrss', 'winlogon', 'wininit', 'services', 'lsass', 'svchost', 'smss', 'dwm', 'system', 'idle',
+             'fontdrvhost', 'sihost', 'ctfmon', 'runtimebroker', 'searchhost', 'startmenuexperiencehost',
+             'shellexperiencehost', 'textinputhost', 'powershell', 'pwsh', 'docker desktop', 'com.docker.backend',
+             'vmmem', 'vmmemwsl', 'wsl', 'wslservice')
+$processAliases = @{
+    'browser' = @('chrome', 'msedge', 'firefox', 'opera', 'brave', 'vivaldi'); 'chrome' = @('chrome'); 'google chrome' = @('chrome')
+    'edge' = @('msedge'); 'microsoft edge' = @('msedge'); 'firefox' = @('firefox'); 'editor' = @('notepad')
+    'rechner' = @('calculatorapp', 'calc'); 'paint' = @('mspaint'); 'taskmanager' = @('taskmgr')
+    'einstellungen' = @('systemsettings'); 'word' = @('winword'); 'excel' = @('excel'); 'powerpoint' = @('powerpnt')
+    'outlook' = @('outlook', 'olk'); 'spotify' = @('spotify'); 'discord' = @('discord'); 'steam' = @('steam', 'steamwebhelper')
+    'teams' = @('ms-teams', 'teams'); 'visual studio code' = @('code'); 'vs code' = @('code'); 'vlc' = @('vlc')
+}
+
+function Get-Foreground {
+    $hwnd = [JarvisNative]::GetForegroundWindow()
+    $processId = [uint32]0
+    [void][JarvisNative]::GetWindowThreadProcessId($hwnd, [ref]$processId)
+    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    return [pscustomobject]@{ Handle = $hwnd; Title = [JarvisNative]::Title($hwnd)
+                              Process = $(if ($process) { $process.ProcessName.ToLower() } else { '' }) }
+}
+
+function Assert-TypingAllowed {
+    $window = Get-Foreground
+    if ($noTyping -contains $window.Process) {
+        throw 'In Konsolen und Systemwerkzeugen tippe ich aus Sicherheitsgründen nicht.'
+    }
+    if ($window.Title -match 'J\.A\.R\.V\.I\.S') {
+        throw 'Gerade ist das JARVIS-Fenster aktiv – klicken Sie bitte zuerst in das Fenster, in das ich schreiben soll.'
+    }
+    return $window
+}
+
+function ConvertTo-SendKeys([string]$text) {
+    return [regex]::Replace($text, '[+^%~(){}\[\]]', { param($m) '{' + $m.Value + '}' })
+}
+
+function Send-Text([string]$text, [bool]$enter) {
+    $window = Assert-TypingAllowed
+    $text = ($text -replace "[\r\n]+", ' ').Trim()
+    # Über die Zwischenablage einfügen: funktioniert mit allen Zeichen und Tastaturlayouts; alter Text kommt zurück
+    $previous = $null
+    try { if ([System.Windows.Forms.Clipboard]::ContainsText()) { $previous = [System.Windows.Forms.Clipboard]::GetText() } } catch { }
+    [System.Windows.Forms.Clipboard]::SetText($text)
+    [System.Windows.Forms.SendKeys]::SendWait('^v')
+    Start-Sleep -Milliseconds 250
+    if ($enter) { [System.Windows.Forms.SendKeys]::SendWait('{ENTER}') }
+    if ($null -ne $previous) { try { [System.Windows.Forms.Clipboard]::SetText($previous) } catch { } }
+    return @{ typed = $text.Length; window = $window.Title; enter = $enter }
+}
+
+$keys = @{
+    'enter' = '{ENTER}'; 'tab' = '{TAB}'; 'escape' = '{ESC}'; 'space' = ' '; 'backspace' = '{BACKSPACE}'
+    'delete' = '{DELETE}'; 'up' = '{UP}'; 'down' = '{DOWN}'; 'left' = '{LEFT}'; 'right' = '{RIGHT}'
+    'page_up' = '{PGUP}'; 'page_down' = '{PGDN}'; 'home' = '{HOME}'; 'end' = '{END}'; 'refresh' = '{F5}'
+    'fullscreen' = '{F11}'; 'copy' = '^c'; 'paste' = '^v'; 'cut' = '^x'; 'undo' = '^z'; 'redo' = '^y'
+    'select_all' = '^a'; 'save' = '^s'; 'find' = '^f'; 'print' = '^p'; 'new_tab' = '^t'; 'close_tab' = '^w'
+    'reopen_tab' = '^+t'; 'next_tab' = '^{TAB}'; 'previous_tab' = '^+{TAB}'; 'back' = '%{LEFT}'; 'forward' = '%{RIGHT}'
+    'zoom_in' = '^{ADD}'; 'zoom_out' = '^{SUBTRACT}'; 'switch_window' = '%{TAB}'; 'close_window' = '%{F4}'
+}
+# Medien- und Lautstärketasten wirken systemweit, unabhängig vom aktiven Fenster
+$mediaKeys = @{ 'play_pause' = 0xB3; 'next_track' = 0xB0; 'previous_track' = 0xB1; 'stop_media' = 0xB2
+                'volume_up' = 0xAF; 'volume_down' = 0xAE; 'mute' = 0xAD }
+
+function Send-Key([string]$key, [int]$times) {
+    $times = [Math]::Max(1, [Math]::Min($times, 10))
+    if ($mediaKeys.ContainsKey($key)) {
+        for ($i = 0; $i -lt $times; $i++) { [JarvisNative]::Key([byte]$mediaKeys[$key]); Start-Sleep -Milliseconds 40 }
+        return @{ pressed = $key; times = $times }
+    }
+    if (-not $keys.ContainsKey($key)) { throw "Die Taste '$key' kenne ich nicht." }
+    $window = Get-Foreground
+    if ($noTyping -contains $window.Process -and @('enter', 'paste') -contains $key) {
+        throw 'In Konsolen drücke ich Enter nicht – das würde einen Befehl ausführen.'
+    }
+    for ($i = 0; $i -lt $times; $i++) { [System.Windows.Forms.SendKeys]::SendWait($keys[$key]); Start-Sleep -Milliseconds 60 }
+    return @{ pressed = $key; times = $times; window = $window.Title }
+}
+
+function Test-TitleMatch([string]$title, [string]$key) {
+    # „Rechnung.docx - Word“ gehört zu „word“; kurze Namen („uhr“) nie über den Titel, zu leicht verwechselt
+    if ($key.Length -lt 4 -or -not $title) { return $false }
+    $titleKey = ConvertTo-AppKey $title
+    return $titleKey -eq $key -or $titleKey.EndsWith(' ' + $key)
+}
+
+function Close-App([string]$name) {
+    $key = ConvertTo-AppKey $name
+    if (@('explorer', 'datei explorer', 'dateiexplorer', 'windows explorer') -contains $key) {
+        # Nur die Ordnerfenster schließen – explorer.exe selbst ist auch die Taskleiste
+        $shell = New-Object -ComObject Shell.Application
+        $windows = @($shell.Windows() | Where-Object { $_.FullName -like '*explorer.exe' })
+        foreach ($window in $windows) { $window.Quit() }
+        if ($windows.Count -eq 0) { throw 'Es ist kein Explorer-Fenster geöffnet.' }
+        return @{ closed = 'explorer'; count = $windows.Count }
+    }
+    $names = @()
+    if ($processAliases.ContainsKey($key)) { $names += $processAliases[$key] }
+    $names += $key.Replace(' ', '')
+    $entry = Find-StartApp $name   # Startmenü: „Minecraft Launcher“ -> MinecraftLauncher.exe
+    if ($entry -and ([string]$entry.AppID) -match '([^\\/]+)\.exe$') { $names += $Matches[1].ToLower() }
+    $candidates = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $process = $_.ProcessName.ToLower()
+        $_.Id -ne $PID -and $noClose -notcontains $process -and $_.MainWindowHandle -ne 0 -and
+            (($names -contains $process) -or (Test-TitleMatch $_.MainWindowTitle $key))
+    })
+    # Das JARVIS-Fenster (eigenes Browserprofil) bleibt offen
+    $candidates = @($candidates | Where-Object { $_.MainWindowTitle -notmatch 'J\.A\.R\.V\.I\.S' })
+    if ($candidates.Count -eq 0) { throw ('„' + $name + '“ ist gerade nicht geöffnet.') }
+    foreach ($process in $candidates) { [void]$process.CloseMainWindow() }   # wie das X – ungespeicherte Arbeit fragt nach
+    return @{ closed = $name; count = $candidates.Count }
+}
+
+function Invoke-ClickByName([string]$label) {
+    $window = Get-Foreground
+    if ($window.Title -match 'J\.A\.R\.V\.I\.S') { throw 'Gerade ist das JARVIS-Fenster aktiv – bitte zuerst das Zielfenster anklicken.' }
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle($window.Handle)
+    $wanted = ConvertTo-AppKey $label
+    $types = @('Button', 'Hyperlink', 'MenuItem', 'ListItem', 'TabItem', 'CheckBox', 'RadioButton', 'TreeItem', 'SplitButton')
+    $conditions = [System.Windows.Automation.Condition[]]@($types | ForEach-Object {
+        New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::$_) })
+    $clickable = [System.Windows.Automation.OrCondition]::new($conditions)
+    $best = $null
+    $bestRank = 9
+    for ($attempt = 0; $attempt -lt 2 -and $null -eq $best; $attempt++) {
+        # Browser bauen ihre Bedienhilfen-Struktur erst beim ersten Zugriff auf – dann ein zweiter Versuch
+        if ($attempt -gt 0) { Start-Sleep -Milliseconds 800 }
+        foreach ($element in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $clickable)) {
+            $current = $element.Current
+            if ($current.IsOffscreen -or -not $current.IsEnabled) { continue }
+            $key = ConvertTo-AppKey $current.Name
+            if (-not $key) { continue }
+            $rank = 9
+            if ($key -eq $wanted) { $rank = 0 } elseif ($key.StartsWith($wanted)) { $rank = 1 } elseif ($key.Contains($wanted)) { $rank = 2 }
+            if ($rank -lt $bestRank) { $best = $element; $bestRank = $rank }
+        }
+    }
+    if ($null -eq $best) { throw ('Im aktiven Fenster finde ich nichts mit der Beschriftung „' + $label + '“.') }
+    $name = $best.Current.Name
+    $pattern = $null
+    if ($best.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+        $pattern.Invoke()
+    } else {
+        $point = $best.GetClickablePoint()
+        [JarvisNative]::Click([int]$point.X, [int]$point.Y)
+    }
+    return @{ clicked = $name; window = $window.Title }
+}
+
+function Open-MailDraft($arguments) {
+    $parts = @()
+    if ($arguments.subject) { $parts += 'subject=' + [Uri]::EscapeDataString([string]$arguments.subject) }
+    if ($arguments.body) { $parts += 'body=' + [Uri]::EscapeDataString([string]$arguments.body) }
+    $to = ([string]$arguments.to).Trim()
+    if ($to -and $to -notmatch '^[^@\s<>"]+@[^@\s<>"]+\.[A-Za-z]{2,}$') { throw 'Die E-Mail-Adresse ist ungültig.' }
+    $uri = 'mailto:' + $to
+    if ($parts.Count) { $uri += '?' + ($parts -join '&') }
+    Start-Process $uri -ErrorAction Stop   # Standard-Mailprogramm: Entwurf öffnen, senden muss der Nutzer
+    return @{ draft = $true; to = $to }
+}
+
+$script:trayIcon = $null
+function Show-Notification([string]$title, [string]$text) {
+    # Windows-Hinweis (Timer, Erinnerungen) – auch wenn das JARVIS-Fenster nicht offen ist
+    if ($null -eq $script:trayIcon) {
+        $script:trayIcon = New-Object System.Windows.Forms.NotifyIcon
+        $script:trayIcon.Icon = [System.Drawing.SystemIcons]::Information
+        $jarvisIcon = Join-Path $jarvisHome 'jarvis.ico'
+        if (Test-Path $jarvisIcon) { try { $script:trayIcon.Icon = New-Object System.Drawing.Icon($jarvisIcon) } catch { } }
+        $script:trayIcon.Text = 'JARVIS PC-Steuerung'
+        $script:trayIcon.Visible = $true
+    }
+    $script:trayIcon.ShowBalloonTip(10000, $title, $text, [System.Windows.Forms.ToolTipIcon]::Info)
+    return @{ shown = $true }
+}
+
 function Invoke-Action([string]$action, $arguments) {
     switch ($action) {
         'open_url' {
@@ -346,6 +557,20 @@ function Invoke-Action([string]$action, $arguments) {
             Start-Process explorer.exe -ArgumentList ('"' + $folders[$key] + '"') -ErrorAction Stop
             return @{ opened = $key }
         }
+        'app_search' {
+            # „Such Arteriion auf Spotify“: in der installierten App suchen (sonst öffnet JARVIS die Webseite)
+            $query = ([string]$arguments.query).Trim()
+            if ([string]$arguments.app -ne 'spotify' -or -not $query) { return @{ opened = $false } }
+            if (-not (Test-Path 'Registry::HKEY_CLASSES_ROOT\spotify')) { return @{ opened = $false } }
+            Start-Process ('spotify:search:' + [Uri]::EscapeDataString($query)) -ErrorAction Stop
+            return @{ opened = $true; app = 'spotify' }
+        }
+        'close_app' { return Close-App ([string]$arguments.app) }
+        'type_text' { return Send-Text ([string]$arguments.text) ([bool]$arguments.enter) }
+        'press_key' { return Send-Key ([string]$arguments.key) ([int]$(if ($arguments.times) { $arguments.times } else { 1 })) }
+        'click' { return Invoke-ClickByName ([string]$arguments.label) }
+        'compose_mail' { return Open-MailDraft $arguments }
+        'notify' { return Show-Notification ([string]$arguments.title) ([string]$arguments.text) }
         default { throw "Unbekannte Aktion '$action'." }
     }
 }
@@ -381,7 +606,8 @@ while ($true) {
         Send-Json $socket @{
             type = 'agent.hello'; name = $env:COMPUTERNAME; version = $agentVersion; apps = @($apps.Keys)
             start_apps = @(Get-StartAppNames); folders = @($folders.Keys)
-            actions = @('open_url', 'open_app', 'open_folder', 'search_files', 'find_files', 'open_file')
+            actions = @('open_url', 'open_app', 'open_folder', 'search_files', 'find_files', 'open_file', 'app_search',
+                        'close_app', 'type_text', 'press_key', 'click', 'compose_mail', 'notify')
         }
         $script:appsChanged = $false
         Write-Log 'Mit JARVIS verbunden'

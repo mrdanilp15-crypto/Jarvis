@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
+
+from .when import parse_duration, parse_when
 
 NUMBER_WORDS = {
     "null": 0, "eins": 1, "ein": 1, "eine": 1, "zwei": 2, "drei": 3, "vier": 4, "fünf": 5, "sechs": 6,
@@ -30,10 +33,6 @@ LIGHT_PCT = re.compile(
     rf"^(?:mach|stell|dimm|setz)e?\s+(?:das\s+)?licht\s+{_AREA}\s+auf\s+(?P<num>\d{{1,3}}|[a-zäöüß]+)\s*(?:prozent|%)$",
     re.I,
 )
-TIMER = re.compile(
-    r"^(?:stell|starte?)e?\s+(?:einen\s+)?timer\s+(?:auf|für)\s+(?P<num>\d{1,3}|[a-zäöüß]+)\s+(?P<unit>minuten?|sekunden?|stunden?)$",
-    re.I,
-)
 
 
 # PC-Befehle. Natürliche Formen werden erst auf die Befehlsform zurückgeführt („Kannst du bitte Steam starten?“
@@ -41,9 +40,10 @@ TIMER = re.compile(
 # erhalten (Suchbegriffe), verglichen wird ohne Rücksicht darauf.
 _OPEN_VERBS = r"öffnen|starten|aufmachen|aufrufen|anmachen|hochfahren|laden"
 _SHOW_VERBS = r"zeigen|anzeigen"
-_PLAY_VERBS = r"spielen|abspielen|zocken"
+_PLAY_VERBS = r"spielen|abspielen|zocken|hören|anhören"
 _SEARCH_VERBS = r"suchen|googeln|finden|nachschauen|nachsehen|raussuchen|heraussuchen"
-_ANY_VERB = rf"{_OPEN_VERBS}|{_SHOW_VERBS}|{_PLAY_VERBS}|{_SEARCH_VERBS}"
+_CLOSE_VERBS = r"schließen|beenden|zumachen"
+_ANY_VERB = rf"{_OPEN_VERBS}|{_SHOW_VERBS}|{_PLAY_VERBS}|{_SEARCH_VERBS}|{_CLOSE_VERBS}"
 _FILLER = re.compile(r"\b(?:bitte|mal|doch|kurz|schnell|einmal|jetzt|gerade|eben|für mich|gleich|eventuell|"
                      r"vielleicht)\b", re.I)
 _ASK = re.compile(rf"^(?:(?:kannst|könntest|würdest) du|(?:können|könnten|würden) sie|ich (?:möchte|will|würde gerne?|"
@@ -52,7 +52,6 @@ _VERB_LAST = re.compile(rf"^(?P<rest>.+?)\s+(?P<verb>{_ANY_VERB})$", re.I)
 PC_OPEN = re.compile(r"^(?P<verb>öffne|starte|start|ruf|rufe|mach|zeig|zeige|spiel|spiele)\s+(?:mir\s+)?"
                      r"(?:(?P<article>den|die|das|einen|eine|ein|meine|meinen|mein)\s+)?(?P<target>[\wäöüß .+&'-]+?)"
                      r"(?P<auf>\s+auf)?$", re.I)
-_SITES = r"youtube|google|amazon|wikipedia|ebay"
 _ON_PC = r"(?:auf (?:dem|meinem) (?:pc|computer|rechner|laptop)|am (?:pc|computer|rechner)|in meinen dateien|" \
          r"auf der festplatte)"
 PC_SEARCH_FILES = [
@@ -62,12 +61,21 @@ PC_SEARCH_FILES = [
                rf"(?:\s+{_ON_PC})?$", re.I),
     re.compile(rf"^(?:such|suche|finde|find)\s+(?:nach\s+)?(?P<query>.+?)\s+{_ON_PC}$", re.I),
 ]
-PC_SEARCH_SITE = [
-    re.compile(rf"^(?:such|suche|google|googel)\s+(?:auf|bei|in)\s+(?P<site>{_SITES})\s+(?:nach\s+)?(?P<query>.+)$",
-               re.I),
-    re.compile(rf"^(?:such|suche)\s+(?:nach\s+)?(?P<query>.+?)\s+(?:auf|bei|in)\s+(?P<site>{_SITES})$", re.I),
-    re.compile(r"^(?:zeig|zeige|öffne|starte)\s+(?:mir\s+)?(?P<query>.+?)\s+(?:auf|bei|in)\s+(?P<site>youtube)$", re.I),
-]
+# Dienste für „… auf Spotify“, „bei Amazon“: gesprochene Form -> Kennung (Such-Adressen: pc.SEARCH_SITES).
+# Nur bekannte Dienste – „Urlaub auf Mallorca“ bleibt ein Suchbegriff.
+SEARCH_SERVICES = {
+    "google": "google", "youtube": "youtube", "you tube": "youtube", "amazon": "amazon", "wikipedia": "wikipedia",
+    "ebay": "ebay", "spotify": "spotify", "netflix": "netflix", "twitch": "twitch", "github": "github",
+    "reddit": "reddit", "google maps": "maps", "maps": "maps", "google karten": "maps", "der karte": "maps",
+    "karte": "maps", "idealo": "idealo", "chefkoch": "chefkoch", "tiktok": "tiktok", "tik tok": "tiktok",
+    "bing": "bing", "soundcloud": "soundcloud", "steam": "steam", "zalando": "zalando", "otto": "otto",
+    "mediamarkt": "mediamarkt", "media markt": "mediamarkt", "kleinanzeigen": "kleinanzeigen",
+    "ebay kleinanzeigen": "kleinanzeigen", "pinterest": "pinterest", "imdb": "imdb", "duckduckgo": "duckduckgo",
+}
+_SERVICE = "|".join(sorted((re.escape(k) for k in SEARCH_SERVICES), key=len, reverse=True))
+_FIND = r"(?:such|suche|google|googel|googeln|find|finde)"
+_ONLINE = r"(?:im internet|online|im web|im netz)"
+_AT = r"(?:auf|bei|in|über)"
 # Link heraussuchen und direkt öffnen (erster Treffer) bzw. Trefferliste zum Auswählen
 _LINK = r"(?:link|webseite|website|homepage|internetseite|seite|url)"
 _ABOUT = r"(?:zu|zum|zur|für|von|vom|über|mit)"
@@ -110,19 +118,200 @@ PC_FIND_FILES = [
 # Auswahl aus der zuletzt genannten Liste: „die zweite“, „öffne den dritten Link“, „Nummer 2“, „ja“ (= den ersten)
 _ORDINALS = {"erste": 1, "zweite": 2, "dritte": 3, "vierte": 4, "fünfte": 5, "eins": 1, "zwei": 2, "drei": 3,
              "vier": 4, "fünf": 5}
-SELECTION = re.compile(r"^(?:(?:öffne|nimm|zeig|zeige|mach|spiel)\s+(?:mir\s+)?)?(?:(?:die|den|das|der)\s+)?"
+SELECTION = re.compile(r"^(?:(?:öffne|nimm|zeig|zeige|mach|spiel|lies|lese)\s+(?:mir\s+)?)?(?:(?:die|den|das|der)\s+)?"
                        r"(?:nummer\s+|nr\s+)?(?P<n>\d{1,2}|eins|zwei|drei|vier|fünf|(?:erst|zweit|dritt|viert|fünft|"
-                       r"letzt)e[nrs]?)(?:\s+(?:datei|link|treffer|ergebnis|eintrag|seite|video|davon))?(?:\s+auf)?$",
+                       r"letzt)e[nrs]?)(?:\s+(?:datei|link|treffer|ergebnis|eintrag|seite|video|mail|e-mail|nachricht|"
+                       r"davon))?(?:\s+(?:auf|vor))?$",
                        re.I)
-AFFIRM = re.compile(r"^(?:ja(?:\s+(?:bitte|gerne|gern|mach das|öffne sie|öffne ihn|öffne es))?|gerne|gern|"
-                    r"(?:öffne|zeig|zeige)\s+(?:sie|ihn|es)|mach\s+(?:sie|ihn|es)\s+auf|mach das)$", re.I)
+AFFIRM = re.compile(r"^(?:ja(?:\s+(?:bitte|gerne|gern|mach das|öffne sie|öffne ihn|öffne es|lies sie vor))?|gerne|gern|"
+                    r"(?:öffne|zeig|zeige)\s+(?:sie|ihn|es)|mach\s+(?:sie|ihn|es)\s+auf|mach das|lies sie vor)$", re.I)
 PC_SEARCH = [
-    re.compile(r"^(?:such|suche|google|googel|googeln)\s+(?:im internet\s+|online\s+|im web\s+)?nach\s+(?P<query>.+?)"
-               r"(?:\s+im internet|\s+online|\s+im web)?$", re.I),
-    re.compile(r"^(?:such|suche)\s+(?:im internet|online|im web)\s+(?P<query>.+)$", re.I),
-    re.compile(r"^google\s+(?P<query>.+)$", re.I),
+    # „Such auf Spotify nach Arteriion“, „Schau bei Amazon nach Kopfhörern“
+    re.compile(rf"^(?:{_FIND}|schau|guck)\s+(?:{_ONLINE}\s+)?{_AT}\s+(?P<site>{_SERVICE})\s+(?:nach\s+)?(?P<query>.+)$",
+               re.I),
+    # „Such nach Arteriion auf Spotify“, „Such nach Pizza“
+    re.compile(rf"^{_FIND}\s+(?:{_ONLINE}\s+)?nach\s+(?P<query>.+?)(?:\s+{_AT}\s+(?P<site>{_SERVICE}))?"
+               rf"(?:\s+{_ONLINE})?$", re.I),
+    # „Such Arteriion auf Spotify“ (ohne „nach“, aber mit Dienst)
+    re.compile(rf"^{_FIND}\s+(?P<query>.+?)\s+{_AT}\s+(?P<site>{_SERVICE})$", re.I),
+    re.compile(rf"^(?:such|suche)\s+{_ONLINE}\s+(?P<query>.+)$", re.I),
+    re.compile(r"^(?:google|googel)\s+(?P<query>.+)$", re.I),
+    # „Zeig mir Katzenvideos auf YouTube“, „Spiel Arteriion auf Spotify“ (YouTube-Spielen öffnet das erste Video)
+    re.compile(rf"^(?:zeig|zeige|öffne|starte|spiel|spiele)\s+(?P<query>.+?)\s+{_AT}\s+(?P<site>{_SERVICE})(?:\s+ab)?$",
+               re.I),
 ]
-_PREFIX = re.compile(r"^(?:(?:hey|hallo|ok|okay)\s+)?jarvis\s*[,:]?\s*|^bitte\s+", re.I)
+# Tasten, Tastenkürzel und Medientasten (ganze Äußerung, normalisiert)
+_TIMES = r"(?:\s+(?P<times>\d{1,2}|zwei|drei|vier|fünf|zehn)\s*-?\s*mal)?"
+KEY_NAMES = {
+    "enter": "enter", "eingabe": "enter", "eingabetaste": "enter", "return": "enter", "tab": "tab",
+    "tabulator": "tab", "escape": "escape", "esc": "escape", "leertaste": "space", "leerzeichen": "space",
+    "space": "space", "rücktaste": "backspace", "backspace": "backspace", "entf": "delete", "entfernen": "delete",
+    "pfeil hoch": "up", "pfeil nach oben": "up", "pfeil runter": "down", "pfeil nach unten": "down",
+    "pfeil links": "left", "pfeil nach links": "left", "pfeil rechts": "right", "pfeil nach rechts": "right",
+    "bild hoch": "page_up", "bild runter": "page_down", "pos1": "home", "ende": "end", "f5": "refresh",
+    "f11": "fullscreen",
+}
+_KEY_NAME = "|".join(sorted((re.escape(k) for k in KEY_NAMES), key=len, reverse=True))
+PRESS = [
+    re.compile(rf"^(?:drück|drücke|press|betätige)\s+(?:auf\s+)?(?:die\s+)?(?:taste\s+)?(?P<name>{_KEY_NAME}){_TIMES}$"),
+    re.compile(rf"^(?:drück|drücke)\s+(?P<times>\d{{1,2}}|zwei|drei|vier|fünf|zehn)\s*-?\s*mal\s+(?:auf\s+)?(?:die\s+)?"
+               rf"(?:taste\s+)?(?P<name>{_KEY_NAME})$"),
+    re.compile(rf"^(?:die\s+)?(?:taste\s+)?(?P<name>{_KEY_NAME}){_TIMES}\s+drücken$"),
+]
+SHORTCUTS = [(re.compile(f"^(?:{pattern})$"), key) for pattern, key in [
+    (r"pause|pausiere|pausieren|musik (?:pausieren|anhalten|stoppen)|(?:stopp?|halt|pausier) die musik|mach weiter|"
+     r"spiel weiter|weiterspielen|fortsetzen|play|wiedergabe (?:fortsetzen|pausieren)|musik weiter", "play_pause"),
+    (r"nächste[rsn]? (?:lied|song|titel|track)|(?:lied )?überspringen|skip", "next_track"),
+    (r"(?:vorherige|vorige|letzte)[rsn]? (?:lied|song|titel|track)|(?:ein )?lied zurück", "previous_track"),
+    (r"(?:mach |dreh )?(?:etwas |ein bisschen |ein wenig |viel )?lauter|lautstärke (?:hoch|erhöhen|rauf)", "volume_up"),
+    (r"(?:mach |dreh )?(?:etwas |ein bisschen |ein wenig |viel )?leiser|lautstärke (?:runter|verringern)", "volume_down"),
+    (r"ton (?:aus|an|wieder an)|stumm(?:schalten)?|mute|stummschaltung (?:aus|an|aufheben)", "mute"),
+    (r"kopier(?:e|en)?(?: das| es)?", "copy"),
+    (r"füg(?:e)? (?:das |es )?ein|einfügen", "paste"),
+    (r"schneid(?:e)? (?:das |es )?aus|ausschneiden", "cut"),
+    (r"mach (?:das|es) rückgängig|rückgängig(?: machen)?", "undo"),
+    (r"wiederherstellen", "redo"),
+    (r"markier(?:e)? alles|alles markieren|alles auswählen|wähl(?:e)? alles aus", "select_all"),
+    (r"speicher(?:e|n)?(?: das| es| die datei)?", "save"),
+    (r"(?:öffne |mach )?(?:einen )?neuen tab(?: auf)?|neuer tab", "new_tab"),
+    (r"schließ(?:e)? (?:den|diesen) tab|tab schließen", "close_tab"),
+    (r"nächste[rn]? tab|tab weiter", "next_tab"),
+    (r"vorherige[rn]? tab", "previous_tab"),
+    (r"(?:geh |eine seite )?zurück|seite zurück", "back"),
+    (r"(?:geh )?vorwärts|seite vor", "forward"),
+    (r"(?:lade? )?(?:die seite )?neu(?: laden)?|aktualisier(?:e|en)?(?: die seite)?|seite neu laden", "refresh"),
+    (r"vollbild(?:modus)?(?: an| aus)?", "fullscreen"),
+    (r"vergrößern|zoom(?:e)? (?:rein|hinein)|größer", "zoom_in"),
+    (r"verkleinern|zoom(?:e)? (?:raus|heraus)|kleiner", "zoom_out"),
+    (r"scroll(?:e)? (?:runter|nach unten)|runterscrollen|nach unten scrollen|weiter runter", "page_down"),
+    (r"scroll(?:e)? (?:hoch|rauf|nach oben)|hochscrollen|nach oben scrollen|weiter hoch", "page_up"),
+    (r"fenster wechseln|wechsel(?:e)? das fenster", "switch_window"),
+    (r"schließ(?:e)? (?:dieses|das aktive) (?:fenster|programm)|(?:dieses|das aktive) fenster schließen", "close_window"),
+]]
+_STEPS = {"volume_up": 5, "volume_down": 5}  # je Tastendruck 2 %
+# Klicken, Tippen, Schließen, E-Mail-Entwurf, Anmelden
+CLICK = [
+    re.compile(r"^(?:klick|klicke|tipp|tippe|drück|drücke)\s+auf\s+(?:(?:den|die|das)\s+)?(?:(?:button|knopf|link|"
+               r"schaltfläche|feld|menüpunkt|reiter)\s+)?(?P<label>.+)$", re.I),
+    re.compile(r"^(?:klick|klicke)\s+(?:(?:den|die|das)\s+)?(?:(?:button|knopf|link|schaltfläche)\s+)?(?P<label>.+?)\s+an$",
+               re.I),
+]
+_ENTER = r"(?P<enter>\s+und\s+(?:drück|drücke)\s+(?:enter|eingabe)|\s+und\s+(?:schick|sende)\s+(?:es|das|ihn)\s+ab)?"
+TYPE = [
+    re.compile(rf"^(?:tipp|tippe)\s+(?:(?:den text|folgendes|ein)\s+)?(?P<text>.+?){_ENTER}$", re.I),
+    re.compile(rf"^(?:schreib|schreibe)\s+(?:hier|ins (?:textfeld|feld|suchfeld|dokument|fenster)|in das (?:feld|"
+               rf"fenster|dokument|suchfeld))\s+(?P<text>.+?){_ENTER}$", re.I),
+    re.compile(rf"^(?:gib|gebe)\s+(?P<text>.+?)\s+ein{_ENTER}$", re.I),
+]
+PASSWORD = re.compile(r"\b(?:passwort|passwörter|kennwort|pin|zugangsdaten)\b", re.I)
+CLOSE = [
+    re.compile(r"^(?:schließ|schließe|schliess|schliesse|beende|beend)\s+(?:(?:den|die|das|mein|meine|meinen)\s+)?"
+               r"(?P<target>[\wäöüß .+&'-]+?)$", re.I),
+    re.compile(r"^mach\s+(?:(?:den|die|das)\s+)?(?P<target>[\wäöüß .+&'-]+?)\s+zu$", re.I),
+]
+MAIL = re.compile(r"^(?:schreib|schreibe|verfass|verfasse|erstell|erstelle|entwirf|öffne)\s+(?:mir\s+)?"
+                  r"(?:eine[nm]?\s+)?(?:neue\s+)?(?:e-?mail|mail|email|mailentwurf|e-mail-entwurf)"
+                  r"(?:\s+an\s+(?P<to>.+?))?(?:\s+mit dem betreff\s+(?P<subject>.+?))?"
+                  r"(?:\s+(?:mit dem text|mit dem inhalt|mit dem inhalt|und schreib(?:e)?)\s+(?P<body>.+))?$", re.I)
+LOGIN = [
+    re.compile(r"^(?:melde|log|logg|logge)\s+mich\s+(?:bei|auf|in)\s+(?P<site>.+?)\s+(?:an|ein)$", re.I),
+    re.compile(r"^(?:kannst du\s+)?mich\s+(?:bei|auf|in)\s+(?P<site>.+?)\s+(?:anmelden|einloggen)$", re.I),
+]
+
+# Timer, Erinnerungen, Termine, E-Mails (normalisierte Äußerung; Zeitangaben löst when.py auf)
+TIMER_SET = [
+    re.compile(r"^(?:stell|stelle|start|starte|mach|mache|setz|setze)\s+(?:mir\s+)?(?:(?:einen|den|nen)\s+)?"
+               r"(?:(?P<label>[a-zäöüß]+)[- ]?)?timer\s+(?:auf|für|von|über)\s+(?P<dur>.+?)"
+               r"(?:\s+(?:für|namens|mit dem namen)\s+(?P<label2>.+))?$", re.I),
+    re.compile(r"^timer\s+(?:auf\s+|für\s+)?(?P<dur>.+?)(?:\s+(?:für|namens)\s+(?P<label2>.+))?$", re.I),
+    re.compile(r"^(?P<dur>.+?)\s+timer(?:\s+(?:für|namens)\s+(?P<label2>.+))?$", re.I),
+]
+WAKE_ME = re.compile(r"^(?:weck|wecke)\s+mich\s+(?P<when>.+)$", re.I)
+REMIND = re.compile(r"^(?:erinnere|erinner|erinnre)\s+mich\s+(?P<rest>.+)$", re.I)
+TIMER_LIST = re.compile(r"^(?:wie (?:lange|viel zeit)\s+(?:läuft|hat|dauert)\s+(?:der|mein|den)\s+timer(?:\s+noch)?|"
+                        r"welche (?:timer|erinnerungen) (?:laufen|habe ich|hab ich|gibt es|sind aktiv)|"
+                        r"(?:laufende|meine) (?:timer|erinnerungen)|wie lange noch)$", re.I)
+TIMER_CANCEL = [
+    re.compile(r"^(?:stopp|stop|stoppe|beende|lösch|lösche|brich|brech|cancel|entferne)\s+(?P<all>alle\s+)?"
+               r"(?:(?:den|die|meinen|meine)\s+)?(?:(?P<label>[a-zäöüß]+)[- ]?)?(?P<what>timer|erinnerungen?|wecker)"
+               r"(?:\s+ab)?$", re.I),
+    re.compile(r"^(?P<what>timer|wecker|erinnerung)\s+(?:aus|stopp|stop|abbrechen|löschen)$", re.I),
+]
+CAL_ADD = [
+    re.compile(r"^(?:trag|trage)\s+(?:mir\s+)?(?P<rest>.+?)\s+(?:in (?:den|meinen) kalender\s+)?ein$", re.I),
+    re.compile(r"^(?:erstell|erstelle|leg|lege|mach|mache|notier|notiere|plan|plane)\s+(?:mir\s+)?(?:einen\s+)?"
+               r"(?:neuen\s+)?termin\s+(?P<rest>.+?)(?:\s+an)?$", re.I),
+    re.compile(r"^(?:neuer\s+)?termin\s+(?P<rest>.+)$", re.I),
+]
+CAL_LIST = [
+    re.compile(r"^(?:welche|was für) termine\s+(?:habe ich|hab ich|stehen an|gibt es|sind)(?:\s+(?P<when>.+?))?"
+               r"(?:\s+(?:an|im kalender))?$", re.I),
+    re.compile(r"^(?:was steht|was habe ich|was hab ich)\s+(?P<when>.+?)\s+(?:an|vor|im kalender)$", re.I),
+    re.compile(r"^(?:zeig|zeige|lies|nenn|nenne)\s+(?:mir\s+)?(?:meine\s+)?termine(?:\s+(?P<when>.+?))?(?:\s+vor)?$", re.I),
+    re.compile(r"^(?:meine\s+)?termine(?:\s+(?P<when>.+))?$", re.I),
+]
+CAL_NEXT = re.compile(r"^(?:wann ist|wann habe ich|wann hab ich|was ist)\s+(?:mein(?:en)?|der|den)\s+nächste[nr]?\s+"
+                      r"termin$", re.I)
+CAL_DELETE = [
+    re.compile(r"^(?:lösch|lösche|entferne|streich|streiche)\s+(?:den\s+)?termin\s+(?P<rest>.+)$", re.I),
+    re.compile(r"^sag\s+(?:den\s+)?(?:termin\s+)?(?P<rest>.+?)\s+ab$", re.I),
+]
+MAIL_LIST = [
+    re.compile(r"^(?:habe ich|hab ich|gibt es)\s+(?:neue|ungelesene)\s+(?:e-?mails?|mails?|nachrichten im postfach)$", re.I),
+    re.compile(r"^(?:lies|lese|zeig|zeige|check|prüf|prüfe)\s+(?:mir\s+)?(?:meine\s+)?(?:neuen?\s+|ungelesenen?\s+)?"
+               r"(?:e-?mails?|mails?|postfach)(?:\s+vor)?$", re.I),
+    re.compile(r"^was (?:ist|gibt es neues) (?:in meinem|im) postfach$", re.I),
+]
+
+
+def _time_text(text: str) -> str:
+    """Wie normalize_utterance, aber mit Groß-/Kleinschreibung (Erinnerungstexte, Titel) und Punkten in Datums- und
+    Uhrzeitangaben („3. Oktober“, „15.30“)."""
+    text = re.sub(r"[!?;„“\"]+", " ", text)
+    text = re.sub(r"(?<!\d)\.(?=\s|$)", " ", text)  # Satzpunkte, nicht „3.“
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(rf"^(?:(?:hey|hallo|ok|okay)\s+)?{WAKE}\s*,?\s+|^(?:sag mal|bitte)\s+", "", text, flags=re.I)
+    return re.sub(rf"[\s,]+(?:bitte|{WAKE}|sir)$", "", text, flags=re.I).strip(" ,")
+
+
+def _timer_label(*labels: str | None) -> str:
+    for label in labels:
+        if label and label not in ("einen", "den", "neuen", "kurzen"):
+            return re.sub(r"^(?:die|den|das|der)\s+", "", label.strip()).capitalize()
+    return ""
+
+
+def _reminder_text(rest: str) -> str:
+    text = re.sub(r"^(?:an|daran|dran)\b[,]?\s*(?:dass\s+)?", "", rest.strip(" ,"), flags=re.I)
+    return text.strip(" ,.") or "Erinnerung"
+
+
+def _event_title(rest: str) -> str:
+    title = re.sub(r"^(?:(?:einen|den|neuen|ein|eine)\s+)*(?:termin\s+)?(?:(?:beim|bei|mit|für|zum|zur|als)\s+)?", "",
+                   rest.strip(" ,:"), flags=re.I)
+    title = re.sub(r"\s+(?:als termin|in den kalender|ein)$", "", title, flags=re.I).strip(" ,.:")
+    return title[:1].upper() + title[1:] if title else ""
+
+
+def _day_range(when: str | None, now: datetime) -> tuple[str, int] | None:
+    """„morgen“ -> (Datum, 1 Tag), „diese Woche“ -> (heute, bis Sonntag), „nächste Woche“ -> (Montag, 7)."""
+    when = (when or "heute").strip().lower()
+    if re.fullmatch(r"(?:diese|in dieser) woche", when):
+        return now.date().isoformat(), 7 - now.weekday()
+    if re.fullmatch(r"(?:nächste|kommende|in der nächsten) woche", when):
+        monday = now.date() + timedelta(days=7 - now.weekday())
+        return monday.isoformat(), 7
+    parsed = parse_when(when, now)
+    return (parsed.at.date().isoformat(), 1) if parsed else None
+
+
+# Unvollständige Befehle („Such mal …“, „Öffne“): nachfragen statt raten, der nächste Satz ergänzt den Befehl
+INCOMPLETE = re.compile(rf"^(?P<verb>{_FIND}|schau|guck|öffne|starte|spiel|spiele|zeig|zeige|schließe?|beende|tippe?|"
+                        rf"schreib|schreibe)(?:\s+(?:was|etwas|nach|für mich|mir))*(?:\s+{_AT}\s+(?P<site>{_SERVICE}))?"
+                        rf"(?:\s+nach)?$", re.I)
+# „Jarvis“ in den Schreibweisen der Spracherkennung (die Oberfläche erkennt noch unschärfer, docs/07)
+WAKE = r"(?:jarvis|jarwis|javis|jervis|jarves|jarviz|jarvice|charvis|garvis|dschawis|dschavis|tschawis)"
+_PREFIX = re.compile(rf"^(?:(?:hey|hallo|ok|okay)\s+)?{WAKE}\s*[,:]?\s*|^bitte\s+", re.I)
 _GO_TO = re.compile(r"^(?:geh|gehe|navigier|navigiere|bring mich|führ mich|leite mich)\s+(?:auf|zu|zur|zum|nach)\s+"
                     r"(?:(?:die\s+)?(?:seite|webseite|website)\s+)?", re.I)
 _DOMAIN = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:de|com|org|net|io|eu|at|ch|tv|info)$")
@@ -168,7 +357,10 @@ def canonical_command(text: str) -> str:
     text = re.sub(r"\.(?=\s|$)", " ", text)  # Satzpunkte weg, Punkte in Adressen („heise.de“) bleiben
     text = _PREFIX.sub("", re.sub(r"\s+", " ", text).strip())
     text = re.sub(r"\s+", " ", _FILLER.sub(" ", text)).strip()
-    text = re.sub(r"\s+(?:jarvis|sir)$", "", text, flags=re.I)
+    text = re.sub(rf"\s+(?:{WAKE}|sir)$", "", text, flags=re.I)
+    text = re.sub(r"^(\S+)\s+mir\s+(?=\S)", r"\1 ", text) if re.match(
+        r"^(?:such|suche|google|finde|find|zeig|zeige|öffne|spiel|spiele|hol|hole|gib|schau|guck)\s+mir\s", text,
+        re.I) else text
     text = _GO_TO.sub("öffne die webseite ", text)
     text = re.sub(r"^(?:wechsel|wechsle|wechsele)\s+(?:zu|zum|zur|in)\s+(?:(?:den|die|das|dem|der)\s+)?", "öffne ", text,
                   flags=re.I)
@@ -185,6 +377,8 @@ def canonical_command(text: str) -> str:
                 return f"zeig {rest}"
             if re.fullmatch(_PLAY_VERBS, verb):
                 return f"spiel {rest}"
+            if re.fullmatch(_CLOSE_VERBS, verb):
+                return f"schließe {rest}"
             return f"öffne {rest}"
     return text
 
@@ -215,8 +409,8 @@ def normalize_utterance(text: str) -> str:
     """Kleinbuchstaben, ohne Satzzeichen, ohne Anrede/Füllwörter am Rand („Jarvis, …“, „… bitte“)."""
     text = re.sub(r"[.,!?;:„“\"]+", " ", text.lower())
     text = re.sub(r"\s+", " ", text).strip()
-    text = re.sub(r"^(?:(?:hey|hallo|ok|okay)\s+)?jarvis\s+|^(?:sag mal|bitte)\s+", "", text)
-    return re.sub(r"\s+(?:bitte|jarvis|sir)$", "", text).strip()
+    text = re.sub(rf"^(?:(?:hey|hallo|ok|okay)\s+)?{WAKE}\s+|^(?:sag mal|bitte)\s+", "", text)
+    return re.sub(rf"\s+(?:bitte|{WAKE}|sir)$", "", text).strip()
 
 
 def conversation_intent(text: str) -> str | None:
@@ -264,7 +458,74 @@ class FastPath:
         area = self.area_aliases.get(spoken, spoken)
         return area if area in self.area_lights else None
 
-    def match(self, text: str, default_area: str | None = None) -> FastPathMatch | None:
+    def match(self, text: str, default_area: str | None = None, now: datetime | None = None) -> FastPathMatch | None:
+        now = now if now is not None and now.tzinfo is not None else (now or datetime.now()).astimezone()
+        if found := self._match_time(_time_text(text), now):
+            return found
+        return self._match_rest(text, default_area)
+
+    def _match_time(self, plain: str, now: datetime) -> FastPathMatch | None:
+        """Timer, Wecker, Erinnerungen, Termine, E-Mails."""
+        for pattern in TIMER_SET:
+            if (m := pattern.match(plain)) and (seconds := parse_duration(m["dur"])):
+                label = _timer_label(m.groupdict().get("label"), m.groupdict().get("label2"))
+                return FastPathMatch("timer.start", {"duration_s": seconds, **({"label": label} if label else {})},
+                                     0.95, "timer", {"seconds": seconds})
+        if m := WAKE_ME.match(plain):
+            if when := parse_when(m["when"], now):
+                return FastPathMatch("reminder.create", {"text": "Aufstehen", "at": when.at.isoformat()}, 0.93,
+                                     "wake_me", {"at": when.at.isoformat()})
+        if m := REMIND.match(plain):
+            when = parse_when(m["rest"], now)
+            if when is None:
+                return FastPathMatch("", {}, 0.9, "incomplete", {"kind": "when", "prefix": plain})
+            return FastPathMatch("reminder.create", {"text": _reminder_text(when.rest), "at": when.at.isoformat()},
+                                 0.93, "reminder", {"at": when.at.isoformat()})
+        if TIMER_LIST.match(plain):
+            return FastPathMatch("timer.list", {}, 0.93, "timer_list")
+        for pattern in TIMER_CANCEL:
+            if m := pattern.match(plain):
+                what = m["what"]
+                arguments: dict[str, Any] = {"kind": "reminder" if what.startswith("erinnerung") else "timer"}
+                if m.groupdict().get("all") or what == "erinnerungen":
+                    arguments["all"] = True
+                label = _timer_label(m.groupdict().get("label"))
+                if label:
+                    arguments["label"] = label
+                return FastPathMatch("timer.cancel", arguments, 0.93, "timer_cancel")
+        if DAY_PLAN.match(plain):
+            return None  # „Was steht morgen an?“: Tagesplan mit Terminen und Wetter
+        if CAL_NEXT.match(plain):
+            return FastPathMatch("calendar.list", {"upcoming": True}, 0.92, "calendar_next")
+        for pattern in CAL_LIST:
+            if (m := pattern.match(plain)) and (span := _day_range(m["when"], now)):
+                day, days = span
+                arguments = {"day": day, **({"days": days} if days > 1 else {})}
+                return FastPathMatch("calendar.list", arguments, 0.92, "calendar_list", {"when": m["when"] or "heute"})
+        for pattern in CAL_DELETE:
+            if m := pattern.match(plain):
+                when = parse_when(m["rest"], now)
+                title = _event_title(when.rest if when else m["rest"])
+                if title:
+                    arguments = {"title": title, **({"date": when.at.date().isoformat()} if when else {})}
+                    return FastPathMatch("calendar.delete", arguments, 0.9, "calendar_delete")
+        for pattern in CAL_ADD:
+            if m := pattern.match(plain):
+                when = parse_when(m["rest"], now)
+                title = _event_title(when.rest if when else m["rest"])
+                if when is None:
+                    return FastPathMatch("", {}, 0.9, "incomplete", {"kind": "when_event",
+                                                                     "prefix": f"termin {m['rest']}"})
+                if not title:
+                    return None
+                start = when.at.date().isoformat() if when.all_day else when.at.isoformat()
+                return FastPathMatch("calendar.add", {"title": title, "start": start}, 0.92, "calendar_add")
+        for pattern in MAIL_LIST:
+            if pattern.match(plain):
+                return FastPathMatch("mail.list_unread", {}, 0.92, "mail_list")
+        return None
+
+    def _match_rest(self, text: str, default_area: str | None) -> FastPathMatch | None:
         normalized = _PREFIX.sub("", re.sub(r"[.!?]+$", "", text.strip())).strip()
         if m := LIGHT_ON_OFF.match(normalized):
             area = self._area(m["area"])
@@ -297,16 +558,13 @@ class FastPath:
                     {"entity_ids": self.area_lights[area], "on": pct > 0, "brightness_pct": pct},
                     0.96, "light_brightness", {"area": area, "brightness_pct": pct},
                 )
-        if m := TIMER.match(normalized):
-            n = parse_number(m["num"])
-            if n:
-                factor = {"s": 1, "m": 60, "h": 3600}[
-                    "s" if m["unit"].lower().startswith("sek") else "h" if m["unit"].lower().startswith("st") else "m"
-                ]
-                return FastPathMatch("timer.start", {"duration_s": n * factor}, 0.95, "timer", {"seconds": n * factor})
-        return self._match_pc(canonical_command(text))
+        return self._match_pc(canonical_command(text), text)
 
-    def _match_pc(self, text: str) -> FastPathMatch | None:
+    def _match_pc(self, text: str, raw: str | None = None) -> FastPathMatch | None:
+        if m := self._match_control(text, raw or text):
+            return m
+        if m := INCOMPLETE.match(text):
+            return _incomplete(m["verb"].lower(), SEARCH_SERVICES.get((m["site"] or "").lower()))
         for pattern in PC_OPEN_LINK:
             if m := pattern.match(text):
                 return _open_link(m["query"], "youtube" if "yt" in m.groupdict() else None)
@@ -333,15 +591,13 @@ class FastPath:
                 query = f"{query} {_FILE_HINTS[kind]}"
             arguments = {"query": query, "kind": "folder" if kind == "ordner" else "file"}
             return FastPathMatch("pc.open_file", arguments, 0.92, "pc_open_file", {"query": query})
-        for pattern in PC_SEARCH_SITE:
-            if m := pattern.match(text):
-                query, site = m["query"].strip(), m["site"].lower()
-                return FastPathMatch("pc.search_web", {"query": query, "site": site}, 0.93, "pc_search_site",
-                                     {"query": query, "site": site})
         for pattern in PC_SEARCH:
             if m := pattern.match(text):
-                query = m["query"].strip()
-                return FastPathMatch("pc.search_web", {"query": query}, 0.93, "pc_search", {"query": query})
+                query = _web_query(m["query"])
+                site = SEARCH_SERVICES.get(re.sub(r"\s+", " ", (m.groupdict().get("site") or "").lower()))
+                arguments = {"query": query, **({"site": site} if site and site != "google" else {})}
+                return FastPathMatch("pc.search_web", arguments, 0.93, "pc_search_site" if site else "pc_search",
+                                     {"query": query, "site": site})
         if m := PC_OPEN.match(text):
             target, verb = _pc_target(m["target"]), m["verb"].lower()
             playing = verb.startswith("spiel")  # „Spiel Minecraft“: nur Programme, nie Ordner („Spiel Musik“)
@@ -364,6 +620,81 @@ class FastPath:
                 return FastPathMatch("pc.open_app", {"app": target}, 0.8, "pc_open_guess",
                                      {"target": target, "web_fallback": web_fallback})
         return None
+
+
+    def _match_control(self, text: str, raw: str) -> FastPathMatch | None:
+        """Fenster, Tastatur, Maus, Schließen, E-Mail-Entwurf, Anmelden. Tasten werden an der Originaläußerung
+        erkannt (die Befehlsform entfernt „mal“ – „Drück zweimal Tab“ braucht es)."""
+        plain = normalize_utterance(raw)
+        # erst wörtlich („Drück Tab 3 mal“), dann ohne Füllwörter („Drück mal Enter“, „Mach mal lauter“)
+        for variant in dict.fromkeys([plain, re.sub(r"\s+", " ", _FILLER.sub(" ", plain)).strip()]):
+            for pattern in PRESS:
+                if m := pattern.match(variant):
+                    times = m["times"]
+                    count = int(times) if times and times.isdigit() else NUMBER_WORDS.get(times or "", 1)
+                    return _press(KEY_NAMES[m["name"]], count)
+            for pattern, key in SHORTCUTS:
+                if pattern.match(variant):
+                    steps = _STEPS.get(key, 1)
+                    if key in _STEPS and re.search(r"\bviel\b", variant):
+                        steps *= 2
+                    elif key in _STEPS and re.search(r"\b(?:etwas|ein bisschen|ein wenig)\b", variant):
+                        steps = 3
+                    return _press(key, steps)
+        if MAIL.match(text) and (m := MAIL.match(text)):
+            to = (m["to"] or "").strip()
+            if re.search(r"\b(?:dass|wegen|ob|weil|damit)\b", to):
+                return None  # „… an Max, dass ich später komme“: den Text formuliert das Sprachmodell
+            arguments = {k: v.strip() for k, v in (("to", to), ("subject", m["subject"]), ("body", m["body"])) if v}
+            return FastPathMatch("pc.compose_mail", arguments, 0.92, "compose_mail", {"to": to})
+        for pattern in LOGIN:
+            if m := pattern.match(text):
+                site = _web_query(m["site"])
+                return FastPathMatch("pc.open_link", {"query": f"{site} anmelden"}, 0.9, "login", {"site": site})
+        plain = normalize_utterance(text)
+        if re.match(r"^(?:tipp|tippe|schreib|schreibe|gib|gebe)\b", plain) and PASSWORD.search(plain):
+            return FastPathMatch("", {}, 0.95, "refuse_password")
+        for pattern in CLICK:
+            if m := pattern.match(text):
+                label = m["label"].strip()
+                return FastPathMatch("pc.click", {"label": label}, 0.9, "click", {"label": label})
+        for pattern in TYPE:
+            if m := pattern.match(text):
+                typed = m["text"].strip()
+                if re.match(r"^(?:mir|uns|eine?[nm]?\s+(?:e-?mail|mail|nachricht|brief|sms))\b", typed, re.I):
+                    return None
+                arguments = {"text": typed, **({"enter": True} if m["enter"] else {})}
+                return FastPathMatch("pc.type_text", arguments, 0.9, "type", {"text": typed})
+        for pattern in CLOSE:
+            if m := pattern.match(text):
+                target = _pc_target(m["target"])
+                if target in ("tab", "den tab"):
+                    return _press("close_tab", 1)
+                if _HOME_WORDS.search(target) or not 2 <= len(target) <= 60:
+                    return None
+                app = PC_APPS.get(target, target)
+                return FastPathMatch("pc.close_app", {"app": app}, 0.9, "close_app", {"target": target})
+        return None
+
+
+def _press(key: str, times: int) -> FastPathMatch:
+    arguments = {"key": key, **({"times": times} if times > 1 else {})}
+    return FastPathMatch("pc.press_key", arguments, 0.93, "press_key", {"key": key})
+
+
+def _incomplete(verb: str, site: str | None) -> FastPathMatch:
+    """Befehl ohne Ziel: JARVIS fragt nach; ``prefix`` + nächster Satz ergibt den vollständigen Befehl."""
+    if re.fullmatch(rf"{_FIND}|schau|guck", verb):
+        kind, prefix = "search", f"such auf {site} nach" if site else "such nach"
+    elif verb.startswith(("spiel",)):
+        kind, prefix = "play", "spiel"
+    elif verb.startswith(("schließ", "beende")):
+        kind, prefix = "close", "schließe"
+    elif verb.startswith(("tipp", "schreib")):
+        kind, prefix = "type", "tippe"
+    else:
+        kind, prefix = "open", "zeig" if verb.startswith("zeig") else "öffne"
+    return FastPathMatch("", {}, 0.9, "incomplete", {"kind": kind, "prefix": prefix, "site": site})
 
 
 def _web_query(query: str) -> str:

@@ -85,6 +85,15 @@ llm:
 pc_agent:                      # PC-Steuerung über deploy/windows/jarvis-pc-agent.ps1 (verbindet sich mit /v1/agent)
   enabled: true
   search_url: https://www.google.com/search?q={query}
+  mail_compose: mailto         # Mail-Entwürfe: mailto (Mailprogramm) | gmail | outlook (JARVIS_MAIL_COMPOSE hat Vorrang)
+
+assistant:                     # Timer, Erinnerungen, Kalender, E-Mail (Daten in JARVIS_DATA_DIR, Docker: Volume jarvis-data)
+  calendar:
+    remind_minutes: 15         # eigene Termine: so lange vorher erinnern
+    ics: {}                    # abonnierte Kalender, Name: ICS-Adresse (auch über JARVIS_CALENDAR_ICS)
+  mail:
+    imap_host: ""              # E-Mails lesen; Zugang nur über deploy/.env (JARVIS_MAIL_*)
+  contacts: {}                 # Name: E-Mail-Adresse (auch über JARVIS_CONTACTS)
 
 info:                          # eingebaute Informationsdienste ohne API-Schlüssel
   enabled: true

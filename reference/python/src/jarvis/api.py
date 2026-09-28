@@ -24,6 +24,7 @@ from .llm.router import HeuristicClassifier, ModelRouter
 from .orchestrator import Orchestrator, TurnRequest, TurnResult
 from .pc import AgentHub
 from .policy import Principal
+from .timers import Notifier
 from .webhooks import ReplayCache, verify
 
 log = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class Container:
     llm_status: str = "unknown"  # lokales Modell: unknown | loading | ready | missing_model | unavailable
     agents: AgentHub | None = None  # PC-Agent (Programme/Ordner/Webseiten auf dem PC öffnen)
     tts: Any = None  # Sprachausgabe mit synthesize_wav(text) -> bytes (Piper über Wyoming)
+    notifier: Notifier | None = None  # Meldungen an offene Oberflächen (Timer, Erinnerungen)
 
     async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
                        location: str | None = None) -> TurnResult:
@@ -83,6 +85,7 @@ def turn_to_json(result: TurnResult) -> dict[str, Any]:
         "stop_reason": result.stop_reason,
         "tainted": result.tainted,
         "actions": [a.to_result_dict() for a in result.actions],
+        "awaiting_reply": result.awaiting_reply,
     }
     if result.pending_confirmation is not None:
         p = result.pending_confirmation
@@ -215,45 +218,58 @@ def create_app(container: Container) -> FastAPI:
         if who is None:
             await ws.close(code=4401)  # Authentifizierung fehlgeschlagen – Client verbindet nicht neu
             return
+        lock = asyncio.Lock()
+
+        async def send(message: dict[str, Any]) -> None:
+            async with lock:  # Antworten und Meldungen (Timer) können gleichzeitig entstehen
+                await ws.send_json(message)
 
         async def handle(msg: dict[str, Any]) -> None:
             kind = msg.get("type")
             if kind == "input.text":
                 async def on_text(delta: str) -> None:
-                    await ws.send_json({"type": "output.text_delta", "delta": delta})
+                    await send({"type": "output.text_delta", "delta": delta})
 
                 location = msg.get("location")
                 result = await container.run_turn(
                     TurnRequest(text=msg["text"], session_id=msg["session_id"], principal=who),
                     channel=msg.get("channel", "app"), on_text=on_text,
                     location=location[:100] if isinstance(location, str) and location.strip() else None)
-                await ws.send_json({"type": "output.final", **turn_to_json(result)})
+                await send({"type": "output.final", **turn_to_json(result)})
             elif kind == "confirmation.resolve":
                 record = await container.orchestrator.resolve_confirmation(
                     msg["confirmation_id"], approve=msg["decision"] == "approve", resolver=who,
                     method_used=msg.get("method", "app"))
-                await ws.send_json({"type": "action.update", "action": record.to_result_dict()})
+                await send({"type": "action.update", "action": record.to_result_dict()})
             elif kind == "ping":
-                await ws.send_json({"type": "pong"})
+                await send({"type": "pong"})
             else:
                 raise JarvisError("JRV-VAL-001", f"Unbekannter Nachrichtentyp {kind}")
 
+        notifier = container.notifier
+        if notifier is not None:
+            notifier.attach(who.actor, send)
+            for message in notifier.drain(who.actor):  # verpasste Meldungen (kein Fenster offen)
+                await send(message)
         try:
             while True:
                 msg = await ws.receive_json()
                 try:
                     await handle(msg)
                 except JarvisError as exc:
-                    await ws.send_json({"type": "error", "error": styled(exc.to_problem())})
+                    await send({"type": "error", "error": styled(exc.to_problem())})
                 except WebSocketDisconnect:
                     raise
                 except Exception as exc:  # Verbindung offen halten, der nächste Turn soll funktionieren
                     log.exception("unhandled error in stream")
                     problem = JarvisError("JRV-SYS-001", type(exc).__name__,
                                           user_message=style.system_text("generic_error")).to_problem()
-                    await ws.send_json({"type": "error", "error": styled(problem)})
+                    await send({"type": "error", "error": styled(problem)})
         except WebSocketDisconnect:
             return
+        finally:
+            if notifier is not None:
+                notifier.detach(who.actor, send)
 
     @app.websocket("/v1/agent")
     async def agent(ws: WebSocket) -> None:

@@ -164,16 +164,45 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Link heraussuchen & öffnen | „Such mir einen Link zu einem Lasagne-Rezept und öffne ihn“, „Öffne die Webseite von Ikea“, „Spiel Lofi-Musik auf YouTube“ (öffnet das erste Video) | PC-Agent, Internet |
 | Links zur Auswahl | „Such mir ein paar Links zu Kürbissuppe“ → „den zweiten“ | PC-Agent, Internet |
 | Dateien finden & öffnen | „Öffne die Datei Bewerbung“, „Öffne die PDF Rechnung“, „Wo ist meine Steuererklärung?“ → „die zweite“ / „ja“, „Öffne den Ordner Projekte“ | PC-Agent |
-| Suchen | „Such nach Pizza“, „Zeig mir Katzenvideos auf YouTube“, „Such auf Amazon nach Kopfhörern“, „Such die Datei Rechnung“ (Explorer-Suche) | PC-Agent |
+| Suchen | „Such nach Pizza“, „Suche mir nach Arteriion auf Spotify“ (in der Spotify-App), „Such auf Amazon nach Kopfhörern“, „Schau auf Netflix nach Dark“, „Such die Datei Rechnung“ (Explorer-Suche) | PC-Agent |
+| Programme schließen | „Schließ Steam“, „Mach den Browser zu“, „Schließ den Tab“ | PC-Agent |
+| Tippen & Klicken | „Tippe Pizza Berlin und drück Enter“, „Klick auf Anmelden“, „Klick auf Alle akzeptieren“, „Drück zweimal Tab“ | PC-Agent |
+| Musik & Lautstärke | „Pause“, „Nächstes Lied“, „Mach lauter“, „Etwas leiser“, „Ton aus“ | PC-Agent |
+| Tastenkürzel | „Kopieren“, „Einfügen“, „Mach das rückgängig“, „Neuer Tab“, „Scroll runter“, „Geh zurück“ | PC-Agent |
+| Timer & Erinnerungen | „Stell einen Nudel-Timer auf 8 Minuten“, „Wie lange läuft der Timer noch?“, „Erinnere mich morgen um 8 an den Müll“, „Weck mich um 7“ | – |
+| Kalender | „Trag morgen um 15 Uhr Zahnarzt ein“, „Welche Termine habe ich am Freitag?“, „Wann ist mein nächster Termin?“, „Sag den Friseur ab“ | – (Abos: ICS-Adresse) |
+| E-Mails | „Schreib eine Mail an Mama mit dem Betreff Sonntag“ (Entwurf), „Habe ich neue Mails?“ → „Lies die erste vor“ | Mailprogramm; Lesen: IMAP |
+| Anmelden | „Melde mich bei Netflix an“ öffnet die Anmeldeseite – Passwörter gibt JARVIS nie ein (das übernimmt der Passwortmanager des Browsers) | PC-Agent |
 | Wissen | „Wie wird das Wetter morgen?“, „Was gibt es Neues?“, „Wer war Ada Lovelace?“ | Internet |
-| Assistenz | „Status?“, „Plan für morgen?“, „Wie spät ist es?“, „Was kannst du?“ | – |
+| Assistenz | „Status?“, „Plan für morgen?“ (mit Terminen und Wetter), „Wie spät ist es?“, „Was kannst du?“ | – |
 | Haus | „Mach das Licht in der Küche an“ | Home Assistant |
-| Noch nicht | Kalender/Termine, E-Mails, Timer und Wecker, Programme schließen, auf Webseiten klicken, tippen oder sich anmelden | – |
+| Noch nicht | E-Mails selbst versenden (bewusst: nur Entwürfe), Termine in Google/Outlook eintragen (nur lesen), Formulare mit Passwörtern ausfüllen | – |
 
-Befehle für den PC erkennt JARVIS ohne Sprachmodell (sofort). Freie Fragen beantwortet das Sprachmodell. Dateien sucht
-der PC-Agent im Benutzerordner über den Windows-Suchindex; Programme und Skripte unter den Treffern startet er nie,
-sondern markiert sie nur im Explorer. Links sucht JARVIS über DuckDuckGo. Wer eine eigene SearXNG-Instanz betreibt,
-trägt sie als `JARVIS_SEARXNG_URL` in `deploy/.env` ein.
+Befehle erkennt JARVIS ohne Sprachmodell (sofort). Freie Fragen beantwortet das Sprachmodell. Unvollständige
+Befehle („Such mal …“) beantwortet JARVIS mit einer Rückfrage und hört danach direkt zu.
+
+- **Dateien:** Der PC-Agent sucht im Benutzerordner über den Windows-Suchindex. Programme und Skripte unter den
+  Treffern startet er nie, sondern markiert sie nur im Explorer.
+- **Tippen:** In Konsolen (Eingabeaufforderung, PowerShell, Terminal) tippt er nicht.
+- **Links:** JARVIS sucht über DuckDuckGo. Wer eine eigene SearXNG-Instanz betreibt, trägt sie als
+  `JARVIS_SEARXNG_URL` ein.
+
+**Optional in `deploy/.env`:**
+
+| Einstellung | Wofür |
+|---|---|
+| `JARVIS_CALENDAR_ICS` | Kalender abonnieren, zum Beispiel Google Kalender → Einstellungen → „Privatadresse im iCal-Format“ |
+| `JARVIS_CONTACTS` | Kontakte für Mail-Entwürfe (`Mama=mama@example.de; Max=max@example.de`) |
+| `JARVIS_MAIL_COMPOSE` | Wo Mail-Entwürfe aufgehen: `mailto` (Mailprogramm), `gmail` oder `outlook` |
+| `JARVIS_MAIL_IMAP_HOST`, `JARVIS_MAIL_USER`, `JARVIS_MAIL_PASSWORD` | E-Mails vorlesen (IMAP). Immer ein App-Passwort, nie das Hauptpasswort |
+
+Timer, Erinnerungen und eigene Termine liegen im Docker-Volume `jarvis-data` und überstehen Neustarts. Ist der
+Timer abgelaufen, spricht JARVIS die Meldung und Windows zeigt einen Hinweis.
+
+**Aktivierungswort:**
+- Auf „Jarvis“ antwortet JARVIS mit „Ja, Sir?“. Ohne Sprachausgabe bleibt der kurze Ton.
+- Das Wort wird auch in abweichenden Schreibweisen der Spracherkennung erkannt („Jarwis“, „Javis“, „Charvis“).
+- Kurze Sprechpausen beenden einen Befehl nicht mehr.
 
 **Automatisch beim Anmelden starten (Windows):** `./deploy/start.sh autostart` (oder `… autostart edge`) – danach startet Windows Docker
 Desktop, den PC-Agenten und JARVIS als eigenes Fenster, ohne Konsole; zusätzlich liegt eine Verknüpfung „JARVIS“ auf

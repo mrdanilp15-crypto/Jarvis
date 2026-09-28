@@ -414,3 +414,6 @@ dialog .hint { font-size: 12px; }
   body[data-state="listening"] .ripple { animation: none; }
   .pill[aria-pressed="true"] .dot { animation: none; }
 }
+
+/* Meldungen, die JARVIS von selbst bringt (Timer, Erinnerungen, Termine) */
+.msg.notice .body { border-left: 3px solid var(--warn); padding-left: 0.6rem; }

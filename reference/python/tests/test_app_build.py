@@ -32,8 +32,10 @@ def test_without_api_key_cloud_is_disabled(config_path, monkeypatch):
     container, background = build(config_path)
     assert container.router.cloud is None
     assert container.router.local.name == "ollama"
-    assert len(background) == 1  # nur das Vorwärmen des lokalen Modells (kein HA-Token, In-Memory-Bus)
-    background[0].close()
+    # Timer-Planer und Vorwärmen des lokalen Modells (kein HA-Token, In-Memory-Bus)
+    assert [job.__name__ for job in background] == ["run", "warm_up_local_model"]
+    for job in background:
+        job.close()
     assert container.router.local.num_ctx == 8192 and container.router.local.keep_alive == "24h"
     tools = {spec.name for spec in container.orchestrator.registry.tool_specs()}
     assert {"info__weather", "info__news", "info__wikipedia"} <= tools
@@ -84,7 +86,8 @@ def test_warm_up_retries_until_model_is_ready(config_path, monkeypatch):
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(OllamaProvider, "warm_up", fake_warm_up)
-    container, [warm_up] = app_module.build(config_path)
+    container, [scheduler, warm_up] = app_module.build(config_path)
+    scheduler.close()
     holder["container"] = container
     monkeypatch.setattr(app_module.asyncio, "sleep", no_sleep)
     asyncio.run(warm_up)

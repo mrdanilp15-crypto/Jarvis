@@ -34,3 +34,4 @@ jarvis = ["web/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+faulthandler_timeout = 60  # hängt ein Test, gibt es nach 60 s einen Stacktrace statt Stillstand

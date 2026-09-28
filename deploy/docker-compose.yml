@@ -29,9 +29,16 @@ services:
       AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION:-}
       JARVIS_TTS_VOICE: ${JARVIS_TTS_VOICE:-}
       JARVIS_SEARXNG_URL: ${JARVIS_SEARXNG_URL:-}       # optional: eigene SearXNG-Suche statt DuckDuckGo
+      JARVIS_CALENDAR_ICS: ${JARVIS_CALENDAR_ICS:-}     # optional: abonnierte Kalender (ICS-Adressen)
+      JARVIS_CONTACTS: ${JARVIS_CONTACTS:-}             # optional: „Mama=mama@example.de; …“ für Mail-Entwürfe
+      JARVIS_MAIL_COMPOSE: ${JARVIS_MAIL_COMPOSE:-mailto}  # mailto | gmail | outlook
+      JARVIS_MAIL_IMAP_HOST: ${JARVIS_MAIL_IMAP_HOST:-} # optional: E-Mails lesen (IMAP, App-Passwort)
+      JARVIS_MAIL_USER: ${JARVIS_MAIL_USER:-}
+      JARVIS_MAIL_PASSWORD: ${JARVIS_MAIL_PASSWORD:-}
     volumes:
       - ../config:/app/config:ro
       - ../schemas:/app/schemas:ro
+      - jarvis-data:/app/data             # Timer, Erinnerungen, eigene Termine
     ports:
       - "127.0.0.1:8080:8080"          # extern nur über Reverse Proxy / VPN
     depends_on:                         # Mosquitto ist optional (Bridge verbindet sich bei Bedarf neu)
@@ -182,6 +189,7 @@ networks:
   egress: {}
 
 volumes:
+  jarvis-data: {}
   pgdata: {}
   redisdata: {}
   mqttdata: {}

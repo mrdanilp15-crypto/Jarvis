@@ -1,5 +1,70 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.3.0 – 2026-09-28
+
+Suchbefehle verstehen, mehr PC-Steuerung, Timer, Kalender, E-Mails und ein Aktivierungswort, das antwortet.
+
+### Behoben
+- **„Suche mir nach Arteriion auf Spotify“ öffnete eine Google-Suche nach „Arteriion auf Spotify“.**
+  - Suchbefehle trennen jetzt den Dienst vom Suchbegriff („auf/bei/in X“, vor oder nach dem Begriff).
+  - Bekannt sind 24 Dienste: Spotify, YouTube, Amazon, Netflix, Google Maps, eBay, Kleinanzeigen und weitere.
+  - Spotify sucht in der installierten App, sonst im Web-Player.
+  - Unbekannte Orte bleiben Teil der Suche („Urlaub auf Mallorca“).
+- **Befehle wurden zu früh abgeschickt.**
+  - Die Oberfläche schickte bei der ersten kurzen Sprechpause ab („Jarvis, such mir nach …“).
+  - Jetzt wartet sie etwa 1,3 s Stille ab. Endet der Satz hörbar offen („… nach“, „… auf“), wartet sie etwa 2,8 s.
+- **Unvollständige Befehle** („Such mal“, „Öffne“, „Erinnere mich an den Müll“, „Trag Zahnarzt ein“):
+  - JARVIS fragt nach („Wonach soll ich suchen, Sir?“) und hört danach direkt zu.
+  - Die Antwort ergänzt den Befehl.
+- **Formatter:** „mit ./deploy/start.sh“ wurde zu „mit./deploy/start.sh“.
+
+### Neu
+- **Aktivierungswort:**
+  - Auf „Jarvis“ folgt „Ja, Sir?“ bzw. „Sir?“ statt des Pieptons, mit der JARVIS-Stimme vorab geladen.
+  - Die Erkennung ist unscharf: Lautschrift mit höchstens einer Abweichung, drei Erkennungsalternativen, auch
+    getrennte Silben („Char wies“).
+  - „Davis“, „Travis“ oder „Service“ lösen nicht aus.
+- **PC-Steuerung:**
+  - Programme sanft schließen (`pc.close_app`, wie das X; Explorer-Fenster ohne die Taskleiste; JARVIS bleibt offen).
+  - Text ins aktive Fenster einfügen (`pc.type_text`, nie in Konsolen).
+  - Tasten, Kürzel und Medientasten (`pc.press_key`: Enter, Tab, Kopieren, Rückgängig, Tabs, Zoom, Wiedergabe,
+    nächster Titel, Lautstärke, stumm).
+  - Klicken per Beschriftung (`pc.click`, UI Automation, auch auf Webseiten).
+  - E-Mail-Entwürfe (`pc.compose_mail`):
+    - im Mailprogramm oder in Gmail/Outlook im Web;
+    - Empfänger als diktierte Adresse („max punkt mustermann at gmail punkt com“) oder als Kontakt;
+    - JARVIS versendet nie selbst.
+  - Anmelden:
+    - „Melde mich bei Netflix an“ öffnet die Anmeldeseite.
+    - Passwörter tippt JARVIS grundsätzlich nicht, auch nicht auf Nachfrage.
+  - Windows-Hinweise für Meldungen.
+- **Timer und Erinnerungen** (`timer.start`, `timer.list`, `timer.cancel`, `reminder.create`):
+  - Deutsche Zeitangaben („in einer halben Stunde“, „morgen um halb acht“, „am Freitag um 3“, „heute Abend“).
+  - Timer und Erinnerungen überstehen Neustarts. Was während einer Abschaltung fällig war, meldet JARVIS als verspätet.
+  - Meldungen kommen in der Oberfläche (gesprochen) und als Windows-Hinweis. Ohne offenes Fenster bleiben sie bis zum
+    nächsten Öffnen liegen.
+- **Kalender** (`calendar.list`, `calendar.add`, `calendar.delete`):
+  - Eigene Termine werden gespeichert; JARVIS erinnert 15 Minuten vorher.
+  - Abonnierte Kalender per ICS (Google, Outlook, iCloud) werden nur gelesen, samt Wiederholungen, Ausnahmen und
+    verschobenen Terminen.
+  - Der Tagesplan („Plan für morgen?“) nennt jetzt die Termine.
+- **E-Mails lesen** (`mail.list_unread`, `mail.read`):
+  - Optional über IMAP mit App-Passwort.
+  - Nachrichten bleiben ungelesen markiert.
+  - Auswahl mit „die zweite“.
+  - Der Mailtext wird wörtlich vorgelesen; der Jarvis-Formatter schreibt Fremdtext nicht um.
+- Betrieb: Docker-Volume `jarvis-data`, neue Einstellungen in `deploy/.env.example`, Persona 2.3.0 mit Regeln für
+  die neuen Werkzeuge.
+
+### Tests
+- 168 neue Tests: Zeitangaben, Timer-Planer und Speicher, ICS-Kalender, IMAP, Suchdienste, Rückfragen, Tasten und
+  Kürzel, Klicken, Tippen, Mail-Entwürfe, Push-Meldungen über die API, Jarvis-Antworten.
+- In Chromium geprüft:
+  - Sprechpausen, unscharfes Aktivierungswort mit „Ja, Sir?“, Rückfrage mit automatischem Zuhören.
+  - Timer-Meldung vom Server.
+- PowerShell: alle Skripte ohne Parserfehler; Hilfsfunktionen des Agenten (Fenstertitel-Abgleich, Tasten-Escaping)
+  in PowerShell 7 geprüft.
+
 ## Jarvis-Modul 2.2.0 – 2026-09-28
 
 JARVIS sucht Links und Dateien selbst heraus und öffnet sie.

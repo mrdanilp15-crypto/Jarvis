@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.2.0"
+STYLE_VERSION = "2.3.0"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -57,7 +57,33 @@ FOLDER_LABELS = {
     "downloads": "Downloads", "documents": "Dokumente", "desktop": "Desktop", "pictures": "Bilder",
     "music": "Musik", "videos": "Videos", "home": "Benutzerordner", "pc": "Dieser PC",
 }
-SEARCH_LABELS = {"youtube": "YouTube", "amazon": "Amazon", "wikipedia": "Wikipedia", "ebay": "eBay"}  # google: „Die Suche“
+SEARCH_LABELS = {  # google: „Die Suche“
+    "youtube": "YouTube", "amazon": "Amazon", "wikipedia": "Wikipedia", "ebay": "eBay", "spotify": "Spotify",
+    "netflix": "Netflix", "twitch": "Twitch", "github": "GitHub", "reddit": "Reddit", "maps": "Google-Maps",
+    "idealo": "Idealo", "chefkoch": "Chefkoch", "tiktok": "TikTok", "bing": "Bing", "soundcloud": "SoundCloud",
+    "steam": "Steam", "zalando": "Zalando", "otto": "Otto", "mediamarkt": "MediaMarkt",
+    "kleinanzeigen": "Kleinanzeigen", "pinterest": "Pinterest", "imdb": "IMDb", "duckduckgo": "DuckDuckGo",
+}
+KEY_REPLIES = {
+    "play_pause": "Wiedergabe umgeschaltet.", "next_track": "Nächster Titel.", "previous_track": "Vorheriger Titel.",
+    "stop_media": "Wiedergabe gestoppt.", "volume_up": "Etwas lauter.", "volume_down": "Etwas leiser.",
+    "mute": "Ton umgeschaltet.", "copy": "Kopiert.", "paste": "Eingefügt.", "cut": "Ausgeschnitten.",
+    "undo": "Rückgängig gemacht.", "redo": "Wiederhergestellt.", "select_all": "Alles markiert.",
+    "save": "Speichern ist ausgelöst.", "new_tab": "Ein neuer Tab ist geöffnet.", "close_tab": "Der Tab ist geschlossen.",
+    "reopen_tab": "Der letzte Tab ist wieder geöffnet.", "next_tab": "Nächster Tab.", "previous_tab": "Vorheriger Tab.",
+    "back": "Eine Seite zurück.", "forward": "Eine Seite vor.", "refresh": "Die Seite wird neu geladen.",
+    "fullscreen": "Vollbild umgeschaltet.", "zoom_in": "Vergrößert.", "zoom_out": "Verkleinert.",
+    "page_down": "Nach unten geblättert.", "page_up": "Nach oben geblättert.", "switch_window": "Fenster gewechselt.",
+    "close_window": "Das Fenster wird geschlossen.", "find": "Die Suche auf der Seite ist geöffnet.",
+}
+KEY_LABELS = {"enter": "Enter", "tab": "Tab", "escape": "Escape", "space": "Leertaste", "backspace": "Rücktaste",
+              "delete": "Entfernen", "up": "Pfeil hoch", "down": "Pfeil runter", "left": "Pfeil links",
+              "right": "Pfeil rechts", "home": "Pos1", "end": "Ende", "print": "Drucken"}
+CLARIFY = {
+    "search": "Wonach soll ich suchen{sir}?", "open": "Was soll ich öffnen{sir}?", "play": "Was soll ich abspielen{sir}?",
+    "close": "Welches Programm soll ich schließen{sir}?", "type": "Was soll ich schreiben{sir}?",
+    "when": "Wann soll ich Sie erinnern{sir}?", "when_event": "Wann ist der Termin{sir}?",
+}
 SITE_LABELS = {"youtube.com": "YouTube", "google.de": "Google", "google.com": "Google", "netflix.com": "Netflix",
                "amazon.de": "Amazon", "de.wikipedia.org": "Wikipedia", "mail.google.com": "Gmail",
                "twitch.tv": "Twitch", "ebay.de": "eBay", "web.whatsapp.com": "WhatsApp",
@@ -193,6 +219,15 @@ def listing_text(capability: str, args: dict[str, Any], result: Any) -> str | No
             return f"Zu „{query}“ habe ich keine Treffer gefunden."
         names = [f"„{_short(i.get('title'), 60)}“ auf {_host(str(i.get('url', '')))}" for i in items[:3]]
         return f"Die besten Treffer zu „{query}“: {_join(names)}. {_which(len(names), 'Welchen')}"
+    if capability == "mail.list_unread":
+        total = int(result.get("total") or len(items))
+        if not items:
+            return "Es liegen keine ungelesenen E-Mails vor."
+        names = [f"von {verbatim(i.get('from'))}: „{verbatim(_short(i.get('subject'), 80))}“" for i in items[:3]]
+        if total == 1:
+            return f"Eine ungelesene E-Mail {names[0]}. Soll ich sie vorlesen?"
+        return (f"Sie haben {total} ungelesene E-Mails. Die neuesten: {_join(names)}. "
+                f"{_which(len(names), 'Welche', 'vorlesen')}")
     if capability == "pc.find_files":
         if not items:
             return f"In Ihren Dateien finde ich nichts zu „{query}“."
@@ -207,9 +242,82 @@ def listing_text(capability: str, args: dict[str, Any], result: Any) -> str | No
     return None
 
 
-def _which(count: int, word: str) -> str:
-    options = {2: "den ersten oder den zweiten", 3: "den ersten, zweiten oder dritten"}.get(count)
-    return f"{word} soll ich öffnen – {options}?" if options else f"{word} soll ich öffnen?"
+def _which(count: int, word: str, verb: str = "öffnen") -> str:
+    article = ("die erste oder die zweite", "die erste, zweite oder dritte") if word == "Welche" else (
+        "den ersten oder den zweiten", "den ersten, zweiten oder dritten")
+    options = {2: article[0], 3: article[1]}.get(count)
+    return f"{word} soll ich {verb} – {options}?" if options else f"{word} soll ich {verb}?"
+
+
+VERBATIM = "\u2063"  # unsichtbares Trennzeichen: Fremdtext dazwischen (Betreff, Mailtext) formatiert JARVIS nicht um
+
+
+def verbatim(text: str | None) -> str:
+    return f"{VERBATIM}{(text or '').replace(VERBATIM, '')}{VERBATIM}"
+
+
+def clock(moment: datetime) -> str:
+    return f"{moment.hour} Uhr" if moment.minute == 0 else f"{moment.hour}:{moment.minute:02d} Uhr"
+
+
+def spoken_when(moment: datetime, now: datetime | None = None, *, all_day: bool = False) -> str:
+    """„heute um 15:30 Uhr“, „morgen um 8 Uhr“, „am Freitag um 10 Uhr“, „am 3. Oktober“, „in 10 Minuten“.
+    Gerechnet wird in der Ortszeit des Zeitpunkts (Wanduhr)."""
+    local = moment.replace(tzinfo=None)
+    now = (now or datetime.now(moment.tzinfo)).replace(tzinfo=None)
+    seconds = (local - now).total_seconds()
+    if not all_day and 0 < seconds < 3600:
+        return f"in {format_duration(round(seconds / 60) * 60 or int(seconds))}"
+    days = (local.date() - now.date()).days
+    at = "" if all_day else f" um {clock(local)}"
+    if days == 0:
+        return f"heute{at}"
+    if days == 1:
+        return f"morgen{at}"
+    if days == 2:
+        return f"übermorgen{at}"
+    if 2 < days < 7:
+        return f"am {WEEKDAYS[local.weekday()]}{at}"
+    return f"am {local.day}. {MONTHS[local.month - 1]}{at}"
+
+
+def _parse_moment(value: str | None) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value) if value else None
+    except ValueError:
+        return None
+
+
+def _reference(result: Any) -> datetime:
+    """Bezugszeit für „heute/morgen“: die Uhr des Dienstes (im Ergebnis), sonst jetzt."""
+    now = _parse_moment(result.get("now")) if isinstance(result, dict) else None
+    return (now or datetime.now().astimezone()).replace(tzinfo=None)
+
+
+def calendar_text(args: dict[str, Any], result: Any) -> str:
+    events = [e for e in (result or {}).get("events") or [] if isinstance(e, dict)]
+    now = _reference(result)
+    if args.get("upcoming"):
+        if not events:
+            return "Es stehen keine Termine an."
+        event = events[0]
+        moment = _parse_moment(f"{event['date']}T{event['time'] or '00:00'}")
+        return f"Ihr nächster Termin: {verbatim(event['title'])}, {spoken_when(moment, now, all_day=not event['time'])}."
+    first = _parse_moment((result or {}).get("from"))
+    days = int((result or {}).get("days") or 1)
+    label = "In diesem Zeitraum" if days > 1 else _cap(spoken_when(first, now, all_day=True)) if first else "Heute"
+    if not events:
+        return f"{label} sind keine Termine eingetragen."
+
+    def entry(event: dict[str, Any]) -> str:
+        when = f"um {clock(_parse_moment(event['date'] + 'T' + event['time']))}" if event.get("time") else "ganztägig"
+        if days > 1:
+            day = _parse_moment(event["date"])
+            when = f"{WEEKDAYS[day.weekday()]} {when}" if day else when
+        return f"{when} {verbatim(event['title'])}"
+
+    count = "ein Termin" if len(events) == 1 else f"{len(events)} Termine"
+    return f"{label} {'steht' if len(events) == 1 else 'stehen'} {count} an: {_join([entry(e) for e in events[:8]])}."
 
 
 def entity_label(entity_id: str) -> str:
@@ -254,6 +362,13 @@ class PlainStyle:
     def unavailable(self, capability: str) -> str:
         return "Diese Funktion ist derzeit nicht verfügbar."
 
+    def clarify(self, kind: str, site: str | None = None) -> str:
+        """Rückfrage bei unvollständigem Befehl („Such mal …“)."""
+        sir = f", {self.address}" if self.address else ""
+        if kind == "search" and site:
+            return f"Wonach soll ich auf {SEARCH_LABELS.get(site, site.capitalize()).replace('-', ' ')} suchen{sir}?"
+        return CLARIFY.get(kind, "Worum geht es{sir}?").format(sir=sir)
+
     # -- Gesprächs-Intents ---------------------------------------------------------------------------------
     def conversation(self, intent: str, situation: Any, *, capabilities: Iterable[str] = ()) -> str:
         now: datetime = situation.now
@@ -282,6 +397,7 @@ class PlainStyle:
             "confirm_in_app": "Für diese Aktion benötige ich Ihre Bestätigung in der App.",
             "confirm_same_person": "Diese Bestätigung muss von der Person kommen, die den Auftrag gegeben hat.",
             "generic_error": "Da ist bei mir etwas schiefgegangen.",
+            "no_passwords": "Passwörter tippe ich nicht ein – dafür ist der Passwortmanager Ihres Browsers sicherer.",
         }[key]
 
     def error_message(self, message: str) -> str:
@@ -292,7 +408,25 @@ class PlainStyle:
         return re.sub(r"\s+", " ", text).strip()
 
     def finalize(self, text: str) -> str:
-        return text.strip()
+        return text.replace(VERBATIM, "").strip()
+
+    def alarm_text(self, kind: str, label: str, *, duration_s: int | None = None, due: datetime | None = None,
+                   late: bool = False) -> str:
+        """Meldung, wenn ein Timer, eine Erinnerung oder ein Termin fällig ist."""
+        sir = f"{self.address}, " if self.address else ""
+        prefix = "Während ich nicht erreichbar war, wurde fällig: " if late else ""
+        if kind == "timer":
+            name = f"der Timer „{label}“" if label else (f"Ihr Timer über {format_duration(duration_s)}" if duration_s
+                                                         else "Ihr Timer")
+            return f"{prefix}{sir}{name} ist abgelaufen." if not late else f"{prefix}{name}."
+        if kind == "event":
+            minutes, _, title = label.partition("|")
+            return f"{prefix}{sir}in {minutes} Minuten: {title}." if minutes.isdigit() else f"{prefix}{sir}{label}."
+        if label == "Aufstehen":
+            greeting = "Guten Morgen" if due is None or due.hour < 11 else "Hallo"
+            at = f"Es ist {clock(due)} – " if due else ""
+            return f"{greeting}{', ' + self.address if self.address else ''}. {at}Zeit aufzustehen."
+        return f"{prefix}{sir}Sie wollten erinnert werden: {label}."
 
     def stream(self, on_text: Callable[[str], Awaitable[None]] | None) -> PassThrough:
         return PassThrough(on_text)
@@ -359,8 +493,64 @@ class JarvisStyle(PlainStyle):
         if capability == "home.activate_scene":
             return very_well, "Die Szene ist aktiviert."
         if capability == "timer.start":
-            return very_well, (f"Der Timer läuft: {format_duration(args.get('duration_s', 0))}. "
-                               f"{self.phrase('on_it')}")
+            label = f" „{verbatim(args['label'])}“" if args.get("label") else ""
+            due = _parse_moment((result or {}).get("due")) if isinstance(result, dict) else None
+            tail = f" Ich melde mich um {clock(due)}." if due and args.get("duration_s", 0) >= 300 else ""
+            return very_well, f"Der Timer{label} läuft: {format_duration(args.get('duration_s', 0))}.{tail}"
+        if capability == "reminder.create":
+            due = _parse_moment((result or {}).get("due")) if isinstance(result, dict) else None
+            when = spoken_when(due, _reference(result)) if due else "zur gewünschten Zeit"
+            if args.get("text") == "Aufstehen":
+                return very_well, f"Ich wecke Sie {when}."
+            return very_well, f"Ich erinnere Sie {when} an: {verbatim(args.get('text'))}."
+        if capability == "timer.list":
+            alarms = (result or {}).get("alarms") or [] if isinstance(result, dict) else []
+            if not alarms:
+                return "", "Derzeit laufen weder Timer noch Erinnerungen."
+            parts = []
+            for alarm in alarms[:6]:
+                name = f" „{verbatim(alarm['label'])}“" if alarm.get("label") else ""
+                if alarm.get("kind") == "timer":
+                    parts.append(f"Timer{name}: noch {format_duration(alarm.get('remaining_s', 0))}")
+                else:
+                    due = _parse_moment(alarm.get("due"))
+                    parts.append(f"Erinnerung{name}: {spoken_when(due, _reference(result)) if due else ''}".rstrip(": "))
+            return "", f"Aktiv {'ist' if len(parts) == 1 else 'sind'}: {_join(parts)}."
+        if capability == "timer.cancel":
+            cancelled = (result or {}).get("cancelled") or [] if isinstance(result, dict) else []
+            if not cancelled:
+                return self.phrase("apology"), "Es läuft kein passender Timer."
+            if len(cancelled) > 1:
+                return very_well, f"{len(cancelled)} Timer und Erinnerungen sind gestoppt."
+            item = cancelled[0]
+            name = f" „{verbatim(item['label'])}“" if item.get("label") else ""
+            if item.get("kind") == "reminder":
+                return very_well, f"Die Erinnerung{name} ist gelöscht."
+            return very_well, f"Der Timer{name} ist gestoppt."
+        if capability == "calendar.add":
+            event = (result or {}).get("event") or {} if isinstance(result, dict) else {}
+            moment = _parse_moment(f"{event.get('date')}T{event.get('time') or '00:00'}")
+            when = spoken_when(moment, _reference(result), all_day=not event.get("time")) if moment else ""
+            text = f"Eingetragen: {verbatim(event.get('title') or args.get('title'))} {when}"
+            if not event.get("time"):
+                return very_well, f"{text}, ganztägig."
+            minutes = (result or {}).get("reminder_minutes")
+            return very_well, f"{text}. Ich erinnere Sie {minutes} Minuten vorher." if minutes else f"{text}."
+        if capability == "calendar.list":
+            return "", calendar_text(args, result)
+        if capability == "calendar.delete":
+            deleted = (result or {}).get("deleted") or [] if isinstance(result, dict) else []
+            if not deleted:
+                return self.phrase("apology"), "Einen solchen Termin finde ich in Ihrem JARVIS-Kalender nicht."
+            names = [verbatim(e.get("title")) for e in deleted]
+            return very_well, f"Gelöscht: {_join(names)}."
+        if capability == "mail.read":
+            mail = result if isinstance(result, dict) else {}
+            text = _short(mail.get("text"), 1200) or "(kein Text)"
+            return "", (f"E-Mail von {verbatim(mail.get('from'))}, Betreff „{verbatim(mail.get('subject'))}“: "
+                        f"{verbatim(text)}")
+        if capability == "mail.list_unread":
+            return "", listing_text(capability, args, result) or "Erledigt."
         if capability == "pc.open_app":
             # Der Agent meldet, was er tatsächlich gestartet hat („Steam“, „Minecraft Launcher“)
             opened = result.get("opened") if isinstance(result, dict) else None
@@ -376,6 +566,9 @@ class JarvisStyle(PlainStyle):
             return very_well, f"{SITE_LABELS.get(host, host or 'Die Seite')} ist geöffnet."
         if capability == "pc.open_link":
             result = result if isinstance(result, dict) else {}
+            if slots.get("site") and slots.get("login") is not False and "anmelden" in str(args.get("query", "")):
+                return very_well, (f"Die Anmeldeseite von {slots['site']} ist geöffnet. Passwörter gebe ich aus "
+                                   "Sicherheitsgründen nicht ein – das übernimmt der Passwortmanager Ihres Browsers.")
             if result.get("url"):
                 return very_well, f"„{_short(result.get('title'))}“ auf {_host(result['url'])} ist geöffnet."
             what = "Der erste YouTube-Treffer" if args.get("site") == "youtube" else "Der erste Treffer"
@@ -391,6 +584,31 @@ class JarvisStyle(PlainStyle):
             if result.get("kind") == "folder":
                 return very_well, f"Der Ordner „{name}“ ist geöffnet."
             return very_well, f"„{name}“ aus dem Ordner {where} ist geöffnet."
+        if capability == "pc.close_app":
+            result = result if isinstance(result, dict) else {}
+            name = str(result.get("closed") or args.get("app", ""))
+            if name.lower() == "explorer":
+                return very_well, "Die Explorer-Fenster werden geschlossen."
+            label = {"browser": "Der Browser", "editor": "Der Editor", "rechner": "Der Rechner",
+                     "taskmanager": "Der Task-Manager"}.get(name.lower(), _cap(name))
+            return very_well, f"{label} wird geschlossen."
+        if capability == "pc.type_text":
+            sent = " und abgeschickt" if args.get("enter") else ""
+            return very_well, f"Der Text ist eingefügt{sent}."
+        if capability == "pc.press_key":
+            key = args.get("key", "")
+            return very_well, KEY_REPLIES.get(key) or f"{KEY_LABELS.get(key, key)} gedrückt."
+        if capability == "pc.click":
+            clicked = (result or {}).get("clicked") if isinstance(result, dict) else None
+            return very_well, f"Ich habe auf „{_short(clicked or args.get('label'), 60)}“ geklickt."
+        if capability == "pc.compose_mail":
+            result = result if isinstance(result, dict) else {}
+            if result.get("unknown_recipient"):
+                return very_well, (f"Der E-Mail-Entwurf ist geöffnet. Die Adresse von „{result['unknown_recipient']}“ "
+                                   "kenne ich noch nicht – tragen Sie sie bitte ein.")
+            if result.get("to"):
+                return very_well, f"Der E-Mail-Entwurf an {result['to']} ist geöffnet – Sie müssen ihn nur noch absenden."
+            return very_well, "Ein neuer E-Mail-Entwurf ist geöffnet."
         if capability in ("pc.find_files", "web.search"):
             return "", listing_text(capability, args, result) or "Erledigt."
         if capability == "pc.search_web":
@@ -523,14 +741,19 @@ class JarvisStyle(PlainStyle):
         skills = []
         domains = {name.split(".", 1)[0] for name in names}
         if "pc" in domains:
-            skills.append("Programme und Spiele auf Ihrem PC starten, Ordner und Webseiten öffnen")
-            skills.append("Links heraussuchen und direkt öffnen, Dateien finden und öffnen")
+            skills.append("Programme und Spiele auf Ihrem PC starten und schließen")
+            skills.append("Links, Dateien und Ordner heraussuchen und öffnen")
+            skills.append("tippen, klicken, Tasten und Musik steuern")
         if "home" in domains:
             skills.append("Licht, Heizung und Geräte im Haus steuern")
         if domains & {"info"}:
             skills.append("Wetter, Nachrichten und Wissen nachschlagen")
         if "timer" in domains:
-            skills.append("Timer stellen")
+            skills.append("Timer und Erinnerungen stellen")
+        if "calendar" in domains:
+            skills.append("Termine eintragen und nennen")
+        if "mail" in domains:
+            skills.append("E-Mails vorlesen")
         if "memory" in domains:
             skills.append("mir Wichtiges merken")
         skills.append("Ihnen den Systemstatus melden")
@@ -549,6 +772,9 @@ class JarvisStyle(PlainStyle):
             "confirm_in_app": f"Für diese Aktion benötige ich Ihre Bestätigung in der App{', ' + self.address if self.address else ''}.",
             "confirm_same_person": "Diese Bestätigung muss von der Person kommen, die den Auftrag erteilt hat.",
             "generic_error": f"{apology} Dabei ist ein Fehler aufgetreten.",
+            "no_passwords": (f"Passwörter tippe ich aus Sicherheitsgründen nicht ein{', ' + self.address if self.address else ''} "
+                             "– sie liefen dabei durch Spracherkennung und Protokoll. Der Passwortmanager Ihres "
+                             "Browsers erledigt das sicherer."),
         }[key]
 
     def stream(self, on_text: Callable[[str], Awaitable[None]] | None) -> StyledStream:
@@ -576,7 +802,7 @@ class JarvisStyle(PlainStyle):
         text = re.sub(r"[!?]*\?[!?]*", "?", text)          # „?!“ -> „?“
         text = re.sub(r"!+", ".", text)                    # ruhig: keine Ausrufezeichen
         text = re.sub(r"\.{3,}", "…", text)
-        text = re.sub(r"\s+([,.;:?…])", r"\1", text)
+        text = re.sub(r"\s+([,.;:?…])(?=\s|$)", r"\1", text)  # nicht „mit ./deploy/start.sh“
         text = re.sub(r"([,;?])(?=[A-Za-zÄÖÜäöüß])", r"\1 ", text)
         text = re.sub(r"([,;])\s*(?=[.?])", "", text)      # Reste entfernter Wörter („Okay, .“)
         text = re.sub(r"\.(?:\s*\.)+", ".", text)
@@ -589,7 +815,7 @@ class JarvisStyle(PlainStyle):
                 part = part.strip(" ,;")
                 if not re.search(r"[\wÄÖÜäöüß]", part.replace("\x00", "")):
                     continue
-                if not list_item and not re.search(r"[.?…:;\"“»)\x00]$", part):
+                if not list_item and not re.search(r"[.?…:;\"“»)\x00\x01]$", part):
                     part += "."
                 if self.address:
                     part = self._one_address(part, state)
@@ -600,6 +826,10 @@ class JarvisStyle(PlainStyle):
     def finalize(self, text: str) -> str:
         """Ganze Antwort: Code-Blöcke bleiben unberührt, Zeilen und Listen bleiben erhalten."""
         state: dict[str, Any] = {}
+        # Fremdtext (Mailtext, Betreff, Termintitel) bleibt wörtlich: Platzhalter statt Text, am Ende zurück
+        kept: list[str] = []
+        text = re.sub(f"{VERBATIM}([^{VERBATIM}]*){VERBATIM}",
+                      lambda m: kept.append(m[1]) or f"\x01{len(kept) - 1}\x01", text)
         blocks = []
         for block in re.split(r"(```[\s\S]*?```)", text):
             if block.startswith("```"):
@@ -612,12 +842,13 @@ class JarvisStyle(PlainStyle):
                 lines.append(prefix + self.polish(body, state, list_item=bool(item)) if body.strip() else "")
             blocks.append("\n".join(lines))
         result = re.sub(r"\n{3,}", "\n\n", "".join(blocks)).strip()
+        result = re.sub(r"\x01(\d+)\x01", lambda m: kept[int(m[1])], result).replace(VERBATIM, "")
         return result or self.phrase("very_well")  # nur Floskeln – nie ungefiltert zurückgeben
 
     def _one_address(self, sentence: str, state: dict[str, Any]) -> str:
         pattern = re.compile(rf",?\s*\b{re.escape(self.address)}\b(?=[\s,.!?]|$)")
         if state.get("addressed"):
-            return re.sub(r"\s+([.,?])", r"\1", pattern.sub("", sentence)).strip()
+            return re.sub(r"\s+([.,?])(?=\s|$)", r"\1", pattern.sub("", sentence)).strip()
         if pattern.search(sentence):
             state["addressed"] = True
             first = True

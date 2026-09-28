@@ -6,9 +6,11 @@ Persona aus config/persona.jarvis.yaml.
 
 import asyncio
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
+from jarvis.agenda import CalendarService, register_calendar_capabilities
 from jarvis.connectors.homeassistant import register_home_capabilities
 from jarvis.context import ContextBuilder, Situation
 from jarvis.demo import initial_states
@@ -20,14 +22,16 @@ from jarvis.policy import PolicyEngine, Principal
 from jarvis.skills import register_assistant_capabilities
 from jarvis.style import STYLE_VERSION, JarvisStyle, PlainStyle
 from jarvis.testing import FakeHome, ScriptedProvider, call_tool, say
+from jarvis.timers import AlarmScheduler, register_timer_capabilities
 from jarvis.tools import ToolRegistry
 from jarvis.websearch import SearchResult, register_web_capabilities
 
 from conftest import REPO
 
 DANIEL = Principal(actor="user:owner", role="adult", trust="trusted_user", area="wohnzimmer", name="Daniel")
-SITUATION = Situation(now=datetime(2026, 9, 27, 19, 42), user_display="Daniel", area="wohnzimmer",
-                      location="Berlin")
+BERLIN = ZoneInfo("Europe/Berlin")
+NOW = datetime(2026, 9, 27, 19, 42, tzinfo=BERLIN)  # Sonntagabend
+SITUATION = Situation(now=NOW, user_display="Daniel", area="wohnzimmer", location="Berlin")
 
 
 async def fake_weather(args, ctx):
@@ -39,7 +43,8 @@ async def fake_weather(args, ctx):
     ]}
 
 
-AGENT_ACTIONS = ("open_url", "open_app", "open_folder", "search_files", "find_files", "open_file")
+AGENT_ACTIONS = ("open_url", "open_app", "open_folder", "search_files", "find_files", "open_file", "app_search",
+                 "close_app", "type_text", "press_key", "click", "compose_mail", "notify")
 FILES = [  # neueste zuerst, wie der Agent sie liefert
     {"id": 1, "name": "Bewerbung.pdf", "folder": "Desktop", "kind": "file", "modified": "2026-09-27"},
     {"id": 2, "name": "Bewerbung_Bosch.docx", "folder": "Documents\\Bewerbungen", "kind": "file",
@@ -58,7 +63,8 @@ def fake_agent(message):
     if action == "open_file":
         item = FILES[args["id"] - 1] if "id" in args else FILES[0]
         return {"opened": item["name"], "folder": item["folder"], "kind": item["kind"], "shown": False}
-    return {}
+    return {"close_app": {"closed": args.get("app")}, "click": {"clicked": args.get("label")},
+            "app_search": {"opened": True}, "type_text": {"typed": len(args.get("text", ""))}}.get(action, {})
 
 
 class FakeWeb:
@@ -83,6 +89,13 @@ def make_orchestrator(*, components=None, fast_path=None, pc_connected=True, hom
                           "start_apps": ["Steam", "Minecraft Launcher", "Google Chrome", "Discord"]})
     register_pc_capabilities(registry, hub, web=FakeWeb())
     register_web_capabilities(registry, FakeWeb())
+
+    async def notify(alarm):
+        pass
+
+    scheduler = AlarmScheduler(notify=notify, clock=lambda: NOW)
+    register_timer_capabilities(registry, scheduler, BERLIN)
+    register_calendar_capabilities(registry, CalendarService(tz=BERLIN, scheduler=scheduler, clock=lambda: NOW))
     state = components or {"sprachmodell": "ok", "pc_steuerung": "ok"}
     register_assistant_capabilities(registry, probes=lambda: dict(state), weather=fake_weather)
     return Orchestrator(
@@ -131,9 +144,10 @@ EXPECTED = [
     ("Kannst du mir Katzenvideos auf YouTube zeigen?",
      "Sehr wohl. Die YouTube-Suche nach „Katzenvideos“ ist geöffnet."),
     ("Such die Datei Steuererklärung", "Sehr wohl. Die Dateisuche nach „Steuererklärung“ ist geöffnet."),
-    ("Was kannst du?", "Ich kann Programme und Spiele auf Ihrem PC starten, Ordner und Webseiten öffnen, Links "
-                       "heraussuchen und direkt öffnen, Dateien finden und öffnen, Licht, Heizung und Geräte im Haus "
-                       "steuern und Ihnen den Systemstatus melden. Sagen Sie einfach, was Sie benötigen, Sir."),
+    ("Was kannst du?", "Ich kann Programme und Spiele auf Ihrem PC starten und schließen, Links, Dateien und Ordner "
+                       "heraussuchen und öffnen, tippen, klicken, Tasten und Musik steuern, Licht, Heizung und Geräte "
+                       "im Haus steuern, Timer und Erinnerungen stellen, Termine eintragen und nennen und Ihnen den "
+                       "Systemstatus melden. Sagen Sie einfach, was Sie benötigen, Sir."),
     ("Such mir einen Link zu Lasagne und öffne ihn",
      "Sehr wohl. „Lasagne – das klassische Rezept“ auf chefkoch.de ist geöffnet."),
     ("Öffne Chefkoch", "Sehr wohl. „Lasagne – das klassische Rezept“ auf chefkoch.de ist geöffnet."),
@@ -144,7 +158,37 @@ EXPECTED = [
     ("Such mir ein paar Links zu Lasagne", "Die besten Treffer zu „Lasagne“: „Lasagne – das klassische Rezept“ auf "
                                            "chefkoch.de und „Lasagne al forno“ auf lecker.de. Welchen soll ich öffnen – "
                                            "den ersten oder den zweiten?"),
-    ("Stell einen Timer auf 5 Minuten", "Verzeihung, Sir. Timer stehen mir derzeit nicht zur Verfügung."),
+    ("Stell einen Timer auf 5 Minuten", "Sehr wohl. Der Timer läuft: 5 Minuten. Ich melde mich um 19:47 Uhr."),
+    ("Stell einen Nudel-Timer auf 8 Minuten", "Sehr wohl. Der Timer „Nudel“ läuft: 8 Minuten. Ich melde mich um "
+                                              "19:50 Uhr."),
+    ("Wie lange läuft der Timer noch?", "Derzeit laufen weder Timer noch Erinnerungen."),
+    ("Erinnere mich morgen um 8 an den Müll", "Sehr wohl. Ich erinnere Sie morgen um 8 Uhr an: den Müll."),
+    ("Erinnere mich in 10 Minuten daran, den Tee rauszunehmen",
+     "Sehr wohl. Ich erinnere Sie in 10 Minuten an: den Tee rauszunehmen."),
+    ("Weck mich morgen um 7", "Sehr wohl. Ich wecke Sie morgen um 7 Uhr."),
+    ("Trag morgen um 15 Uhr Zahnarzt ein",
+     "Sehr wohl. Eingetragen: Zahnarzt morgen um 15 Uhr. Ich erinnere Sie 15 Minuten vorher."),
+    ("Trag am Freitag Friseur ein", "Sehr wohl. Eingetragen: Friseur am Freitag, ganztägig."),
+    ("Welche Termine habe ich morgen?", "Morgen sind keine Termine eingetragen."),
+    ("Suche mir nach Arteriion auf Spotify", "Sehr wohl. Die Spotify-Suche nach „Arteriion“ ist geöffnet."),
+    ("Such auf Amazon nach Kopfhörern", "Sehr wohl. Die Amazon-Suche nach „Kopfhörern“ ist geöffnet."),
+    ("Such mal", "Wonach soll ich suchen, Sir?"),
+    ("Such auf Spotify", "Wonach soll ich auf Spotify suchen, Sir?"),
+    ("Schließ Steam", "Sehr wohl. Steam wird geschlossen."),
+    ("Mach den Explorer zu", "Sehr wohl. Die Explorer-Fenster werden geschlossen."),
+    ("Nächstes Lied", "Sehr wohl. Nächster Titel."),
+    ("Mach lauter", "Sehr wohl. Etwas lauter."),
+    ("Drück Enter", "Sehr wohl. Enter gedrückt."),
+    ("Klick auf Anmelden", "Sehr wohl. Ich habe auf „Anmelden“ geklickt."),
+    ("Tippe Pizza Berlin und drück Enter", "Sehr wohl. Der Text ist eingefügt und abgeschickt."),
+    ("Tippe mein Passwort", "Passwörter tippe ich aus Sicherheitsgründen nicht ein, Sir – sie liefen dabei durch "
+                            "Spracherkennung und Protokoll. Der Passwortmanager Ihres Browsers erledigt das sicherer."),
+    ("Schreib eine Mail an Mama", "Sehr wohl. Der E-Mail-Entwurf ist geöffnet. Die Adresse von „Mama“ kenne ich noch "
+                                  "nicht – tragen Sie sie bitte ein."),
+    ("Schreib eine Mail an max punkt mustermann at gmail punkt com",
+     "Sehr wohl. Der E-Mail-Entwurf an max.mustermann@gmail.com ist geöffnet – Sie müssen ihn nur noch absenden."),
+    ("Melde mich bei Netflix an", "Sehr wohl. Die Anmeldeseite von Netflix ist geöffnet. Passwörter gebe ich aus "
+                                  "Sicherheitsgründen nicht ein – das übernimmt der Passwortmanager Ihres Browsers."),
     ("Gute Nacht", "Gute Nacht, Sir."),
     ("Tschüss", "Sehr wohl. Ich bleibe in Bereitschaft."),
 ]
@@ -222,6 +266,9 @@ def test_free_llm_text_is_filtered_and_streamed_in_style():
     ("Hier:\n```python\nprint('Hallo du!')\n```\nViel Spaß!", "Hier:\n```python\nprint('Hallo du!')\n```\nViel Spaß."),
     ("- öffne den Browser\n- klick auf Einstellungen", "- Öffnen Sie den Browser\n- Klicken Sie auf Einstellungen"),
     ("Das ist echt total easy.", "Das ist wirklich ausgesprochen mühelos."),  # Ersetzungen aus der Persona
+    # Pfade behalten ihr Leerzeichen, auch nach der Anrede-Bereinigung („mit ./deploy“, nicht „mit./deploy“)
+    ("Sehr wohl, Sir. Führen Sie ./deploy/start.sh aus, Sir.", "Sehr wohl, Sir. Führen Sie ./deploy/start.sh aus."),
+    ("Starten Sie es mit ./deploy/start.sh neu.", "Starten Sie es mit ./deploy/start.sh neu."),
 ])
 def test_free_text_filter(raw, expected):
     persona = Persona.load(REPO / "config" / "persona.jarvis.yaml")
@@ -239,7 +286,7 @@ def test_persona_selects_style_and_version():
     jarvis = Persona.load(REPO / "config" / "persona.jarvis.yaml", schema_path=REPO / "schemas" / "persona.schema.json")
     neutral = Persona.load(REPO / "config" / "persona.neutral.yaml")
     assert isinstance(JarvisStyle.from_persona(jarvis), JarvisStyle)
-    assert jarvis.config["version"] == STYLE_VERSION == "2.2.0"
+    assert jarvis.config["version"] == STYLE_VERSION == "2.3.0"
     assert type(JarvisStyle.from_persona(neutral)) is PlainStyle
 
 
