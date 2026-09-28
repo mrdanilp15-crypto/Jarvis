@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from ..errors import JarvisError
@@ -19,6 +20,93 @@ from .base import (
     Turn,
     UserTurn,
 )
+
+
+# Kleine lokale Modelle schreiben Tool-Aufrufe manchmal als Text statt über die Tool-Schnittstelle:
+# {"name": "pc.open_folder", "arguments": {...}}, <tool_call>…</tool_call> oder ```json …```.
+_CALL_MARKER = re.compile(r'<tool_call>|```(?:json)?\s*\{|\{\s*"(?:name|function)"\s*:')
+
+
+def extract_text_tool_calls(text: str, known: set[str]) -> tuple[list[ToolCall], str]:
+    """Tool-Aufrufe im Text finden (nur bekannte Tools) und aus dem Text entfernen.
+
+    Übrig bleibender Rest von höchstens drei Wörtern gilt als Beiwerk des Modells („Dorf.“) und fällt weg.
+    """
+    decoder = json.JSONDecoder()
+    calls: list[ToolCall] = []
+    spans: list[tuple[int, int]] = []
+    index = 0
+    while (start := text.find("{", index)) != -1:
+        try:
+            obj, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            index = start + 1
+            continue
+        index = end
+        if not isinstance(obj, dict):
+            continue
+        function = obj.get("function") if isinstance(obj.get("function"), dict) else obj
+        name = str(function.get("name") or "").strip().replace(".", "__")
+        args = function.get("arguments", function.get("parameters", {}))
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                continue
+        if not name or not isinstance(args, dict):
+            continue
+        spans.append((start, end))  # auch unbekannte Aufrufe nie vorlesen
+        if name in known:
+            calls.append(ToolCall(id=new_id("call"), name=name, arguments=args))
+    if not spans:
+        return [], text
+    rest = "".join(text[a:b] for a, b in zip([0] + [e for _, e in spans], [s for s, _ in spans] + [len(text)]))
+    rest = re.sub(r"</?tool_call>|```(?:json)?", " ", rest)
+    rest = re.sub(r"\s+", " ", rest).strip(" .,:;")
+    if not calls:
+        return [], rest
+    return calls, ("" if len(rest.split()) <= 3 else rest)
+
+
+class _StreamGate:
+    """Leitet gestreamten Text erst weiter, wenn klar ist, dass kein Tool-Aufruf als Text kommt – sonst würde
+    JARVIS JSON vorlesen. Die ersten Zeichen werden kurz zurückgehalten, ab einem Tool-Aufruf-Muster nichts mehr."""
+
+    HOLD = 40
+
+    def __init__(self, on_text: OnText | None) -> None:
+        self.on_text = on_text
+        self.buffer = ""
+        self.tail = ""
+        self.open = False
+        self.blocked = False
+
+    async def feed(self, delta: str) -> None:
+        if self.on_text is None or self.blocked:
+            return
+        if not self.open:
+            self.buffer += delta
+            if _CALL_MARKER.search(self.buffer) or self.buffer.lstrip().startswith(("{", "<tool", "```")):
+                self.blocked = True
+            elif len(self.buffer.strip()) >= self.HOLD:
+                self.open = True
+                await self._forward(self.buffer)
+            return
+        combined = self.tail + delta
+        if m := _CALL_MARKER.search(combined):
+            self.blocked = True
+            if (cut := m.start() - len(self.tail)) > 0:
+                await self.on_text(delta[:cut])
+            return
+        await self._forward(delta)
+
+    async def _forward(self, text: str) -> None:
+        self.tail = (self.tail + text)[-30:]
+        await self.on_text(text)
+
+    async def finish(self, *, speak_rest: bool) -> None:
+        if self.on_text is not None and speak_rest and not self.open and not self.blocked and self.buffer:
+            await self.on_text(self.buffer)
 
 
 class OllamaProvider:
@@ -82,6 +170,7 @@ class OllamaProvider:
         payload = self._payload(self._render(system, transcript), tools, stream=True)
         text_parts: list[str] = []
         calls: list[ToolCall] = []
+        gate = _StreamGate(on_text)
         done_reason = None
         usage: dict[str, int] = {}
         try:
@@ -94,8 +183,7 @@ class OllamaProvider:
                     message = chunk.get("message") or {}
                     if message.get("content"):
                         text_parts.append(message["content"])
-                        if on_text is not None:
-                            await on_text(message["content"])
+                        await gate.feed(message["content"])
                     for tc in message.get("tool_calls") or []:
                         args = tc["function"].get("arguments") or {}
                         if isinstance(args, str):  # manche Modelle liefern JSON als String
@@ -114,6 +202,11 @@ class OllamaProvider:
             raise self._error(exc) from exc
 
         text = "".join(text_parts)
+        from_text = False
+        if not calls and tools:
+            calls, text = extract_text_tool_calls(text, {t.name for t in tools})
+            from_text = bool(calls)
+        await gate.finish(speak_rest=not from_text)  # „Einen Moment.“ vor einem echten Tool-Aufruf darf gesprochen werden
         stop: StopReason = "tool_use" if calls else ("max_tokens" if done_reason == "length" else "end_turn")
         return LLMResponse(
             text=text,

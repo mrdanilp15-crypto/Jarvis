@@ -73,7 +73,7 @@ CTX = InvocationContext(correlation_id="c1", actor="user:alex", session_id="s1",
     ("Öffne Bewerbung.pdf", "pc.open_file", {"query": "bewerbung.pdf", "kind": "file"}),
     ("Öffne den Ordner Projekte", "pc.open_file", {"query": "Projekte", "kind": "folder"}),
     ("Wo ist meine Steuererklärung?", "pc.find_files", {"query": "Steuererklärung", "kind": "any"}),
-    ("Wo habe ich die Datei Rechnung gespeichert?", "pc.find_files", {"query": "Rechnung", "kind": "any"}),
+    ("Wo habe ich die Datei Rechnung gespeichert?", "pc.find_files", {"query": "Rechnung", "kind": "file"}),
 ])
 def test_pc_fast_path(text, capability, arguments):
     match = FastPath({}, {}).match(text)

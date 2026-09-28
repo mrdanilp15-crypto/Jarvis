@@ -1,5 +1,43 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.3.1 – 2026-09-28
+
+Korrekturen verstehen und keine Tool-Aufrufe mehr als Text – aus einem echten Gesprächsprotokoll.
+
+### Behoben
+- **Korrekturen nach einer Suche landeten beim Sprachmodell, das Bedeutungen erfand.**
+  - Beispiel: „ARTERII.“ oder „ARTERIION“ direkt nach „Suche auf Spotify nach Atherion“.
+  - Ein einzelner Begriff (1–3 Wörter) im direkt folgenden Satz wiederholt jetzt dieselbe Suche mit dem neuen
+    Wort, beim selben Dienst.
+  - Ebenso „Nein, ich meinte …“, „Es schreibt sich …“ und „Ich meinte … auf YouTube“ (anderer Dienst).
+  - Ein falsch verstandener Programmname lässt sich mit „Nein, ich meinte Spotify“ korrigieren.
+  - Füllwörter („Gab es.“, „Danke“) und Fragen bleiben normales Gespräch. Nach „Öffne den Explorer“ gilt ein
+    einzelnes Wort nicht als Korrektur.
+- **„Suche nach Arterien, so wie ich es dir gerade geschrieben habe, mit 2 i“ suchte den ganzen Satz bei Google.**
+  - Rückbezüge und Buchstabierhinweise („mit 2 i“, „mit doppel i“) werden aus dem Suchbegriff entfernt.
+  - Bei einem Rückbezug nimmt JARVIS das zuletzt getippte oder gesagte Wort und bleibt beim Dienst der letzten Suche.
+- **Ordnerbefehle ohne Verb gingen ans Sprachmodell.**
+  - Betroffen waren „Nach dem Ordner Minecraft (ähnlich)“, „Ordner mit dem Namen Minecraft“ und „Die Datei
+    Bewerbung“.
+  - Sie suchen jetzt gezielt nach Ordnern bzw. Dateien. Bekannte Ordner („Ordner Dokumente“) öffnen sich direkt.
+- **„Suche im Detail Explorer nach Minecraft“** (verhörtes „Datei-Explorer“) sucht jetzt im Explorer.
+- **Tool-Aufrufe als Text:** Kleine lokale Modelle schrieben Aufrufe manchmal als Text in die Antwort
+  („Dorf. {"name": "pc.open_folder", …}“).
+  - Der Ollama-Adapter erkennt solche Aufrufe (JSON, `<tool_call>`, ```` ```json ````) und führt bekannte
+    Werkzeuge richtig aus.
+  - Weder JSON noch das Beiwerk davor wird vorgelesen: die ersten 40 Zeichen werden kurz zurückgehalten, längere
+    Antworten streamen danach wie bisher.
+- **Initialen** („A.R.T.E.R.I.I.“) gelten nicht mehr als Satzende, weder im Formatter noch in der Sprachausgabe.
+
+### Persona
+- Unbekannte Namen oder Begriffe: sagen und eine Suche anbieten, nie Bedeutungen oder Abkürzungen erfinden.
+- Tool-Aufrufe nur über die Tool-Schnittstelle, nie als JSON im Antworttext.
+- „Ich überwache die Situation.“ nur, wenn JARVIS tatsächlich etwas überwacht.
+
+### Tests
+- 32 neue Tests aus dem Protokoll: Formulierungen, Rückbezüge, Korrekturbegriffe, der Dialogablauf mit mehreren
+  Korrekturen, Text-Tool-Aufrufe im Stream, Initialen und „Ordner erstellen“ (keine Suche). Insgesamt 520 Tests.
+
 ## Jarvis-Modul 2.3.0 – 2026-09-28
 
 Suchbefehle verstehen, mehr PC-Steuerung, Timer, Kalender, E-Mails und ein Aktivierungswort, das antwortet.

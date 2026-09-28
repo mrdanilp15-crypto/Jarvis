@@ -552,7 +552,7 @@
 
   // Satzweise sprechen, während der Text noch gestreamt wird
   // Einzelbuchstaben („z. B.“, „d. h.“), gängige Abkürzungen und Ordnungszahlen („3.“) beenden keinen Satz
-  const ABBREVIATION = /(?:(?:^|[\s(„"])\p{L}|\b(?:bzw|ca|usw|etc|nr|dr|hr|fr|st|vgl|ggf|inkl|evtl|bspw|mio|mrd|min|std))\.$|\d\.$/iu;
+  const ABBREVIATION = /(?:(?:^|[\s(„"])\p{L}|\b(?:bzw|ca|usw|etc|nr|dr|hr|fr|st|vgl|ggf|inkl|evtl|bspw|mio|mrd|min|std))\.$|\d\.$|(?:\p{L}\.){2,}$/iu;
 
   function sentenceEnd(text) {
     const boundary = /[.!?…]+(?=\s)|\n/g;

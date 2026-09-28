@@ -17,7 +17,15 @@ from typing import Any, Protocol
 from .context import ContextBuilder, Situation
 from .errors import JarvisError
 from .events import CloudEvent, EventBus, new_id
-from .fastpath import FastPath, FastPathMatch, confirmation_reply, conversation_intent, selection_reply
+from .fastpath import (
+    FastPath,
+    FastPathMatch,
+    bare_term,
+    confirmation_reply,
+    conversation_intent,
+    correction_term,
+    selection_reply,
+)
 from .llm.base import (
     AssistantTurn,
     LLMProvider,
@@ -117,6 +125,10 @@ class Offer:
 OFFER_SOURCES = {"pc.find_files": "files", "pc.search_files": "files", "web.search": "web", "mail.list_unread": "mail"}
 # Was die Auswahl auslöst: Art -> (Capability, Argument aus dem Listeneintrag)
 OFFER_ACTIONS = {"files": ("pc.open_file", "id"), "web": ("pc.open_url", "url"), "mail": ("mail.read", "id")}
+# Suchen und Öffnen, die ein kurzer Folgesatz korrigieren kann („ARTERIION“, „ich meinte Steam“): Capability -> Feld
+CORRECTABLE = {"pc.search_web": "query", "pc.open_link": "query", "pc.search_files": "query", "pc.find_files": "query",
+               "web.search": "query", "pc.open_app": "app"}
+CORRECTION_WINDOW_S = 300
 
 
 @dataclass
@@ -127,6 +139,8 @@ class Session:
     last_active: datetime = field(default_factory=lambda: datetime.now(UTC))
     offer: Offer | None = None  # gilt nur für den direkt folgenden Satz
     expect: str | None = None  # Befehlsanfang nach einer Rückfrage („such nach“), ergänzt um den nächsten Satz
+    last_search: tuple[str, dict[str, Any], datetime] | None = None  # für Korrekturen im nächsten Satz
+    recent_terms: list[str] = field(default_factory=list)  # zuletzt allein geschriebene Begriffe („ARTERIION“)
 
 
 class AuditSink(Protocol):
@@ -285,6 +299,7 @@ class Orchestrator:
             # Antwort auf „Wonach soll ich suchen?“: „Arteriion auf Spotify“ -> „such nach Arteriion auf Spotify“
             match = self.fast_path.match(f"{expect} {req.text}", default_area=req.principal.area,
                                          now=situation.now) or match
+        match = self._correct(match, intent, req.text, session, now)
         if match is not None and match.grammar == "refuse_password":
             return TurnResult(text=self.style.system_text("no_passwords"), route="fast_path")
         if match is not None and match.grammar == "incomplete":
@@ -499,13 +514,43 @@ class Orchestrator:
             record.result = {"dry_run": True}
             return record
         record = await self._execute(cap, record, principal, correlation_id, session_id)
-        self._remember_offer(session_id, record, via)
+        self._remember(session_id, record, via)
         return record
 
-    def _remember_offer(self, session_id: str | None, record: ActionRecord, via: str) -> None:
-        """Trefferliste für den nächsten Satz merken („die zweite“). „Ja“ gilt nur, wenn JARVIS selbst gefragt hat
-        (Sofortbefehl) – nach einer LLM-Antwort kann ein „Ja“ auch etwas anderes meinen."""
+    def _correct(self, match: FastPathMatch | None, intent: str | None, text: str, session: Session,
+                 now: datetime) -> FastPathMatch | None:
+        """Folgesätze zur letzten Suche: Korrektur („ARTERIION“, „ich meinte …“) und Rückbezug („so wie ich es
+        geschrieben habe“). Beides gilt nur für den direkt folgenden Satz."""
+        last, session.last_search = session.last_search, None
+        if last is not None and (now - last[2]).total_seconds() > CORRECTION_WINDOW_S:
+            last = None
+        if match is None and intent is None and last is not None and (
+                found := correction_term(text, explicit=last[0] == "pc.open_app")):
+            capability, arguments, _ = last
+            term, site = found
+            arguments = {**arguments, CORRECTABLE[capability]: term}
+            if site and capability == "pc.search_web":
+                arguments.pop("site", None)
+                arguments.update({"site": site} if site != "google" else {})
+            match = FastPathMatch(capability, arguments, 0.9, "correction", {"query": term})
+        elif match is not None and match.slots.get("refers_back") and session.recent_terms:
+            # „Such nach …, so wie ich es geschrieben habe“: das zuletzt allein geschriebene Wort
+            arguments = {**match.arguments, "query": session.recent_terms[-1]}
+            if last is not None and last[0] == match.capability and "site" not in arguments and last[1].get("site"):
+                arguments["site"] = last[1]["site"]
+            match = replace(match, arguments=arguments)
+        if term := bare_term(text):
+            session.recent_terms = [*session.recent_terms, term][-3:]
+        return match
+
+    def _remember(self, session_id: str | None, record: ActionRecord, via: str) -> None:
+        """Für den nächsten Satz merken: die Suche (für Korrekturen) und die Trefferliste („die zweite“).
+        „Ja“ gilt nur, wenn JARVIS selbst gefragt hat (Sofortbefehl) – nach einer LLM-Antwort kann ein „Ja“ auch
+        etwas anderes meinen."""
         session = self.sessions.get(session_id) if session_id else None
+        key = CORRECTABLE.get(record.capability)
+        if session is not None and key and record.status == "succeeded" and record.arguments.get(key):
+            session.last_search = (record.capability, dict(record.arguments), datetime.now(UTC))
         kind = OFFER_SOURCES.get(record.capability)
         if session is None or kind is None or record.status != "succeeded" or not isinstance(record.result, dict):
             return

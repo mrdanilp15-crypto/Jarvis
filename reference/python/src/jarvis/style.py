@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.3.0"
+STYLE_VERSION = "2.3.1"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -143,7 +143,8 @@ _DU_PRONOUNS = {"dir": "Ihnen", "dich": "Sie", "dein": "Ihr", "deine": "Ihre", "
                 "deinem": "Ihrem", "deiner": "Ihrer", "deines": "Ihres", "du": "Sie"}
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF⬀-⯿️‍]")
 _BOUNDARY = re.compile(r"(?<=[.?…])\s+(?=\S)")
-_ABBREV = re.compile(r"(?:^|\s)(?:[A-Za-zÄÖÜäöü]|bzw|ca|usw|etc|nr|dr|ggf|inkl|evtl|vgl|bspw|min|std)\.$", re.I)
+_ABBREV = re.compile(r"(?:(?:^|\s)(?:[A-Za-zÄÖÜäöü]|bzw|ca|usw|etc|nr|dr|ggf|inkl|evtl|vgl|bspw|min|std)\.|"
+                     r"(?:[A-Za-zÄÖÜäöü]\.){2,})$", re.I)  # auch Initialen wie „A.R.T.E.“
 _LIST_ITEM = re.compile(r"^(\s*(?:[-*•]|\d+[.)])\s+)(.*)$")
 
 

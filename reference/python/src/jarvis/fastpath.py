@@ -52,8 +52,8 @@ _VERB_LAST = re.compile(rf"^(?P<rest>.+?)\s+(?P<verb>{_ANY_VERB})$", re.I)
 PC_OPEN = re.compile(r"^(?P<verb>öffne|starte|start|ruf|rufe|mach|zeig|zeige|spiel|spiele)\s+(?:mir\s+)?"
                      r"(?:(?P<article>den|die|das|einen|eine|ein|meine|meinen|mein)\s+)?(?P<target>[\wäöüß .+&'-]+?)"
                      r"(?P<auf>\s+auf)?$", re.I)
-_ON_PC = r"(?:auf (?:dem|meinem) (?:pc|computer|rechner|laptop)|am (?:pc|computer|rechner)|in meinen dateien|" \
-         r"auf der festplatte)"
+_ON_PC = r"(?:auf (?:dem|meinem) (?:pc|computer|rechner|laptop)|am (?:pc|computer|rechner)|in (?:meinen|den) " \
+         r"(?:dateien|ordnern)|auf der festplatte|im (?:datei[- ]?|detail[- ]?|windows[- ]?)?explorer|im dateimanager)"
 PC_SEARCH_FILES = [
     re.compile(rf"^(?:such|suche|finde|find)\s+{_ON_PC}\s+(?:nach\s+)?(?P<query>.+)$", re.I),
     re.compile(rf"^(?:such|suche|finde|find)\s+(?:nach\s+)?(?:der|die|meine|meiner|meinen|eine|einer|den|dem|das)?\s*"
@@ -109,6 +109,14 @@ _FILE_EXT = re.compile(r"\.(?:pdf|docx?|xlsx?|pptx?|txt|odt|ods|csv|rtf|jpe?g|pn
 _WHERE = r"^wo\s+(?:ist|liegt|sind|liegen|finde ich|habe ich|hab ich)\s+"
 _STORED = r"(?:\s+(?:gespeichert|abgelegt|hin|gespeichert hin|abgespeichert))?$"
 PC_FIND_FILES = [
+    # ohne Verb, z. B. als Antwort auf eine Rückfrage: „Nach dem Ordner Minecraft“, „Ordner mit dem Namen Minecraft“
+    re.compile(r"^(?:(?:such|suche|finde)\s+)?(?:nach\s+)?(?:(?:dem|den|der|die|das|einem|einen|eine|meinem|meinen|"
+               r"meiner|meine|mein)\s+)?"
+               r"(?P<kind>ordner|datei)\s+(?:mit dem namen\s+|namens\s+|mit namen\s+)?"
+               r"(?!(?:.*\s)?(?:erstellen|anlegen|löschen|entfernen|umbenennen|verschieben|kopieren|speichern|"
+               r"schließen|leeren|teilen|senden|schicken|drucken|packen|entpacken|zippen|hochladen|herunterladen)\.?$)"
+               r"(?P<query>[\wäöüß .+&'-]+?)"
+               r"(?:\s+(?:ähnlich|oder so|oder ähnlich))?$", re.I),
     re.compile(rf"{_WHERE}(?:meine|mein|meinen)\s+(?:(?P<kind>datei|dateien|ordner|dokument|dokumente)\s+)?"
                rf"(?P<query>.+?){_STORED}", re.I),
     re.compile(rf"{_WHERE}(?:die|der|das|den)\s+(?P<kind>datei|ordner|dokument|pdf)\s+(?P<query>.+?){_STORED}", re.I),
@@ -580,7 +588,10 @@ class FastPath:
         for pattern in PC_FIND_FILES:
             if m := pattern.match(text):
                 query, kind = m["query"].strip(), (m.groupdict().get("kind") or "").lower()
-                arguments = {"query": query, "kind": "folder" if kind == "ordner" else "any"}
+                if kind == "ordner" and _pc_target(query) in PC_FOLDERS:
+                    folder = PC_FOLDERS[_pc_target(query)]
+                    return FastPathMatch("pc.open_folder", {"folder": folder}, 0.95, "pc_open_folder", {"target": query})
+                arguments = {"query": query, "kind": {"ordner": "folder", "datei": "file"}.get(kind, "any")}
                 return FastPathMatch("pc.find_files", arguments, 0.9, "pc_find_files", {"query": query})
         if m := PC_OPEN_FILE.match(text):
             kind, query = m["kind"].lower(), m["query"].strip()
@@ -593,11 +604,11 @@ class FastPath:
             return FastPathMatch("pc.open_file", arguments, 0.92, "pc_open_file", {"query": query})
         for pattern in PC_SEARCH:
             if m := pattern.match(text):
-                query = _web_query(m["query"])
+                query, refers_back = clean_query(m["query"])
                 site = SEARCH_SERVICES.get(re.sub(r"\s+", " ", (m.groupdict().get("site") or "").lower()))
                 arguments = {"query": query, **({"site": site} if site and site != "google" else {})}
                 return FastPathMatch("pc.search_web", arguments, 0.93, "pc_search_site" if site else "pc_search",
-                                     {"query": query, "site": site})
+                                     {"query": query, "site": site, "refers_back": refers_back})
         if m := PC_OPEN.match(text):
             target, verb = _pc_target(m["target"]), m["verb"].lower()
             playing = verb.startswith("spiel")  # „Spiel Minecraft“: nur Programme, nie Ordner („Spiel Musik“)
@@ -702,8 +713,60 @@ def _web_query(query: str) -> str:
     return re.sub(r"^(?:einen|einem|einer|eines|eine|ein|den|dem|der|die|das|des)\s+", "", query.strip(), flags=re.I)
 
 
+# Rückbezug und Buchstabierhilfen gehören nicht in den Suchbegriff:
+# „Such nach Arterien, so wie ich es dir gerade geschrieben habe, mit 2 i“ -> „Arterien“ (+ Rückbezug)
+_BACKREF = re.compile(r"[\s,]*(?:so\s+)?wie ich (?:es|das|ihn|sie)\s+(?:(?:dir|ihnen)\s+)?(?:(?:gerade|eben|vorhin|zuvor|"
+                      r"oben)\s+)?(?:geschrieben|getippt|gesagt|buchstabiert|eingegeben)(?:\s+(?:habe|hab))?", re.I)
+_SPELLING = re.compile(r"[\s,]*(?:mit|und)\s+(?:zwei|2|drei|3|doppel(?:tem|ten)?|doppelt(?:em)?)\s*-?\s*[a-zäöüß]\b"
+                       r"(?:\s+geschrieben)?|[\s,]*(?:richtig|korrekt|genau so) geschrieben", re.I)
+
+
+def clean_query(query: str) -> tuple[str, bool]:
+    """Suchbegriff ohne Rückbezug und Buchstabierhilfen; zweiter Wert: der Nutzer verweist auf Geschriebenes."""
+    refers_back = bool(_BACKREF.search(query))
+    query = _SPELLING.sub("", _BACKREF.sub("", query))
+    return _web_query(query).strip(" ,.;:"), refers_back
+
+
+# Korrektur direkt nach einer Suche: „ARTERIION“, „Nein, ich meinte Arteriion“, „Es schreibt sich Arteriion“
+CORRECTION = re.compile(r"^(?:(?:nein|ne|nee|falsch|quatsch|nicht so)\b[\s,.]*)?(?:ich (?:meinte|meine|wollte)|"
+                        r"gemeint (?:war|ist)|es (?:heißt|schreibt sich|wird geschrieben)|richtig (?:ist|wäre|heißt es)|"
+                        r"(?:such|suche) lieber(?: nach)?|nimm lieber|(?:probier|versuch)(?:e)?(?: es)?(?: mal)? mit|"
+                        r"nicht \S+(?: \S+)? sondern)\s+(?P<term>.+)$", re.I)
+_NOT_TERMS = set("""es das der die den dem des ein eine einen ist sind war gab gibt hat habe hab und oder aber ich du er sie
+wir ihr mal noch nicht ja nein so wie was wo wer wann warum gut okay ok super danke cool toll prima schön perfekt passt
+genau stopp stop weiter nichts egal hallo jarvis sir bitte na hm hmm äh ähm also richtig falsch klar sicher vielleicht auch
+nur jetzt hier da dort mehr weniger gerne gern sehr zu auf in im an am mit von für bei nach um wieder nochmal nochmals schon
+doch fertig los alles""".split())
+
+
+def bare_term(text: str) -> str | None:
+    """Ein bis drei Wörter ohne Füll- und Funktionswörter („ARTERIION“, „Arteriion Live“) – ein bloßer Begriff."""
+    words = re.sub(r"[.,!;:]+$", "", _time_text(text)).split()
+    if not 1 <= len(words) <= 3 or text.strip().endswith("?"):
+        return None
+    if any(w.lower().strip(",.!") in _NOT_TERMS for w in words):
+        return None
+    return " ".join(words)
+
+
+def correction_term(text: str, *, explicit: bool = False) -> tuple[str, str | None] | None:
+    """Neuer Suchbegriff (und ggf. Dienst), wenn die Äußerung eine Korrektur der letzten Suche ist.
+    ``explicit``: nur „ich meinte …“ u. Ä. zählt, kein bloßes Wort (etwa nach dem Öffnen eines Programms)."""
+    plain = re.sub(r"[.!]+$", "", _time_text(text)).strip()
+    m = CORRECTION.match(plain)
+    term = m["term"] if m else (None if explicit else bare_term(text))
+    if not term:
+        return None
+    term, _ = clean_query(term)
+    site = None
+    if s := re.match(rf"^(?P<q>.+?)\s+{_AT}\s+(?P<site>{_SERVICE})$", term, re.I):
+        term, site = s["q"], SEARCH_SERVICES[re.sub(r"\s+", " ", s["site"].lower())]
+    return (term, site) if term else None
+
+
 def _open_link(query: str, site: str | None) -> FastPathMatch:
-    query = _web_query(query)
+    query, _ = clean_query(query)
     arguments = {"query": query, **({"site": site} if site else {})}
     return FastPathMatch("pc.open_link", arguments, 0.92, "pc_open_link", {"query": query})
 
