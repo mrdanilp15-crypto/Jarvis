@@ -57,7 +57,7 @@ Suchbefehle verstehen, mehr PC-Steuerung, Timer, Kalender, E-Mails und ein Aktiv
   die neuen Werkzeuge.
 
 ### Tests
-- 168 neue Tests: Zeitangaben, Timer-Planer und Speicher, ICS-Kalender, IMAP, Suchdienste, Rückfragen, Tasten und
+- 170 neue Tests: Zeitangaben, Timer-Planer und Speicher, ICS-Kalender, IMAP, Suchdienste, Rückfragen, Tasten und
   Kürzel, Klicken, Tippen, Mail-Entwürfe, Push-Meldungen über die API, Jarvis-Antworten.
 - In Chromium geprüft:
   - Sprechpausen, unscharfes Aktivierungswort mit „Ja, Sir?“, Rückfrage mit automatischem Zuhören.
