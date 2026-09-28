@@ -28,6 +28,7 @@ services:
       AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY:-}           # optional: JARVIS-Stimme „Conrad“ (Azure Speech)
       AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION:-}
       JARVIS_TTS_VOICE: ${JARVIS_TTS_VOICE:-}
+      JARVIS_SEARXNG_URL: ${JARVIS_SEARXNG_URL:-}       # optional: eigene SearXNG-Suche statt DuckDuckGo
     volumes:
       - ../config:/app/config:ro
       - ../schemas:/app/schemas:ro

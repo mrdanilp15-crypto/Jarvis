@@ -3,13 +3,16 @@
 Der Kern läuft im Container und kann selbst keine Programme auf dem PC öffnen. Der Agent verbindet sich von sich
 aus per WebSocket mit ``/v1/agent`` (kein offener Port auf dem PC) und führt nur eine feste Liste von Aktionen aus:
 Webseite öffnen (nur http/https), Programm starten (eigene Liste oder Eintrag im Windows-Startmenü, per Name),
-bekannten Ordner öffnen, Dateisuche im Explorer öffnen. Der Kern schickt nur Namen – was davon wie gestartet wird,
+bekannten Ordner öffnen, Dateien im Benutzerordner suchen und öffnen (Programme darunter werden nur im Explorer
+markiert, nie gestartet). Der Kern schickt nur Namen, Suchbegriffe und Trefferummern – was davon wie geöffnet wird,
 entscheidet der Agent; beliebige Befehle oder Pfade kann der Kern nicht ausführen lassen.
 """
 
 from __future__ import annotations
 
 import asyncio
+import difflib
+import logging
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -18,7 +21,9 @@ from urllib.parse import quote_plus, urlsplit
 from .errors import JarvisError
 from .events import new_id
 from .tools import Capability, InvocationContext, ToolRegistry
+from .websearch import SITES as LINK_SITES, WebSearch, ducky_url, scoped
 
+log = logging.getLogger(__name__)
 SendJson = Callable[[dict[str, Any]], Awaitable[None]]
 
 DEFAULT_APPS = ["explorer", "browser", "editor", "rechner", "paint", "einstellungen", "taskmanager", "systemsteuerung",
@@ -102,7 +107,26 @@ class AgentHub:
                 continue
             if best is None or (rank, len(app)) < best[:2]:
                 best = (rank, len(app), app)
+        if best is None and len(wanted) >= 4:
+            # Hörfehler der Spracherkennung („Discort“, „Minecraf“): sehr ähnlicher Name oder Namensanfang mit
+            # gleichem Anfangsbuchstaben – verglichen wird auch nur der Anfang („minecraf“ ~ „minecraft“ Launcher)
+            words = len(wanted.split())
+            candidates: dict[str, str] = {}
+            for app in [*builtin, *(str(a) for a in self.info.get("start_apps") or [])]:
+                key = _key(app)
+                for variant in (key, " ".join(key.split()[:words])):
+                    if variant[:1] == wanted[:1]:
+                        candidates.setdefault(variant, app)
+            close = difflib.get_close_matches(wanted, list(candidates), n=1, cutoff=0.8)
+            return candidates[close[0]] if close else None
         return best[2] if best else None
+
+    def require(self, action: str) -> None:
+        """Vorab prüfen, ob der Agent die Aktion ausführen kann (spart z. B. eine Websuche ohne Agent)."""
+        if self._send is None:
+            raise JarvisError("JRV-DEV-001", "PC-Agent nicht verbunden", user_message=NOT_CONNECTED)
+        if not self.supports(action):
+            raise JarvisError("JRV-INT-001", f"PC-Agent kennt die Aktion {action} nicht", user_message=OUTDATED)
 
     def supports(self, action: str) -> bool:
         return action in (self.info.get("actions") or LEGACY_ACTIONS)
@@ -113,10 +137,7 @@ class AgentHub:
             future.set_result(message)
 
     async def invoke(self, action: str, arguments: dict[str, Any]) -> Any:
-        if self._send is None:
-            raise JarvisError("JRV-DEV-001", "PC-Agent nicht verbunden", user_message=NOT_CONNECTED)
-        if not self.supports(action):
-            raise JarvisError("JRV-INT-001", f"PC-Agent kennt die Aktion {action} nicht", user_message=OUTDATED)
+        self.require(action)
         request_id = new_id("agt")
         future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
@@ -141,7 +162,7 @@ class AgentHub:
 
 
 def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
-                             search_url: str = SEARCH_SITES["google"]) -> None:
+                             search_url: str = SEARCH_SITES["google"], web: WebSearch | None = None) -> None:
     async def open_url(args: dict[str, Any], ctx: InvocationContext) -> Any:
         parts = urlsplit(args["url"])
         if parts.scheme not in ("http", "https") or not parts.netloc:
@@ -156,6 +177,32 @@ def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
 
     async def search_files(args: dict[str, Any], ctx: InvocationContext) -> Any:
         return await hub.invoke("search_files", {"query": args["query"].strip()})
+
+    async def open_link(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        """Link heraussuchen und direkt öffnen: erster Treffer der Websuche, sonst leitet DuckDuckGo weiter."""
+        hub.require("open_url")
+        query = scoped(args["query"], args.get("site"))
+        first = None
+        if web is not None:
+            try:
+                results = await web.search(query, limit=3)
+                first = results[0] if results else None
+            except JarvisError as exc:
+                log.info("Websuche nicht verfügbar – Weiterleitung im Browser", extra={"detail": exc.detail})
+        if first is None:
+            await hub.invoke("open_url", {"url": ducky_url(query)})
+            return {"query": args["query"], "via": "browser"}
+        await hub.invoke("open_url", {"url": first.url})
+        return {"query": args["query"], "via": "search", "url": first.url, "title": first.title}
+
+    async def find_files(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        return await hub.invoke("find_files", {"query": args["query"].strip(), "kind": args.get("kind", "any")})
+
+    async def open_file(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        if not args.get("query") and not args.get("id"):
+            raise JarvisError("JRV-VAL-002", "query oder id erforderlich",
+                              user_message="Welche Datei soll ich öffnen?")
+        return await hub.invoke("open_file", {k: v for k, v in args.items() if v not in (None, "")})
 
     async def open_app(args: dict[str, Any], ctx: InvocationContext) -> Any:
         name = args["app"].strip()
@@ -204,10 +251,47 @@ def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
         handler=search_web,
     ))
     registry.register(Capability(
-        name="pc.search_files", domain="pc", risk_class="R1", side_effects="reversible", timeout_s=15.0,
-        description="Sucht Dateien und Ordner auf dem PC: öffnet die Explorer-Suche im Benutzerordner.",
+        name="pc.search_files", domain="pc", risk_class="R1", side_effects="reversible", timeout_s=20.0,
+        output_trust="untrusted",  # Dateinamen können aus fremden Quellen stammen (Downloads)
+        description="Öffnet die Explorer-Suche im Benutzerordner und nennt die neuesten Treffer.",
         input_schema={"type": "object", "additionalProperties": False, "required": ["query"], "properties": {
             "query": {"type": "string", "minLength": 1, "maxLength": 200},
         }},
         handler=search_files,
+    ))
+    registry.register(Capability(
+        name="pc.find_files", domain="pc", risk_class="R1", timeout_s=20.0, output_trust="untrusted",
+        description="Findet Dateien oder Ordner im Benutzerordner des PCs nach Namen (Windows-Suchindex) und "
+                    "liefert die neuesten Treffer mit Nummer (id), Ordner und Datum – ohne etwas zu öffnen. "
+                    "Öffnen danach mit pc.open_file und der id.",
+        input_schema={"type": "object", "additionalProperties": False, "required": ["query"], "properties": {
+            "query": {"type": "string", "minLength": 1, "maxLength": 200},
+            "kind": {"enum": ["file", "folder", "any"]},
+        }},
+        handler=find_files,
+    ))
+    registry.register(Capability(
+        name="pc.open_file", domain="pc", risk_class="R1", side_effects="reversible", timeout_s=20.0,
+        description="Öffnet eine Datei oder einen Ordner aus dem Benutzerordner mit dem passenden Programm: per "
+                    "Name (query, bester und neuester Treffer) oder per Nummer (id) aus der letzten Dateisuche. "
+                    "show=true markiert sie nur im Explorer. Programme und Skripte werden nie gestartet, nur markiert.",
+        input_schema={"type": "object", "additionalProperties": False, "properties": {
+            "query": {"type": "string", "minLength": 1, "maxLength": 200},
+            "id": {"type": "integer", "minimum": 1, "maximum": 50},
+            "kind": {"enum": ["file", "folder", "any"]},
+            "show": {"type": "boolean"},
+        }},
+        handler=open_file,
+    ))
+    registry.register(Capability(
+        # R2 wie pc.open_url: nach dem Lesen fremder Inhalte nur mit Bestätigung. Ohne Taint (der Nutzer fragt
+        # selbst) öffnet JARVIS den ersten Treffer direkt – wie „Auf gut Glück“.
+        name="pc.open_link", domain="pc", risk_class="R2", side_effects="reversible", timeout_s=20.0,
+        description="Sucht im Internet den passenden Link und öffnet ihn direkt im Browser des PCs (erster "
+                    "Treffer), z. B. die Webseite einer Firma, ein Rezept oder mit site=youtube das erste Video.",
+        input_schema={"type": "object", "additionalProperties": False, "required": ["query"], "properties": {
+            "query": {"type": "string", "minLength": 1, "maxLength": 300},
+            "site": {"enum": list(LINK_SITES)},
+        }},
+        handler=open_link,
     ))

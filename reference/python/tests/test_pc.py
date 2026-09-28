@@ -49,11 +49,31 @@ CTX = InvocationContext(correlation_id="c1", actor="user:alex", session_id="s1",
     ("Kannst du nach Kürbissuppe suchen?", "pc.search_web", {"query": "Kürbissuppe"}),
     ("Such auf YouTube nach Katzenvideos", "pc.search_web", {"query": "Katzenvideos", "site": "youtube"}),
     ("Kannst du mir Katzenvideos auf YouTube zeigen?", "pc.search_web", {"query": "Katzenvideos", "site": "youtube"}),
-    ("Spiel Lofi Musik auf YouTube", "pc.search_web", {"query": "Lofi Musik", "site": "youtube"}),
+    ("Spiel Lofi Musik auf YouTube", "pc.open_link", {"query": "Lofi Musik", "site": "youtube"}),  # erstes Video
     ("Such auf Amazon nach Kopfhörern", "pc.search_web", {"query": "Kopfhörern", "site": "amazon"}),
     ("Such die Datei Rechnung", "pc.search_files", {"query": "Rechnung"}),
     ("Kannst du nach der Datei Steuererklärung suchen?", "pc.search_files", {"query": "Steuererklärung"}),
     ("Finde Urlaubsfotos auf meinem PC", "pc.search_files", {"query": "Urlaubsfotos"}),
+    # Link heraussuchen und direkt öffnen
+    ("Such mir einen Link zu Lasagne und öffne ihn", "pc.open_link", {"query": "Lasagne"}),
+    ("Kannst du mir einen Link zu einem Lasagne Rezept suchen und öffnen?", "pc.open_link",
+     {"query": "Lasagne Rezept"}),
+    ("Such nach Pizza und öffne das erste Ergebnis", "pc.open_link", {"query": "Pizza"}),
+    ("Öffne die Webseite von Media Markt", "pc.open_link", {"query": "Media Markt"}),
+    ("Öffne den ersten Treffer für Wetter Berlin", "pc.open_link", {"query": "Wetter Berlin"}),
+    ("Geh auf Chefkoch", "pc.open_link", {"query": "Chefkoch"}),
+    ("Öffne das erste Video von Kurzgesagt", "pc.open_link", {"query": "Kurzgesagt", "site": "youtube"}),
+    ("Geh auf YouTube", "pc.open_url", {"url": "https://www.youtube.com"}),
+    ("Bring mich zu heise.de", "pc.open_url", {"url": "https://heise.de"}),
+    ("Such mir ein paar Links zu Kürbissuppe", "web.search", {"query": "Kürbissuppe"}),
+    # Dateien öffnen und finden
+    ("Öffne die Datei Bewerbung", "pc.open_file", {"query": "Bewerbung", "kind": "file"}),
+    ("Kannst du die Datei Bewerbung öffnen?", "pc.open_file", {"query": "Bewerbung", "kind": "file"}),
+    ("Öffne die PDF Bewerbung", "pc.open_file", {"query": "Bewerbung .pdf", "kind": "file"}),
+    ("Öffne Bewerbung.pdf", "pc.open_file", {"query": "bewerbung.pdf", "kind": "file"}),
+    ("Öffne den Ordner Projekte", "pc.open_file", {"query": "Projekte", "kind": "folder"}),
+    ("Wo ist meine Steuererklärung?", "pc.find_files", {"query": "Steuererklärung", "kind": "any"}),
+    ("Wo habe ich die Datei Rechnung gespeichert?", "pc.find_files", {"query": "Rechnung", "kind": "any"}),
 ])
 def test_pc_fast_path(text, capability, arguments):
     match = FastPath({}, {}).match(text)
@@ -105,10 +125,13 @@ def test_hub_round_trip_and_errors():
 
 
 START_MENU = ["Steam", "Steam Support Center", "Minecraft Launcher", "Google Chrome", "Counter-Strike 2",
-              "Visual Studio Code", "Microsoft Teams (work or school)", "Microsoft Teams"]
+              "Visual Studio Code", "Microsoft Teams (work or school)", "Microsoft Teams", "Discord"]
 
 
-def connected_hub(start_apps=START_MENU, actions=("open_url", "open_app", "open_folder", "search_files")):
+ACTIONS = ("open_url", "open_app", "open_folder", "search_files", "find_files", "open_file")
+
+
+def connected_hub(start_apps=START_MENU, actions=ACTIONS):
     hub = AgentHub(timeout_s=1)
     sent = []
 
@@ -133,6 +156,9 @@ def connected_hub(start_apps=START_MENU, actions=("open_url", "open_app", "open_
     ("teams", "Microsoft Teams"),                            # bei Gleichstand der kürzeste Name
     ("explorer", "explorer"),                                # feste Liste des Agenten zuerst
     ("fortnite", None), ("einkaufsliste", None), ("st", None),  # nicht installiert / kein ganzes Wort
+    ("discort", "Discord"), ("minecraf", "Minecraft Launcher"),  # Hörfehler der Spracherkennung
+    ("steem", "Steam"), ("teams", "Microsoft Teams"),          # „teams“ ist nicht „steam“
+    ("spiel", None), ("minesweeper", None),                    # nicht ähnlich genug
 ])
 def test_find_app_matches_installed_programs(spoken, program):
     assert connected_hub().find_app(spoken) == program
@@ -205,6 +231,150 @@ def test_unknown_program_names_go_to_the_llm(orchestrator):
     assert steam.route == "fast_path" and hub.sent[-1]["arguments"] == {"app": "Steam"}
     other = turn("Öffne die Einkaufsliste")  # kein Programm dieses Namens: nicht raten, das LLM fragt nach
     assert other.route != "fast_path" and other.text == "Welche Liste?" and len(hub.sent) == 1
+
+
+class FakeWeb:
+    def __init__(self, results=None, error=None):
+        self.results, self.error, self.queries = results or [], error, []
+
+    async def search(self, query, *, limit=5):
+        self.queries.append(query)
+        if self.error:
+            raise self.error
+        return self.results[:limit]
+
+
+def test_open_link_opens_the_first_result():
+    from jarvis.websearch import SearchResult
+
+    registry, hub = ToolRegistry(), connected_hub()
+    web = FakeWeb([SearchResult("Chefkoch", "https://www.chefkoch.de/"), SearchResult("B", "https://b.example")])
+    register_pc_capabilities(registry, hub, web=web)
+    result = asyncio.run(registry.get("pc.open_link").handler({"query": "Chefkoch"}, CTX))
+    assert hub.sent[-1]["arguments"] == {"url": "https://www.chefkoch.de/"}
+    assert result == {"query": "Chefkoch", "via": "search", "url": "https://www.chefkoch.de/", "title": "Chefkoch"}
+    asyncio.run(registry.get("pc.open_link").handler({"query": "Lofi Musik", "site": "youtube"}, CTX))
+    assert web.queries[-1] == "Lofi Musik site:youtube.com"
+
+
+def test_open_link_falls_back_to_the_browser_redirect():
+    registry, hub = ToolRegistry(), connected_hub()
+    register_pc_capabilities(registry, hub, web=FakeWeb(error=JarvisError("JRV-INT-001", "blockiert")))
+    result = asyncio.run(registry.get("pc.open_link").handler({"query": "Chefkoch"}, CTX))
+    assert hub.sent[-1]["arguments"] == {"url": "https://duckduckgo.com/?q=%5CChefkoch"} and result["via"] == "browser"
+
+
+def test_open_link_without_agent_does_not_search():
+    registry, web = ToolRegistry(), FakeWeb()
+    register_pc_capabilities(registry, AgentHub(), web=web)
+    with pytest.raises(JarvisError) as exc:
+        asyncio.run(registry.get("pc.open_link").handler({"query": "Chefkoch"}, CTX))
+    assert exc.value.code == "JRV-DEV-001" and web.queries == []
+
+
+def test_file_capabilities_reach_the_agent():
+    registry, hub = ToolRegistry(), connected_hub()
+    register_pc_capabilities(registry, hub)
+    asyncio.run(registry.get("pc.find_files").handler({"query": "Rechnung"}, CTX))
+    assert hub.sent[-1]["action"] == "find_files" and hub.sent[-1]["arguments"] == {"query": "Rechnung", "kind": "any"}
+    asyncio.run(registry.get("pc.open_file").handler({"id": 2}, CTX))
+    assert hub.sent[-1]["action"] == "open_file" and hub.sent[-1]["arguments"] == {"id": 2}
+    with pytest.raises(JarvisError) as exc:
+        asyncio.run(registry.get("pc.open_file").handler({}, CTX))
+    assert exc.value.user_message == "Welche Datei soll ich öffnen?"
+    assert registry.get("pc.find_files").output_trust == "untrusted"  # Dateinamen sind Fremdinhalt
+    assert registry.get("pc.open_link").risk_class == "R2"  # nach Fremdinhalten nur mit Bestätigung
+
+
+def dialog(orchestrator, hub, web=None):
+    """Orchestrator mit verbundenem Agenten, der Dateilisten liefert und Öffnen bestätigt."""
+    from jarvis.context import Situation
+    from jarvis.testing import ScriptedProvider, say
+
+    files = [{"id": 1, "name": "Steuer_2025.pdf", "folder": "Documents", "kind": "file"},
+             {"id": 2, "name": "Steuer_2024.pdf", "folder": "Documents\\Archiv", "kind": "file"}]
+
+    last = []
+
+    async def send(message):
+        hub.sent.append(message)
+        action, args = message["action"], message["arguments"]
+        if action in ("find_files", "search_files"):
+            # wie der echte Agent: Treffer je Suche neu nummeriert, die Liste bleibt für „die zweite“ gemerkt
+            last[:] = [{**f, "id": i + 1} for i, f in enumerate(f for f in files
+                                                               if args["query"].lower() in f["name"].lower())]
+            result = {"query": args["query"], "total": len(last), "results": last}
+        elif action == "open_file":
+            item = last[args.get("id", 1) - 1]
+            result = {"opened": item["name"], "folder": item["folder"], "kind": "file"}
+        else:
+            result = {}
+        hub.resolve({"id": message["id"], "ok": True, "result": result})
+
+    hub.sent = []
+    hub.attach(send, {"name": "PC", "apps": ["explorer"], "start_apps": ["Steam"], "actions": list(ACTIONS)})
+    register_pc_capabilities(orchestrator.registry, hub, web=web)
+    orchestrator.app_resolver = hub.find_app
+    situation = Situation(now=datetime(2026, 9, 27, 12, 0))
+
+    def turn(text, llm=None):
+        request = TurnRequest(text=text, session_id="d", principal=ALEX)
+        return asyncio.run(orchestrator.handle_turn(request, provider=llm or ScriptedProvider([say("-")]),
+                                                    situation=situation))
+    return turn
+
+
+def test_choose_from_a_file_list(orchestrator):
+    hub = AgentHub(timeout_s=1)
+    turn = dialog(orchestrator, hub)
+    listing = turn("Wo ist meine Steuer?")
+    assert listing.route == "fast_path" and hub.sent[-1]["action"] == "find_files"
+    chosen = turn("Öffne die zweite")
+    assert chosen.route == "fast_path" and hub.sent[-1]["arguments"] == {"id": 2}
+    # Die Liste gilt nur für den direkt folgenden Satz
+    assert turn("die erste").route != "fast_path" and hub.sent[-1]["arguments"] == {"id": 2}
+
+
+def test_yes_opens_a_single_hit_only_after_jarvis_asked(orchestrator):
+    from jarvis.testing import ScriptedProvider, call_tool, say
+
+    hub = AgentHub(timeout_s=1)
+    turn = dialog(orchestrator, hub)
+    assert turn("Wo ist meine Steuer_2024?").route == "fast_path"
+    assert turn("Ja").route == "fast_path" and hub.sent[-1]["arguments"] == {"id": 1}
+    # Nach einer Liste des Sprachmodells ist „ja“ keine Auswahl – „die zweite“ schon
+    llm = ScriptedProvider([call_tool("pc__find_files", {"query": "Steuer"}), say("Zwei Treffer. Mehr dazu?")])
+    turn("Hast du meine Steuerunterlagen irgendwo gesehen?", llm)
+    assert turn("Ja", ScriptedProvider([say("Gern.")])).text == "Gern."
+    llm = ScriptedProvider([call_tool("pc__find_files", {"query": "Steuer"}), say("Zwei Treffer.")])
+    turn("Hast du meine Steuerunterlagen irgendwo gesehen?", llm)
+    assert turn("die zweite").route == "fast_path" and hub.sent[-1]["arguments"] == {"id": 2}
+
+
+def test_choose_a_link_from_a_web_list_without_confirmation(orchestrator):
+    from jarvis.websearch import SearchResult, register_web_capabilities
+
+    hub = AgentHub(timeout_s=1)
+    web = FakeWeb([SearchResult("Lasagne", "https://www.chefkoch.de/lasagne"),
+                   SearchResult("Lasagne al forno", "https://www.lecker.de/lasagne")])
+    register_web_capabilities(orchestrator.registry, web)
+    turn = dialog(orchestrator, hub, web)
+    assert turn("Such mir ein paar Links zu Lasagne").route == "fast_path"
+    chosen = turn("den zweiten Link")
+    # Der Nutzer hat selbst gewählt: keine Rückfrage, obwohl die Liste aus dem Web stammt
+    assert chosen.actions[0].status == "succeeded"
+    assert hub.sent[-1]["arguments"] == {"url": "https://www.lecker.de/lasagne"}
+
+
+def test_unknown_names_without_article_open_the_website(orchestrator):
+    from jarvis.websearch import SearchResult
+
+    hub = AgentHub(timeout_s=1)
+    turn = dialog(orchestrator, hub, FakeWeb([SearchResult("Chefkoch", "https://www.chefkoch.de/")]))
+    result = turn("Öffne Chefkoch")  # kein Programm dieses Namens installiert
+    assert result.actions[0].capability == "pc.open_link"
+    assert hub.sent[-1]["arguments"] == {"url": "https://www.chefkoch.de/"}
+    assert turn("Öffne Steam").actions[0].capability == "pc.open_app"
 
 
 def test_open_url_accepts_only_web_addresses():

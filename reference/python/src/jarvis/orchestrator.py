@@ -17,7 +17,7 @@ from typing import Any, Protocol
 from .context import ContextBuilder, Situation
 from .errors import JarvisError
 from .events import CloudEvent, EventBus, new_id
-from .fastpath import FastPath, FastPathMatch, confirmation_reply, conversation_intent
+from .fastpath import FastPath, FastPathMatch, confirmation_reply, conversation_intent, selection_reply
 from .llm.base import (
     AssistantTurn,
     LLMProvider,
@@ -104,11 +104,25 @@ class TurnResult:
 
 
 @dataclass
+class Offer:
+    """Zuletzt genannte Trefferliste (Dateien oder Links), aus der der Nutzer im nächsten Satz wählen kann."""
+
+    kind: str  # files | web
+    items: list[dict[str, Any]]
+    affirm: bool = False  # „ja“ = erster Eintrag
+
+
+# Capabilities, deren Trefferliste JARVIS zur Auswahl anbietet („die zweite“, „ja“)
+OFFER_SOURCES = {"pc.find_files": "files", "pc.search_files": "files", "web.search": "web"}
+
+
+@dataclass
 class Session:
     id: str
     transcript: list[Turn] = field(default_factory=list)
     tainted: bool = False
     last_active: datetime = field(default_factory=lambda: datetime.now(UTC))
+    offer: Offer | None = None  # gilt nur für den direkt folgenden Satz
 
 
 class AuditSink(Protocol):
@@ -240,6 +254,22 @@ class Orchestrator:
             if reply is not None:
                 return await self._resolve_by_voice(pending, req, approve=reply)
 
+        # Auswahl aus der eben genannten Liste („die zweite“, „ja“) – nur im direkt folgenden Satz
+        offer, session.offer = session.offer, None
+        choice = selection_reply(req.text, len(offer.items), affirm=offer.affirm) if offer is not None else None
+        if offer is not None and choice is not None:
+            item = offer.items[choice - 1]
+            match = (FastPathMatch("pc.open_file", {"id": item["id"]}, 0.95, "selection")
+                     if offer.kind == "files" else FastPathMatch("pc.open_url", {"url": item["url"]}, 0.95, "selection"))
+            if self.registry.get(match.capability) is not None:
+                # Der Nutzer hat den Eintrag selbst gewählt: kein Taint, auch wenn die Liste aus dem Web stammt
+                record = await self.request_action(
+                    capability=match.capability, arguments=match.arguments, principal=req.principal,
+                    correlation_id=req.correlation_id, session_id=req.session_id, via="fast_path",
+                    ctx=PolicyContext(tainted=False, allowed_domains=None, mode=req.mode, now=situation.now),
+                )
+                return self._fast_path_result(record, {"title": item.get("title")})
+
         # 2) Intent-Erkennung: Gesprächs-Intents und Befehle deterministisch, ohne LLM
         intent = conversation_intent(req.text)
         match = self.fast_path.match(req.text, default_area=req.principal.area) if self.fast_path else None
@@ -255,10 +285,17 @@ class Orchestrator:
         if match is not None and match.grammar == "pc_open_guess":
             # Unbekannter Name („Öffne Steam“): nur direkt starten, wenn der PC ein passendes Programm hat –
             # sonst ist womöglich gar kein Programm gemeint („Öffne die Einkaufsliste“), das klärt das LLM.
+            # Namen ohne Artikel („Öffne Chefkoch“) sind oft Webseiten: dann der beste Treffer im Browser.
             app = None
             if self.registry.get(match.capability) is not None:
                 app = self.app_resolver(match.arguments["app"]) if self.app_resolver else match.arguments["app"]
-            match = replace(match, arguments={"app": app}) if app else None
+            if app:
+                match = replace(match, arguments={"app": app})
+            elif match.slots.get("web_fallback") and self.registry.get("pc.open_link") is not None:
+                match = FastPathMatch("pc.open_link", {"query": match.slots["target"]}, 0.8, "pc_open_link_fallback",
+                                      {"query": match.slots["target"]})
+            else:
+                match = None
         if match is not None:
             # 3) Kontext-Interpretation: fehlende Angaben aus der Situation ergänzen (Ort fürs Wetter usw.)
             arguments = self._interpret(match, situation)
@@ -443,7 +480,22 @@ class Orchestrator:
             record.status = "succeeded"
             record.result = {"dry_run": True}
             return record
-        return await self._execute(cap, record, principal, correlation_id, session_id)
+        record = await self._execute(cap, record, principal, correlation_id, session_id)
+        self._remember_offer(session_id, record, via)
+        return record
+
+    def _remember_offer(self, session_id: str | None, record: ActionRecord, via: str) -> None:
+        """Trefferliste für den nächsten Satz merken („die zweite“). „Ja“ gilt nur, wenn JARVIS selbst gefragt hat
+        (Sofortbefehl) – nach einer LLM-Antwort kann ein „Ja“ auch etwas anderes meinen."""
+        session = self.sessions.get(session_id) if session_id else None
+        kind = OFFER_SOURCES.get(record.capability)
+        if session is None or kind is None or record.status != "succeeded" or not isinstance(record.result, dict):
+            return
+        items = [i for i in record.result.get("results") or [] if isinstance(i, dict)]
+        valid = (lambda i: isinstance(i.get("id"), int)) if kind == "files" else (
+            lambda i: str(i.get("url", "")).startswith(("https://", "http://")))
+        if items and all(valid(i) for i in items):
+            session.offer = Offer(kind, items, affirm=via == "fast_path")
 
     async def resolve_confirmation(self, confirmation_id: str, *, approve: bool, resolver: Principal,
                                    method_used: str) -> ActionRecord:

@@ -2,8 +2,9 @@
 # Verbindet sich selbst mit JARVIS (ws://127.0.0.1:8080/v1/agent) – auf dem PC wird kein Port geöffnet.
 # Ausgeführt wird nur, was hier freigegeben ist: Webseiten (nur http/https), Programme aus der Liste unten
 # (erweiterbar über %LOCALAPPDATA%\JARVIS\apps.json, z. B. {"mein tool": "C:\\Tools\\tool.exe"}), Programme aus dem
-# Windows-Startmenü (per Name, ohne Deinstallations- und Setup-Einträge), bekannte Ordner und die Explorer-Suche.
-# JARVIS schickt nur Namen und Suchbegriffe – nie Pfade oder Befehle.
+# Windows-Startmenü (per Name, ohne Deinstallations- und Setup-Einträge), bekannte Ordner, Dateien im Benutzerordner
+# (Suche über den Windows-Suchindex; Programme und Skripte darunter werden nur im Explorer markiert, nie gestartet)
+# und die Explorer-Suche. JARVIS schickt nur Namen, Suchbegriffe und Trefferummern – nie Pfade oder Befehle.
 # Wird vom Startskript (jarvis-launch.ps1) unsichtbar gestartet. Protokoll: %LOCALAPPDATA%\JARVIS\pc-agent.log
 # Kompatibel mit Windows PowerShell 5.1.
 
@@ -12,7 +13,7 @@ $jarvisHome = Join-Path $env:LOCALAPPDATA 'JARVIS'
 $logFile = Join-Path $jarvisHome 'pc-agent.log'
 $config = Get-Content -Raw -Encoding UTF8 (Join-Path $jarvisHome 'config.json') | ConvertFrom-Json
 
-$agentVersion = '2.1.0'
+$agentVersion = '2.2.0'
 $mutex = New-Object System.Threading.Mutex($false, 'Local\JarvisPcAgent')
 try { $owned = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }   # Vorgänger beendet
 if (-not $owned) { exit 0 }   # läuft bereits
@@ -124,6 +125,154 @@ function Start-StartApp($entry) {
     }
 }
 
+# Dateien im Benutzerordner: Windows-Suchindex (schnell), sonst Durchsuchen der üblichen Ordner.
+# Die letzte Trefferliste bleibt gemerkt, damit JARVIS „die zweite“ öffnen kann (per Nummer, nie per Pfad).
+$script:found = @()
+$noLaunch = @('.exe', '.bat', '.cmd', '.com', '.ps1', '.psm1', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh', '.msi',
+              '.msp', '.scr', '.hta', '.cpl', '.msc', '.jar', '.reg', '.lnk', '.pif', '.url', '.inf', '.application',
+              '.appref-ms', '.settingcontent-ms', '.dll', '.sys', '.vbscript', '.psd1', '.ps1xml')
+
+function Get-SearchWords([string]$query) {
+    $clean = $query.ToLower() -replace "[%_\[\]'`"*?<>|]", ' '
+    return @($clean -split '\s+' | Where-Object { $_ })
+}
+
+function Get-WordVariants([string]$word) {
+    # „steuererklärung“ findet auch „Steuererklaerung.pdf“
+    $alt = $word.Replace('ä', 'ae').Replace('ö', 'oe').Replace('ü', 'ue').Replace('ß', 'ss')
+    if ($alt -ne $word) { return @($word, $alt) }
+    return @($word)
+}
+
+function Test-NameMatch([string]$name, $words) {
+    $lower = $name.ToLower()
+    foreach ($word in $words) {
+        $hit = $false
+        foreach ($variant in (Get-WordVariants $word)) { if ($lower.Contains($variant)) { $hit = $true } }
+        if (-not $hit) { return $false }
+    }
+    return $true
+}
+
+function Find-Files([string]$query, [string]$kind = 'any', [int]$limit = 20) {
+    $words = Get-SearchWords $query
+    if ($words.Count -eq 0) { return @() }
+    $userHome = [Environment]::GetFolderPath('UserProfile')
+    $items = New-Object System.Collections.ArrayList
+    try {
+        $conditions = foreach ($word in $words) {
+            '(' + ((Get-WordVariants $word | ForEach-Object { "System.FileName LIKE '%$_%'" }) -join ' OR ') + ')'
+        }
+        $sql = "SELECT TOP 60 System.ItemPathDisplay, System.DateModified FROM SYSTEMINDEX WHERE SCOPE='file:" +
+               $userHome.Replace('\', '/') + "' AND " + (@($conditions) -join ' AND ') + ' ORDER BY System.DateModified DESC'
+        $connection = New-Object -ComObject ADODB.Connection
+        $connection.Open("Provider=Search.CollatorDSO;Extended Properties='Application=Windows';")
+        try {
+            $records = $connection.Execute($sql)
+            while (-not $records.EOF) {
+                [void]$items.Add([pscustomobject]@{
+                    Path = [string]$records.Fields.Item('System.ItemPathDisplay').Value
+                    Modified = $records.Fields.Item('System.DateModified').Value
+                })
+                $records.MoveNext()
+            }
+            $records.Close()
+        } finally {
+            $connection.Close()
+        }
+    } catch {
+        Write-Log "Windows-Suchindex nicht verfügbar ($($_.Exception.Message)) – durchsuche die Benutzerordner"
+        $items.Clear()
+        $roots = @('Desktop', 'MyDocuments', 'MyPictures', 'MyMusic', 'MyVideos' | ForEach-Object { [Environment]::GetFolderPath($_) })
+        $roots += (Join-Path $userHome 'Downloads')
+        if ($env:OneDrive) { $roots += $env:OneDrive }
+        foreach ($root in ($roots | Select-Object -Unique)) {
+            if (-not $root -or -not (Test-Path -LiteralPath $root)) { continue }
+            foreach ($variant in (Get-WordVariants $words[0])) {
+                Get-ChildItem -LiteralPath $root -Recurse -Depth 6 -Filter ('*' + $variant + '*') -ErrorAction SilentlyContinue |
+                    Where-Object { Test-NameMatch $_.Name $words } | Select-Object -First 100 |
+                    ForEach-Object { [void]$items.Add([pscustomobject]@{ Path = $_.FullName; Modified = $_.LastWriteTime }) }
+            }
+        }
+    }
+    $hits = @($items | Where-Object { $_.Path -and $_.Path -notmatch '\\AppData\\' } | Sort-Object Path -Unique |
+        Sort-Object Modified -Descending)
+    if ($kind -eq 'folder') { $hits = @($hits | Where-Object { Test-Path -LiteralPath $_.Path -PathType Container }) }
+    elseif ($kind -eq 'file') { $hits = @($hits | Where-Object { Test-Path -LiteralPath $_.Path -PathType Leaf }) }
+    return @($hits | Select-Object -First $limit)
+}
+
+function Get-DisplayFolder([string]$path) {
+    $userHome = [Environment]::GetFolderPath('UserProfile')
+    $dir = Split-Path -Parent $path
+    if ($dir.StartsWith($userHome, [StringComparison]::OrdinalIgnoreCase)) { $dir = $dir.Substring($userHome.Length).TrimStart('\') }
+    return $dir
+}
+
+function Get-FoundList([int]$count) {
+    $list = @()
+    for ($i = 0; $i -lt [Math]::Min($count, $script:found.Count); $i++) {
+        $item = $script:found[$i]
+        $modified = ''
+        if ($item.Modified -is [datetime]) { $modified = $item.Modified.ToString('yyyy-MM-dd') }
+        $kind = 'file'
+        if (Test-Path -LiteralPath $item.Path -PathType Container) { $kind = 'folder' }
+        $list += @{ id = $i + 1; name = (Split-Path -Leaf $item.Path); folder = (Get-DisplayFolder $item.Path)
+                    modified = $modified; kind = $kind }
+    }
+    return $list
+}
+
+function Select-BestFile($items, [string]$query) {
+    # exakter Name vor Namensanfang vor Namensteil; bei Gleichstand die neueste (Liste ist nach Datum sortiert)
+    $wanted = ConvertTo-AppKey $query
+    $best = $null
+    $bestRank = 9
+    foreach ($item in $items) {
+        $leaf = Split-Path -Leaf $item.Path
+        $key = ConvertTo-AppKey ([IO.Path]::GetFileNameWithoutExtension($leaf))
+        $rank = 3
+        if ($key -eq $wanted -or (ConvertTo-AppKey $leaf) -eq $wanted) { $rank = 0 }
+        elseif ($wanted -and $key.StartsWith($wanted)) { $rank = 1 }
+        elseif ($wanted -and $key.Contains($wanted)) { $rank = 2 }
+        if ($rank -lt $bestRank) {
+            $best = $item
+            $bestRank = $rank
+        }
+    }
+    return $best
+}
+
+function Open-FoundItem($item, [bool]$show) {
+    $path = [string]$item.Path
+    $name = Split-Path -Leaf $path
+    if (-not (Test-Path -LiteralPath $path)) { throw ('„' + $name + '“ ist nicht mehr vorhanden.') }
+    $isFolder = Test-Path -LiteralPath $path -PathType Container
+    $kind = 'file'
+    if ($isFolder) { $kind = 'folder' }
+    $result = @{ opened = $name; folder = (Get-DisplayFolder $path); kind = $kind; shown = $false; blocked = $false }
+    $program = (-not $isFolder) -and ($noLaunch -contains [IO.Path]::GetExtension($path).ToLower())
+    if ($show -or $program) {
+        # Programme, Skripte und Verknüpfungen nie starten – nur im Explorer zeigen
+        Start-Process explorer.exe -ArgumentList ('/select,"' + $path + '"') -ErrorAction Stop
+        $result.shown = $true
+        $result.blocked = [bool]$program -and -not $show
+        return $result
+    }
+    if ($isFolder) {
+        Start-Process explorer.exe -ArgumentList ('"' + $path + '"') -ErrorAction Stop
+    } else {
+        Invoke-Item -LiteralPath $path -ErrorAction Stop   # Standardprogramm (PDF-Anzeige, Word, Fotos …)
+    }
+    return $result
+}
+
+function Get-Kind($arguments) {
+    $kind = [string]$arguments.kind
+    if (@('file', 'folder') -notcontains $kind) { $kind = 'any' }
+    return $kind
+}
+
 function Invoke-Action([string]$action, $arguments) {
     switch ($action) {
         'open_url' {
@@ -166,7 +315,30 @@ function Invoke-Action([string]$action, $arguments) {
             $search = 'search-ms:displayname=' + [Uri]::EscapeDataString('Suche nach ' + $query) +
                       '&query=' + [Uri]::EscapeDataString($query) + '&crumb=location:' + $location
             Start-Process explorer.exe -ArgumentList ('"' + $search + '"') -ErrorAction Stop
-            return @{ searched = $query }
+            $script:found = @(Find-Files $query 'any' 20)
+            return @{ searched = $query; total = $script:found.Count; results = @(Get-FoundList 5) }
+        }
+        'find_files' {
+            $query = ([string]$arguments.query).Trim()
+            if (-not $query) { throw 'Wonach soll ich suchen?' }
+            $script:found = @(Find-Files $query (Get-Kind $arguments) 20)
+            return @{ query = $query; total = $script:found.Count; results = @(Get-FoundList 5) }
+        }
+        'open_file' {
+            if ($arguments.id) {
+                $index = [int]$arguments.id - 1
+                if ($index -lt 0 -or $index -ge $script:found.Count) { throw 'Diese Nummer gibt es in der letzten Suche nicht.' }
+                $item = $script:found[$index]
+            } else {
+                $query = ([string]$arguments.query).Trim()
+                if (-not $query) { throw 'Welche Datei soll ich öffnen?' }
+                $script:found = @(Find-Files $query (Get-Kind $arguments) 20)
+                if ($script:found.Count -eq 0) { throw ('In Ihren Ordnern finde ich nichts zu „' + $query + '“.') }
+                $item = Select-BestFile $script:found $query
+            }
+            $result = Open-FoundItem $item ([bool]$arguments.show)
+            $result.total = $script:found.Count
+            return $result
         }
         'open_folder' {
             $key = [string]$arguments.folder
@@ -209,7 +381,7 @@ while ($true) {
         Send-Json $socket @{
             type = 'agent.hello'; name = $env:COMPUTERNAME; version = $agentVersion; apps = @($apps.Keys)
             start_apps = @(Get-StartAppNames); folders = @($folders.Keys)
-            actions = @('open_url', 'open_app', 'open_folder', 'search_files')
+            actions = @('open_url', 'open_app', 'open_folder', 'search_files', 'find_files', 'open_file')
         }
         $script:appsChanged = $false
         Write-Log 'Mit JARVIS verbunden'

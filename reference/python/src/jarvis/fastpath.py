@@ -50,8 +50,8 @@ _ASK = re.compile(rf"^(?:(?:kannst|könntest|würdest) du|(?:können|könnten|w�
                   rf"hätte gerne?|muss)|lass uns|wir (?:müssen|sollten))\s+(?P<rest>.+?)\s+(?P<verb>{_ANY_VERB})$", re.I)
 _VERB_LAST = re.compile(rf"^(?P<rest>.+?)\s+(?P<verb>{_ANY_VERB})$", re.I)
 PC_OPEN = re.compile(r"^(?P<verb>öffne|starte|start|ruf|rufe|mach|zeig|zeige|spiel|spiele)\s+(?:mir\s+)?"
-                     r"(?:den|die|das|einen|eine|ein|meine|meinen|mein)?\s*(?P<target>[\wäöüß .+&'-]+?)(?P<auf>\s+auf)?$",
-                     re.I)
+                     r"(?:(?P<article>den|die|das|einen|eine|ein|meine|meinen|mein)\s+)?(?P<target>[\wäöüß .+&'-]+?)"
+                     r"(?P<auf>\s+auf)?$", re.I)
 _SITES = r"youtube|google|amazon|wikipedia|ebay"
 _ON_PC = r"(?:auf (?:dem|meinem) (?:pc|computer|rechner|laptop)|am (?:pc|computer|rechner)|in meinen dateien|" \
          r"auf der festplatte)"
@@ -66,9 +66,56 @@ PC_SEARCH_SITE = [
     re.compile(rf"^(?:such|suche|google|googel)\s+(?:auf|bei|in)\s+(?P<site>{_SITES})\s+(?:nach\s+)?(?P<query>.+)$",
                re.I),
     re.compile(rf"^(?:such|suche)\s+(?:nach\s+)?(?P<query>.+?)\s+(?:auf|bei|in)\s+(?P<site>{_SITES})$", re.I),
-    re.compile(r"^(?:zeig|zeige|spiel|spiele|öffne|starte)\s+(?:mir\s+)?(?P<query>.+?)\s+(?:auf|bei|in)\s+"
-               r"(?P<site>youtube)$", re.I),
+    re.compile(r"^(?:zeig|zeige|öffne|starte)\s+(?:mir\s+)?(?P<query>.+?)\s+(?:auf|bei|in)\s+(?P<site>youtube)$", re.I),
 ]
+# Link heraussuchen und direkt öffnen (erster Treffer) bzw. Trefferliste zum Auswählen
+_LINK = r"(?:link|webseite|website|homepage|internetseite|seite|url)"
+_ABOUT = r"(?:zu|zum|zur|für|von|vom|über|mit)"
+PC_OPEN_LINK = [
+    re.compile(rf"^(?:such|suche|finde|find|hol|hole|gib)\s+(?:mir\s+)?(?:nach\s+)?(?:(?:einen|den|ein|die|eine)\s+)?"
+               rf"(?:passenden\s+|guten\s+)?{_LINK}\s+{_ABOUT}\s+(?P<query>.+?)(?:\s+(?:raus|heraus))?"
+               rf"(?:\s+und\s+(?:öffne|mach|zeig)(?:\s+(?:ihn|sie|es|den|die|das))?(?:\s+auf)?)?$", re.I),
+    re.compile(r"^(?:such|suche|google|googel)\s+(?:nach\s+)?(?P<query>.+?)\s+und\s+(?:öffne|mach|zeig)\s+(?:mir\s+)?"
+               r"(?:ihn|sie|es|das|den|die)(?:\s+(?:erste|ersten|beste|besten))?"
+               r"(?:\s+(?:ergebnis|treffer|link|seite|video))?(?:\s+auf)?$", re.I),
+    re.compile(r"^(?:öffne|zeig|zeige)\s+(?:mir\s+)?(?:den|das|die)\s+(?:ersten?|besten?)\s+(?:treffer|link|ergebnis|"
+               r"suchergebnis|seite)\s+(?:für|zu|von|zum|zur)\s+(?P<query>.+)$", re.I),
+    re.compile(r"^(?:öffne|zeig|zeige|spiel|spiele)\s+(?:mir\s+)?(?:(?:das|ein)\s+)?(?:erste\s+|beste\s+)?video\s+"
+               r"(?:von|zu|über|mit|vom|zum)\s+(?P<query>.+?)(?:\s+(?:auf|bei)\s+youtube)?(?P<yt>)$", re.I),
+    re.compile(r"^(?:spiel|spiele)\s+(?:mir\s+)?(?P<query>.+?)\s+(?:auf|bei|in)\s+youtube(?:\s+ab)?(?P<yt>)$", re.I),
+]
+PC_OPEN_WEBSITE = re.compile(r"^(?:öffne|zeig|zeige)\s+(?:mir\s+)?(?:die\s+)?(?:offizielle\s+)?"
+                             r"(?:webseite|website|homepage|internetseite|seite)\s+(?:von\s+(?:der\s+|dem\s+)?|"
+                             r"vom\s+|der\s+|des\s+|zu\s+|zum\s+|zur\s+|für\s+)?(?P<query>.+)$", re.I)
+WEB_LIST = re.compile(rf"^(?:such|suche|zeig|zeige|finde|gib|nenn|nenne)\s+(?:mir\s+)?(?:nach\s+)?"
+                      rf"(?:ein paar|einige|mehrere|die besten)?\s*(?:links|webseiten|seiten|ergebnisse|treffer|"
+                      rf"quellen)\s+{_ABOUT}\s+(?P<query>.+?)(?:\s+(?:raus|heraus))?$", re.I)
+# Dateien im Benutzerordner: öffnen („Öffne die Datei Bewerbung“) und finden („Wo ist meine Steuererklärung?“)
+_FILE_KINDS = r"datei|dokument|pdf|präsentation|tabelle|foto|bild|video|ordner"
+_FILE_HINTS = {"pdf": ".pdf", "präsentation": ".ppt", "tabelle": ".xls"}  # „die PDF Bewerbung“ -> Bewerbung .pdf
+PC_OPEN_FILE = re.compile(rf"^(?:öffne|zeig|zeige)\s+(?:mir\s+)?(?:(?:die|meine|das|den|mein|meinen|meiner)\s+)?"
+                          rf"(?P<kind>{_FILE_KINDS})\s+(?:namens\s+|mit dem namen\s+|von\s+|zu\s+|über\s+)?"
+                          rf"(?P<query>.+)$", re.I)
+_FILE_EXT = re.compile(r"\.(?:pdf|docx?|xlsx?|pptx?|txt|odt|ods|csv|rtf|jpe?g|png|gif|heic|mp3|wav|mp4|mov|mkv|zip|rar|"
+                       r"7z)$", re.I)
+_WHERE = r"^wo\s+(?:ist|liegt|sind|liegen|finde ich|habe ich|hab ich)\s+"
+_STORED = r"(?:\s+(?:gespeichert|abgelegt|hin|gespeichert hin|abgespeichert))?$"
+PC_FIND_FILES = [
+    re.compile(rf"{_WHERE}(?:meine|mein|meinen)\s+(?:(?P<kind>datei|dateien|ordner|dokument|dokumente)\s+)?"
+               rf"(?P<query>.+?){_STORED}", re.I),
+    re.compile(rf"{_WHERE}(?:die|der|das|den)\s+(?P<kind>datei|ordner|dokument|pdf)\s+(?P<query>.+?){_STORED}", re.I),
+    re.compile(r"^(?:zeig|zeige|nenn|nenne|liste)\s+(?:mir\s+)?(?:alle\s+|meine\s+)?(?:dateien|dokumente)\s+"
+               r"(?:mit|zu|namens|über|von)\s+(?P<query>.+)$", re.I),
+]
+# Auswahl aus der zuletzt genannten Liste: „die zweite“, „öffne den dritten Link“, „Nummer 2“, „ja“ (= den ersten)
+_ORDINALS = {"erste": 1, "zweite": 2, "dritte": 3, "vierte": 4, "fünfte": 5, "eins": 1, "zwei": 2, "drei": 3,
+             "vier": 4, "fünf": 5}
+SELECTION = re.compile(r"^(?:(?:öffne|nimm|zeig|zeige|mach|spiel)\s+(?:mir\s+)?)?(?:(?:die|den|das|der)\s+)?"
+                       r"(?:nummer\s+|nr\s+)?(?P<n>\d{1,2}|eins|zwei|drei|vier|fünf|(?:erst|zweit|dritt|viert|fünft|"
+                       r"letzt)e[nrs]?)(?:\s+(?:datei|link|treffer|ergebnis|eintrag|seite|video|davon))?(?:\s+auf)?$",
+                       re.I)
+AFFIRM = re.compile(r"^(?:ja(?:\s+(?:bitte|gerne|gern|mach das|öffne sie|öffne ihn|öffne es))?|gerne|gern|"
+                    r"(?:öffne|zeig|zeige)\s+(?:sie|ihn|es)|mach\s+(?:sie|ihn|es)\s+auf|mach das)$", re.I)
 PC_SEARCH = [
     re.compile(r"^(?:such|suche|google|googel|googeln)\s+(?:im internet\s+|online\s+|im web\s+)?nach\s+(?P<query>.+?)"
                r"(?:\s+im internet|\s+online|\s+im web)?$", re.I),
@@ -76,6 +123,8 @@ PC_SEARCH = [
     re.compile(r"^google\s+(?P<query>.+)$", re.I),
 ]
 _PREFIX = re.compile(r"^(?:(?:hey|hallo|ok|okay)\s+)?jarvis\s*[,:]?\s*|^bitte\s+", re.I)
+_GO_TO = re.compile(r"^(?:geh|gehe|navigier|navigiere|bring mich|führ mich|leite mich)\s+(?:auf|zu|zur|zum|nach)\s+"
+                    r"(?:(?:die\s+)?(?:seite|webseite|website)\s+)?", re.I)
 _DOMAIN = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:de|com|org|net|io|eu|at|ch|tv|info)$")
 # Diese Ziele gehören zum Haus, nicht zum PC – sie gehen an Home Assistant bzw. das LLM
 _HOME_WORDS = re.compile(r"\b(?:licht|lampe|tür|haustür|fenster|rollladen|rollo|jalousie|garage|garagentor|tor|heizung|"
@@ -120,6 +169,11 @@ def canonical_command(text: str) -> str:
     text = _PREFIX.sub("", re.sub(r"\s+", " ", text).strip())
     text = re.sub(r"\s+", " ", _FILLER.sub(" ", text)).strip()
     text = re.sub(r"\s+(?:jarvis|sir)$", "", text, flags=re.I)
+    text = _GO_TO.sub("öffne die webseite ", text)
+    text = re.sub(r"^(?:wechsel|wechsle|wechsele)\s+(?:zu|zum|zur|in)\s+(?:(?:den|die|das|dem|der)\s+)?", "öffne ", text,
+                  flags=re.I)
+    text = re.sub(r"\s+(?:suchen|raussuchen|heraussuchen|finden)\s+und\s+(?:öffnen|aufmachen|anzeigen|zeigen)$",
+                  " raussuchen", text, flags=re.I)
     for pattern in (_ASK, _VERB_LAST):
         if m := pattern.match(text):
             rest, verb = re.sub(r"^mir\s+", "", m["rest"], flags=re.I), m["verb"].lower()
@@ -253,10 +307,32 @@ class FastPath:
         return self._match_pc(canonical_command(text))
 
     def _match_pc(self, text: str) -> FastPathMatch | None:
+        for pattern in PC_OPEN_LINK:
+            if m := pattern.match(text):
+                return _open_link(m["query"], "youtube" if "yt" in m.groupdict() else None)
+        if m := WEB_LIST.match(text):
+            query = _web_query(m["query"])
+            return FastPathMatch("web.search", {"query": query}, 0.92, "web_list", {"query": query})
+        if m := PC_OPEN_WEBSITE.match(text):
+            return _open_site(m["query"])
         for pattern in PC_SEARCH_FILES:
             if m := pattern.match(text):
                 query = m["query"].strip()
                 return FastPathMatch("pc.search_files", {"query": query}, 0.92, "pc_search_files", {"query": query})
+        for pattern in PC_FIND_FILES:
+            if m := pattern.match(text):
+                query, kind = m["query"].strip(), (m.groupdict().get("kind") or "").lower()
+                arguments = {"query": query, "kind": "folder" if kind == "ordner" else "any"}
+                return FastPathMatch("pc.find_files", arguments, 0.9, "pc_find_files", {"query": query})
+        if m := PC_OPEN_FILE.match(text):
+            kind, query = m["kind"].lower(), m["query"].strip()
+            if kind == "ordner" and _pc_target(query) in PC_FOLDERS:
+                folder = PC_FOLDERS[_pc_target(query)]
+                return FastPathMatch("pc.open_folder", {"folder": folder}, 0.95, "pc_open_folder", {"target": query})
+            if kind in _FILE_HINTS:
+                query = f"{query} {_FILE_HINTS[kind]}"
+            arguments = {"query": query, "kind": "folder" if kind == "ordner" else "file"}
+            return FastPathMatch("pc.open_file", arguments, 0.92, "pc_open_file", {"query": query})
         for pattern in PC_SEARCH_SITE:
             if m := pattern.match(text):
                 query, site = m["query"].strip(), m["site"].lower()
@@ -269,6 +345,9 @@ class FastPath:
         if m := PC_OPEN.match(text):
             target, verb = _pc_target(m["target"]), m["verb"].lower()
             playing = verb.startswith("spiel")  # „Spiel Minecraft“: nur Programme, nie Ordner („Spiel Musik“)
+            if _FILE_EXT.search(target) and not playing:  # „Öffne Bewerbung.pdf“
+                return FastPathMatch("pc.open_file", {"query": target, "kind": "file"}, 0.92, "pc_open_file",
+                                     {"query": target})
             if target in PC_APPS and not playing:
                 return FastPathMatch("pc.open_app", {"app": PC_APPS[target]}, 0.95, "pc_open_app", {"target": target})
             if target in PC_FOLDERS and not playing:
@@ -277,8 +356,46 @@ class FastPath:
             url = PC_SITES.get(target) or (f"https://{target}" if _DOMAIN.match(target) else None)
             if url and not playing:
                 return FastPathMatch("pc.open_url", {"url": url}, 0.94, "pc_open_url", {"target": target})
-            # Unbekannter Name („Steam“, „Discord“): installiertes Programm? Prüft der Orchestrator beim PC-Agenten.
+            # Unbekannter Name („Steam“, „Chefkoch“): installiertes Programm? Prüft der Orchestrator beim PC-Agenten.
+            # Ohne passendes Programm öffnet er – bei Namen ohne Artikel – die passende Webseite.
             guessable = playing or verb in ("öffne", "starte", "start", "ruf", "rufe") or (verb == "mach" and m["auf"])
             if guessable and 2 <= len(target) <= 60 and not _HOME_WORDS.search(target):
-                return FastPathMatch("pc.open_app", {"app": target}, 0.8, "pc_open_guess", {"target": target})
+                web_fallback = not playing and not m["article"] and len(target.split()) <= 4
+                return FastPathMatch("pc.open_app", {"app": target}, 0.8, "pc_open_guess",
+                                     {"target": target, "web_fallback": web_fallback})
         return None
+
+
+def _web_query(query: str) -> str:
+    """„einem Lasagne-Rezept“ -> „Lasagne-Rezept“: Artikel am Anfang stören die Suche nur."""
+    return re.sub(r"^(?:einen|einem|einer|eines|eine|ein|den|dem|der|die|das|des)\s+", "", query.strip(), flags=re.I)
+
+
+def _open_link(query: str, site: str | None) -> FastPathMatch:
+    query = _web_query(query)
+    arguments = {"query": query, **({"site": site} if site else {})}
+    return FastPathMatch("pc.open_link", arguments, 0.92, "pc_open_link", {"query": query})
+
+
+def _open_site(query: str) -> FastPathMatch:
+    """„Öffne die Webseite von Chefkoch“: bekannte Seite oder Adresse direkt, sonst der beste Treffer."""
+    target = _pc_target(query)
+    url = PC_SITES.get(target) or (f"https://{target}" if _DOMAIN.match(target) else None)
+    if url:
+        return FastPathMatch("pc.open_url", {"url": url}, 0.94, "pc_open_url", {"target": target})
+    return _open_link(query, None)
+
+
+def selection_reply(text: str, count: int, *, affirm: bool = True) -> int | None:
+    """Welcher Eintrag der zuletzt genannten Liste ist gemeint? 1-basiert; None = keine Auswahl."""
+    normalized = normalize_utterance(text)
+    if AFFIRM.match(normalized):
+        return 1 if affirm else None
+    m = SELECTION.match(normalized)
+    if m is None:
+        return None
+    token = m["n"].lower()
+    if token.startswith("letzt"):
+        return count
+    number = int(token) if token.isdigit() else _ORDINALS.get(re.sub(r"(?<=e)[nrs]$", "", token))
+    return number if number and 1 <= number <= count else None

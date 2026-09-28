@@ -21,6 +21,7 @@ from jarvis.skills import register_assistant_capabilities
 from jarvis.style import STYLE_VERSION, JarvisStyle, PlainStyle
 from jarvis.testing import FakeHome, ScriptedProvider, call_tool, say
 from jarvis.tools import ToolRegistry
+from jarvis.websearch import SearchResult, register_web_capabilities
 
 from conftest import REPO
 
@@ -38,6 +39,34 @@ async def fake_weather(args, ctx):
     ]}
 
 
+AGENT_ACTIONS = ("open_url", "open_app", "open_folder", "search_files", "find_files", "open_file")
+FILES = [  # neueste zuerst, wie der Agent sie liefert
+    {"id": 1, "name": "Bewerbung.pdf", "folder": "Desktop", "kind": "file", "modified": "2026-09-27"},
+    {"id": 2, "name": "Bewerbung_Bosch.docx", "folder": "Documents\\Bewerbungen", "kind": "file",
+     "modified": "2026-09-20"},
+    {"id": 3, "name": "Bewerbungen", "folder": "Documents", "kind": "folder", "modified": "2026-09-01"},
+]
+
+
+def fake_agent(message):
+    action, args = message["action"], message["arguments"]
+    if action == "open_app":
+        return {"opened": args["app"]}
+    if action in ("find_files", "search_files"):
+        hits = [f for f in FILES if args["query"].lower() in f["name"].lower()]
+        return {"query": args["query"], "total": len(hits), "results": hits}
+    if action == "open_file":
+        item = FILES[args["id"] - 1] if "id" in args else FILES[0]
+        return {"opened": item["name"], "folder": item["folder"], "kind": item["kind"], "shown": False}
+    return {}
+
+
+class FakeWeb:
+    async def search(self, query, *, limit=5):
+        return [SearchResult("Lasagne – das klassische Rezept", "https://www.chefkoch.de/rezepte/lasagne", "…"),
+                SearchResult("Lasagne al forno", "https://www.lecker.de/lasagne", "…")][:limit]
+
+
 def make_orchestrator(*, components=None, fast_path=None, pc_connected=True, home=True):
     registry = ToolRegistry()
     if home:
@@ -45,14 +74,15 @@ def make_orchestrator(*, components=None, fast_path=None, pc_connected=True, hom
     hub = AgentHub()
     if pc_connected:
         async def send(message):
-            # Wie der echte Agent: meldet das tatsächlich gestartete Programm zurück
-            result = {"opened": message["arguments"]["app"]} if message["action"] == "open_app" else {}
-            hub.resolve({"id": message["id"], "ok": True, "result": result})
+            # Wie der echte Agent: meldet zurück, was tatsächlich gestartet bzw. gefunden wurde
+            hub.opened.append(message)
+            hub.resolve({"id": message["id"], "ok": True, "result": fake_agent(message)})
 
-        hub.attach(send, {"name": "PC", "apps": DEFAULT_APPS, "actions": ["open_url", "open_app", "open_folder",
-                                                                          "search_files"],
+        hub.opened = []
+        hub.attach(send, {"name": "PC", "apps": DEFAULT_APPS, "actions": list(AGENT_ACTIONS),
                           "start_apps": ["Steam", "Minecraft Launcher", "Google Chrome", "Discord"]})
-    register_pc_capabilities(registry, hub)
+    register_pc_capabilities(registry, hub, web=FakeWeb())
+    register_web_capabilities(registry, FakeWeb())
     state = components or {"sprachmodell": "ok", "pc_steuerung": "ok"}
     register_assistant_capabilities(registry, probes=lambda: dict(state), weather=fake_weather)
     return Orchestrator(
@@ -101,9 +131,19 @@ EXPECTED = [
     ("Kannst du mir Katzenvideos auf YouTube zeigen?",
      "Sehr wohl. Die YouTube-Suche nach „Katzenvideos“ ist geöffnet."),
     ("Such die Datei Steuererklärung", "Sehr wohl. Die Dateisuche nach „Steuererklärung“ ist geöffnet."),
-    ("Was kannst du?", "Ich kann Programme und Spiele auf Ihrem PC starten, Ordner und Webseiten öffnen, im "
-                       "Internet, auf YouTube oder in Ihren Dateien suchen, Licht, Heizung und Geräte im Haus "
+    ("Was kannst du?", "Ich kann Programme und Spiele auf Ihrem PC starten, Ordner und Webseiten öffnen, Links "
+                       "heraussuchen und direkt öffnen, Dateien finden und öffnen, Licht, Heizung und Geräte im Haus "
                        "steuern und Ihnen den Systemstatus melden. Sagen Sie einfach, was Sie benötigen, Sir."),
+    ("Such mir einen Link zu Lasagne und öffne ihn",
+     "Sehr wohl. „Lasagne – das klassische Rezept“ auf chefkoch.de ist geöffnet."),
+    ("Öffne Chefkoch", "Sehr wohl. „Lasagne – das klassische Rezept“ auf chefkoch.de ist geöffnet."),
+    ("Öffne die Datei Bewerbung", "Sehr wohl. „Bewerbung.pdf“ aus dem Ordner Desktop ist geöffnet."),
+    ("Wo ist meine Bewerbung?", "Ich habe 3 Treffer gefunden, die neuesten: „Bewerbung.pdf“ in Desktop, "
+                                "„Bewerbung_Bosch.docx“ in Bewerbungen und „Bewerbungen“ in Dokumente. Welchen soll "
+                                "ich öffnen – den ersten, zweiten oder dritten?"),
+    ("Such mir ein paar Links zu Lasagne", "Die besten Treffer zu „Lasagne“: „Lasagne – das klassische Rezept“ auf "
+                                           "chefkoch.de und „Lasagne al forno“ auf lecker.de. Welchen soll ich öffnen – "
+                                           "den ersten oder den zweiten?"),
     ("Stell einen Timer auf 5 Minuten", "Verzeihung, Sir. Timer stehen mir derzeit nicht zur Verfügung."),
     ("Gute Nacht", "Gute Nacht, Sir."),
     ("Tschüss", "Sehr wohl. Ich bleibe in Bereitschaft."),
@@ -199,7 +239,7 @@ def test_persona_selects_style_and_version():
     jarvis = Persona.load(REPO / "config" / "persona.jarvis.yaml", schema_path=REPO / "schemas" / "persona.schema.json")
     neutral = Persona.load(REPO / "config" / "persona.neutral.yaml")
     assert isinstance(JarvisStyle.from_persona(jarvis), JarvisStyle)
-    assert jarvis.config["version"] == STYLE_VERSION == "2.1.0"
+    assert jarvis.config["version"] == STYLE_VERSION == "2.2.0"
     assert type(JarvisStyle.from_persona(neutral)) is PlainStyle
 
 

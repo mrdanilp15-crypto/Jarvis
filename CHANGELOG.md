@@ -1,5 +1,43 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.2.0 – 2026-09-28
+
+JARVIS sucht Links und Dateien selbst heraus und öffnet sie.
+
+### Neu
+- **Link heraussuchen und öffnen** (`pc.open_link`): „Such mir einen Link zu … und öffne ihn“, „Öffne die Webseite
+  von …“, „Geh auf …“, „Öffne den ersten Treffer für …“, „Spiel … auf YouTube“ (erstes Video).
+  - JARVIS sucht serverseitig über DuckDuckGo oder eine eigene SearXNG-Instanz (`JARVIS_SEARXNG_URL`) und öffnet den
+    ersten Treffer. Die Antwort nennt Titel und Seite.
+  - Ist die Suche nicht erreichbar, leitet DuckDuckGo den Browser direkt zum ersten Treffer weiter.
+  - R2: Hat das Gespräch vorher Fremdinhalte gelesen, fragt JARVIS erst nach.
+- **Websuche mit Auswahl** (`web.search`): „Such mir ein paar Links zu …“ nennt die besten Treffer. „Den zweiten“
+  öffnet den gewählten Link.
+- **Dateien finden und öffnen** (`pc.find_files`, `pc.open_file`):
+  - „Öffne die Datei Bewerbung“, „Öffne die PDF Rechnung“, „Öffne Bewerbung.pdf“, „Öffne den Ordner Projekte“,
+    „Wo ist meine Steuererklärung?“.
+  - Der PC-Agent sucht im Benutzerordner über den Windows-Suchindex (Rückfall: Durchsuchen der üblichen Ordner) und
+    findet dabei auch Umlaut-Schreibweisen („Steuererklaerung.pdf“).
+  - Er öffnet den besten und neuesten Treffer mit dem Standardprogramm.
+  - Programme, Skripte und Verknüpfungen startet er nie, sondern markiert sie im Explorer.
+- **Auswahl im Gespräch**: Nach einer Trefferliste genügt „die zweite“, „Nummer 3“ oder „den letzten“; bei einem
+  einzelnen Treffer „ja“. Die Auswahl gilt nur für den direkt folgenden Satz. „Ja“ zählt nur, wenn JARVIS selbst
+  gefragt hat.
+- **Unbekannte Namen**: „Öffne Chefkoch“ startet ein installiertes Programm dieses Namens, sonst öffnet JARVIS die
+  passende Webseite. Mit Artikel („Öffne die Einkaufsliste“) übernimmt weiter das Sprachmodell.
+- **Hörfehler**: Programmnamen werden unscharf abgeglichen („Discort“ → Discord, „Minecraf“ → Minecraft Launcher).
+- Die Explorer-Suche („Such die Datei …“) nennt zusätzlich den neuesten Treffer.
+- Persona 2.2.0: Das Sprachmodell soll zum Öffnen und Finden die PC-Tools nutzen, statt nur zu beschreiben.
+
+### Tests
+- 47 neue Tests:
+  - Auslesen der DuckDuckGo-Ergebnisseite (ohne Anzeigen), SearXNG, Bot-Sperre und Netzfehler.
+  - Link öffnen samt Rückfall, Datei-Capabilities, Formulierungen.
+  - Auswahl aus Datei- und Linklisten, „ja“ nur nach eigener Rückfrage, Webseiten-Rückfall für unbekannte Namen,
+    unscharfer Abgleich.
+- Die Dateisuche des PowerShell-Agenten wurde mit einem nachgebildeten Benutzerordner geprüft: Suche, Öffnen per
+  Nummer und Name, Umlaute, Ordner, markierte Programme.
+
 ## Jarvis-Modul 2.1.0 – 2026-09-27
 
 PC-Befehle zuverlässig gemacht. Vorher klappten die meisten Befehle nicht, aus drei Gründen:

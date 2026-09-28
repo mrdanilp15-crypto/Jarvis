@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.1.0"
+STYLE_VERSION = "2.2.0"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -157,6 +157,61 @@ def format_number(value: Any) -> str:
     return str(value)
 
 
+FOLDER_SEGMENTS = {"Documents": "Dokumente", "Pictures": "Bilder", "Music": "Musik", "Videos": "Videos",
+                   "Desktop": "Desktop", "Downloads": "Downloads"}
+
+
+def _host(url: str) -> str:
+    return (urlsplit(url).hostname or "").removeprefix("www.")
+
+
+def _short(text: str | None, limit: int = 70) -> str:
+    text = re.sub(r"[„“\"]+", "", text or "").strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _join(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + f" und {parts[-1]}"
+
+
+def folder_label(folder: str | None) -> str:
+    """„Documents\\Bewerbungen“ -> „Bewerbungen“, „Documents“ -> „Dokumente“ (vorlesbar, ohne Pfadzeichen)."""
+    parts = [p for p in re.split(r"[\\/]+", folder or "") if p]
+    if not parts:
+        return "Benutzerordner"
+    return parts[-1] if len(parts) > 1 else FOLDER_SEGMENTS.get(parts[0], parts[0])
+
+
+def listing_text(capability: str, args: dict[str, Any], result: Any) -> str | None:
+    """Trefferlisten (Dateien, Links) zum Vorlesen – mit Frage, welcher Eintrag geöffnet werden soll."""
+    if not isinstance(result, dict):
+        return None
+    query = args.get("query", "")
+    items = [i for i in result.get("results") or [] if isinstance(i, dict)]
+    if capability == "web.search":
+        if not items:
+            return f"Zu „{query}“ habe ich keine Treffer gefunden."
+        names = [f"„{_short(i.get('title'), 60)}“ auf {_host(str(i.get('url', '')))}" for i in items[:3]]
+        return f"Die besten Treffer zu „{query}“: {_join(names)}. {_which(len(names), 'Welchen')}"
+    if capability == "pc.find_files":
+        if not items:
+            return f"In Ihren Dateien finde ich nichts zu „{query}“."
+        total = int(result.get("total") or len(items))
+        if total == 1:
+            item = items[0]
+            pronoun = "ihn" if item.get("kind") == "folder" else "sie"
+            return f"Gefunden: „{item.get('name')}“ im Ordner {folder_label(item.get('folder'))}. Soll ich {pronoun} öffnen?"
+        count = f"{total}" if total < 20 else "mindestens 20"
+        names = [f"„{i.get('name')}“ in {folder_label(i.get('folder'))}" for i in items[:3]]
+        return f"Ich habe {count} Treffer gefunden, die neuesten: {_join(names)}. {_which(len(names), 'Welchen')}"
+    return None
+
+
+def _which(count: int, word: str) -> str:
+    options = {2: "den ersten oder den zweiten", 3: "den ersten, zweiten oder dritten"}.get(count)
+    return f"{word} soll ich öffnen – {options}?" if options else f"{word} soll ich öffnen?"
+
+
 def entity_label(entity_id: str) -> str:
     name = entity_id.split(".", 1)[-1].replace("_", " ")
     for ascii_, umlaut in (("ae", "ä"), ("oe", "ö"), ("ue", "ü")):
@@ -182,7 +237,7 @@ class PlainStyle:
     def action_reply(self, record: Any, slots: dict[str, Any] | None = None, *, via_confirmation: bool = False) -> str:
         status = record.status
         if status == "succeeded":
-            return "Erledigt."
+            return listing_text(record.capability, record.arguments, record.result) or "Erledigt."
         if status == "pending_confirmation":
             return "Soll ich das wirklich tun?"
         if status == "denied":
@@ -315,13 +370,38 @@ class JarvisStyle(PlainStyle):
         if capability == "pc.open_folder":
             return very_well, f"Der Ordner „{FOLDER_LABELS.get(args.get('folder'), args.get('folder'))}“ ist geöffnet."
         if capability == "pc.open_url":
-            host = (urlsplit(str(args.get("url", ""))).hostname or "").removeprefix("www.")
+            host = _host(str(args.get("url", "")))
+            if slots.get("title"):  # aus einer Trefferliste gewählt
+                return very_well, f"„{_short(slots['title'])}“ auf {host} ist geöffnet."
             return very_well, f"{SITE_LABELS.get(host, host or 'Die Seite')} ist geöffnet."
+        if capability == "pc.open_link":
+            result = result if isinstance(result, dict) else {}
+            if result.get("url"):
+                return very_well, f"„{_short(result.get('title'))}“ auf {_host(result['url'])} ist geöffnet."
+            what = "Der erste YouTube-Treffer" if args.get("site") == "youtube" else "Der erste Treffer"
+            return very_well, f"{what} für „{args.get('query', '')}“ ist geöffnet."
+        if capability == "pc.open_file":
+            result = result if isinstance(result, dict) else {}
+            name, where = result.get("opened") or args.get("query", ""), folder_label(result.get("folder"))
+            if result.get("blocked"):
+                return very_well, (f"„{name}“ ist ein Programm – ich habe es im Explorer markiert, statt es zu "
+                                   "starten.")
+            if result.get("shown"):
+                return very_well, f"„{name}“ ist im Explorer markiert, im Ordner {where}."
+            if result.get("kind") == "folder":
+                return very_well, f"Der Ordner „{name}“ ist geöffnet."
+            return very_well, f"„{name}“ aus dem Ordner {where} ist geöffnet."
+        if capability in ("pc.find_files", "web.search"):
+            return "", listing_text(capability, args, result) or "Erledigt."
         if capability == "pc.search_web":
             site = SEARCH_LABELS.get(args.get("site") or "google", "")
             return very_well, f"Die {site + '-' if site else ''}Suche nach „{args.get('query', '')}“ ist geöffnet."
         if capability == "pc.search_files":
-            return very_well, f"Die Dateisuche nach „{args.get('query', '')}“ ist geöffnet."
+            text = f"Die Dateisuche nach „{args.get('query', '')}“ ist geöffnet."
+            items = (result or {}).get("results") if isinstance(result, dict) else None
+            if items:
+                text += f" Der neueste Treffer: „{items[0].get('name')}“ in {folder_label(items[0].get('folder'))}."
+            return very_well, text
         if capability == "memory.remember":
             return very_well, "Ich habe es mir notiert."
         if capability == "system.status":
@@ -444,7 +524,7 @@ class JarvisStyle(PlainStyle):
         domains = {name.split(".", 1)[0] for name in names}
         if "pc" in domains:
             skills.append("Programme und Spiele auf Ihrem PC starten, Ordner und Webseiten öffnen")
-            skills.append("im Internet, auf YouTube oder in Ihren Dateien suchen")
+            skills.append("Links heraussuchen und direkt öffnen, Dateien finden und öffnen")
         if "home" in domains:
             skills.append("Licht, Heizung und Geräte im Haus steuern")
         if domains & {"info"}:

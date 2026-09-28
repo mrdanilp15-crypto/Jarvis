@@ -41,6 +41,7 @@ from .skills import register_assistant_capabilities
 from .persona import Persona
 from .policy import PolicyEngine, Principal
 from .tools import ToolRegistry
+from .websearch import WebSearch, register_web_capabilities
 
 log = logging.getLogger(__name__)
 
@@ -99,10 +100,17 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
             wikipedia_language=info_cfg.get("wikipedia_language", defaults.wikipedia_language),
         ))
 
+    web = None
+    web_cfg = info_cfg.get("web_search") or {}
+    if info_cfg.get("enabled", True) and web_cfg.get("enabled", True):
+        web = WebSearch(searxng_url=os.environ.get("JARVIS_SEARXNG_URL") or web_cfg.get("searxng_url") or None,
+                        region=web_cfg.get("region", "de-de"))
+        register_web_capabilities(registry, web)
+
     agents = AgentHub()
     pc_enabled = (cfg.get("pc_agent") or {}).get("enabled", True)
     if pc_enabled:
-        register_pc_capabilities(registry, agents, search_url=(cfg.get("pc_agent") or {}).get(
+        register_pc_capabilities(registry, agents, web=web, search_url=(cfg.get("pc_agent") or {}).get(
             "search_url", "https://www.google.com/search?q={query}"))
 
     providers = cfg["llm"]["providers"]

@@ -160,14 +160,20 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 |---|---|---|
 | Programme & Spiele | „Öffne den Explorer“, „Kannst du Steam starten?“, „Ich möchte Minecraft spielen“ | PC-Agent verbunden |
 | Ordner | „Öffne meine Downloads“, „Zeig mir die Bilder“ | PC-Agent |
-| Webseiten | „Öffne YouTube“, „Öffne heise.de“ | PC-Agent |
-| Suchen | „Such nach Pizza“, „Zeig mir Katzenvideos auf YouTube“, „Such auf Amazon nach Kopfhörern“, „Such die Datei Rechnung“ | PC-Agent |
+| Webseiten | „Öffne YouTube“, „Öffne heise.de“, „Öffne Chefkoch“, „Geh auf Media Markt“ | PC-Agent |
+| Link heraussuchen & öffnen | „Such mir einen Link zu einem Lasagne-Rezept und öffne ihn“, „Öffne die Webseite von Ikea“, „Spiel Lofi-Musik auf YouTube“ (öffnet das erste Video) | PC-Agent, Internet |
+| Links zur Auswahl | „Such mir ein paar Links zu Kürbissuppe“ → „den zweiten“ | PC-Agent, Internet |
+| Dateien finden & öffnen | „Öffne die Datei Bewerbung“, „Öffne die PDF Rechnung“, „Wo ist meine Steuererklärung?“ → „die zweite“ / „ja“, „Öffne den Ordner Projekte“ | PC-Agent |
+| Suchen | „Such nach Pizza“, „Zeig mir Katzenvideos auf YouTube“, „Such auf Amazon nach Kopfhörern“, „Such die Datei Rechnung“ (Explorer-Suche) | PC-Agent |
 | Wissen | „Wie wird das Wetter morgen?“, „Was gibt es Neues?“, „Wer war Ada Lovelace?“ | Internet |
 | Assistenz | „Status?“, „Plan für morgen?“, „Wie spät ist es?“, „Was kannst du?“ | – |
 | Haus | „Mach das Licht in der Küche an“ | Home Assistant |
-| Noch nicht | Kalender/Termine, E-Mails, Timer und Wecker, Musik direkt abspielen, Programme schließen, Tippen/Klicken am PC | – |
+| Noch nicht | Kalender/Termine, E-Mails, Timer und Wecker, Programme schließen, auf Webseiten klicken, tippen oder sich anmelden | – |
 
-Befehle für den PC erkennt JARVIS ohne Sprachmodell (sofort). Freie Fragen beantwortet das Sprachmodell.
+Befehle für den PC erkennt JARVIS ohne Sprachmodell (sofort). Freie Fragen beantwortet das Sprachmodell. Dateien sucht
+der PC-Agent im Benutzerordner über den Windows-Suchindex; Programme und Skripte unter den Treffern startet er nie,
+sondern markiert sie nur im Explorer. Links sucht JARVIS über DuckDuckGo. Wer eine eigene SearXNG-Instanz betreibt,
+trägt sie als `JARVIS_SEARXNG_URL` in `deploy/.env` ein.
 
 **Automatisch beim Anmelden starten (Windows):** `./deploy/start.sh autostart` (oder `… autostart edge`) – danach startet Windows Docker
 Desktop, den PC-Agenten und JARVIS als eigenes Fenster, ohne Konsole; zusätzlich liegt eine Verknüpfung „JARVIS“ auf

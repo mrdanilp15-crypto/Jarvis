@@ -92,6 +92,10 @@ info:                          # eingebaute Informationsdienste ohne API-Schlüs
   wikipedia_language: de
   news_feeds:                  # RSS/Atom; der erste ist die Standardquelle
     tagesschau: https://www.tagesschau.de/index~rss2.xml
+  web_search:                  # „Such mir einen Link zu …“: Treffer vom Server aus (sonst leitet der Browser weiter)
+    enabled: true
+    searxng_url: ""            # eigene SearXNG-Instanz (JSON-API); leer = DuckDuckGo
+    region: de-de
 
 router:
   fast_path_min_confidence: 0.9
