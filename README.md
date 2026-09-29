@@ -182,10 +182,10 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Tastenkürzel | „Kopieren“, „Einfügen“, „Mach das rückgängig“, „Neuer Tab“, „Scroll runter“, „Geh zurück“ | PC-Agent |
 | Timer & Erinnerungen | „Stell einen Nudel-Timer auf 8 Minuten“, „Wie lange läuft der Timer noch?“, „Erinnere mich morgen um 8 an den Müll“, „Weck mich um 7“ | – |
 | Kalender | „Trag morgen um 15 Uhr Zahnarzt ein“, „Welche Termine habe ich am Freitag?“, „Wann ist mein nächster Termin?“, „Sag den Friseur ab“ | – (Abos: ICS-Adresse) |
-| E-Mails | „Schreib eine Mail an Mama mit dem Betreff Sonntag“ (Entwurf), „Habe ich neue Mails?“ → „Lies die erste vor“ | Mailprogramm; Lesen: IMAP |
+| E-Mails | „Schreib eine E-Mail“ – JARVIS fragt nach Empfänger (Kontakt oder diktiert: „max punkt mustermann at gmx punkt de“), liest die Adresse vor, fragt Betreff und Text und öffnet den Entwurf. Korrigieren: „Nein“, „Die Adresse ist falsch“, „Der Betreff ist falsch“; „ohne Betreff“, „fertig“, „abbrechen“. In einem Satz: „Schreib eine Mail an Mama mit dem Betreff Sonntag“. Lesen: „Habe ich neue Mails?“ → „Lies die erste vor“ | Mailprogramm; Lesen: IMAP |
 | Anmelden | „Melde mich bei Netflix an“ öffnet die Anmeldeseite – Passwörter gibt JARVIS nie ein (das übernimmt der Passwortmanager des Browsers) | PC-Agent |
 | Wissen | „Wie wird das Wetter morgen?“, „Was gibt es Neues?“, „Wer war Ada Lovelace?“ (nachgeschlagen) → „Erzähl mir mehr“, „Wer ist ARTERIION?“ → „Nein, das ist ein Künstler“ | Internet |
-| Assistenz | „Status?“, „Plan für morgen?“ (mit Terminen und Wetter), „Wie spät ist es?“, „Was kannst du?“ | – |
+| Assistenz | „Status?“, „Plan für morgen?“ (mit Terminen und Wetter), „Wie spät ist es?“, „Was kannst du?“, „Kannst du mich verstehen?“ (sagt, was angekommen ist) | – |
 | Haus | „Mach das Licht in der Küche an“ | Home Assistant |
 | Noch nicht | E-Mails selbst versenden (bewusst: nur Entwürfe), Termine in Google/Outlook eintragen (nur lesen), Formulare mit Passwörtern ausfüllen | – |
 

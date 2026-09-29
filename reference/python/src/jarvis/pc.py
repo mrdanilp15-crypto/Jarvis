@@ -73,14 +73,35 @@ MAIL_WEB = {  # E-Mail-Entwurf im Browser statt im Mailprogramm (pc_agent.mail_c
 EMAIL = re.compile(r"^[^@\s<>\"]+@[^@\s<>\"]+\.[A-Za-z]{2,}$")
 
 
+_SPOKEN_CHARS = ((" at-zeichen ", "@"), (" at zeichen ", "@"), (" klammeraffe ", "@"), (" at ", "@"), (" ät ", "@"),
+                 (" et ", "@"), (" ett ", "@"), (" punkt ", "."), (" dot ", "."), (" minus ", "-"),
+                 (" bindestrich ", "-"), (" strich ", "-"), (" unterstrich ", "_"))
+_TRAILING_NOISE = re.compile(r"(?:\s(?:und|bitte|danke|so|ja|genau|fertig|das wars|das war's|ähm|äh))+\s*$")
+
+
 def spoken_email(text: str) -> str | None:
-    """„max punkt mustermann at gmail punkt com“ -> „max.mustermann@gmail.com“ (so schreibt die Spracherkennung)."""
-    value = f" {text.strip().lower()} "
-    for spoken, char in ((" at ", "@"), (" ät ", "@"), (" et ", "@"), (" punkt ", "."), (" dot ", "."),
-                         (" minus ", "-"), (" bindestrich ", "-"), (" unterstrich ", "_")):
-        value = value.replace(spoken, char)
+    """Diktierte Adresse -> E-Mail-Adresse, so wie die Spracherkennung sie schreibt:
+    „max punkt mustermann at gmail punkt com“ -> „max.mustermann@gmail.com“,
+    „Hegemann Punkt Daniel at GMX, Punkt. DE. Und.“ -> „hegemann.daniel@gmx.de“ (Satzzeichen und Füllwörter fallen weg),
+    „H E G E M A N N at gmx punkt de“ -> buchstabiert zusammengesetzt."""
+    value = text.strip().lower()
+    value = re.sub(r"[,;!?„“\"]", " ", value)
+    value = re.sub(r"\.(?=\s|$)", " ", value)  # Satzpunkte der Erkennung („Punkt. DE.“); „gmx.de“ bleibt
+    value = " " + re.sub(r"\s+", " ", value).strip() + " "
+    value = _TRAILING_NOISE.sub(" ", value)
+    value = re.sub(r"^\s*(?:an|die adresse(?: ist| lautet)?|adresse|e-?mail(?:-adresse)?(?: ist)?)\s+", " ", value)
+    for _ in range(2):  # zweimal: aufeinanderfolgende Zeichen („punkt punkt“) teilen sich ein Leerzeichen
+        for spoken, char in _SPOKEN_CHARS:
+            value = value.replace(spoken, f" {char} ")
     value = re.sub(r"\s+", "", value)
     return value if EMAIL.match(value) else None
+
+
+def resolve_recipient(text: str, contacts: dict[str, str] | None = None) -> str | None:
+    """Empfänger -> Adresse: diktiert („… at gmx punkt de“), geschrieben oder ein bekannter Kontakt („Mama“)."""
+    wanted = re.sub(r"^(?:an|für)\s+", "", text.strip().strip(".,!?"), flags=re.I)
+    known = {k.strip().lower(): v for k, v in (contacts or {}).items() if EMAIL.match(str(v))}
+    return spoken_email(wanted) or known.get(wanted.lower()) or (wanted if EMAIL.match(wanted) else None)
 
 
 def build_search_url(template: str, query: str) -> str:
@@ -288,7 +309,7 @@ def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
     async def compose_mail(args: dict[str, Any], ctx: InvocationContext) -> Any:
         """Entwurf öffnen – abschicken muss der Nutzer selbst (JARVIS versendet nie in seinem Namen)."""
         wanted = (args.get("to") or "").strip()
-        address = spoken_email(wanted) or known.get(wanted.lower()) or (wanted if EMAIL.match(wanted) else "")
+        address = resolve_recipient(wanted, known) or "" if wanted else ""
         draft = {"to": address, "subject": args.get("subject", ""), "body": args.get("body", "")}
         if mail_compose in MAIL_WEB:
             url = MAIL_WEB[mail_compose].format(**{k: quote(v, safe="") for k, v in draft.items()})
@@ -422,7 +443,9 @@ def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
         description="Öffnet einen E-Mail-Entwurf (Empfänger als Adresse oder bekannter Kontakt, Betreff, Text) im "
                     "Mailprogramm bzw. Webmail. Abschicken muss der Nutzer selbst.",
         input_schema={"type": "object", "additionalProperties": False, "properties": {
-            "to": {"type": "string", "maxLength": 200},
+            "to": {"type": "string", "maxLength": 200,
+                   "description": "Kontaktname oder die Adresse genau so, wie der Nutzer sie diktiert hat (z. B. "
+                                  "„max punkt mustermann at gmail punkt com“) – JARVIS setzt sie selbst zusammen."},
             "subject": {"type": "string", "maxLength": 300},
             "body": {"type": "string", "maxLength": 5000},
         }},

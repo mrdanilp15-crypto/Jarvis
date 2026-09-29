@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.5.0"
+STYLE_VERSION = "2.6.0"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -98,6 +98,10 @@ _OPENERS = [
     (re.compile(r"^(?:super|toll|prima|perfekt|cool|nice|geil|mega|wow)\b[\s,.!]*", re.I), "Ausgezeichnet. "),
     (re.compile(r"^(?:hey|hi|hallo|servus|moin|yo)\b(?:\s+(?:du|da|jarvis))?[\s,.!]*", re.I), ""),
     (re.compile(r"^(?:gute frage|interessante frage)[\s,.!]*", re.I), ""),
+    # Erfundene Dauerüberwachung („Ich überwache stets die Kommunikation“) – JARVIS hört nur nach „Jarvis“ zu
+    (re.compile(r"^ich (?:überwache|beobachte|belausche|höre)\s+(?:stets|ständig|permanent|kontinuierlich|laufend|immer|"
+                r"jederzeit|rund um die uhr|(?:die |alle |ihre )?(?:kommunikation|gespräche|umgebung|geräusche))\b.*$",
+                re.I), ""),
     # „Als KI-Sprachmodell kann ich …“ -> „Ich kann …“ (keine Floskeln über das eigene KI-Sein)
     (re.compile(r"^als (?:ki-sprachmodell|ki|sprachmodell|künstliche intelligenz)\s*,?\s*(\w+)\s+ich\b", re.I),
      lambda m: f"Ich {m[1].lower()}"),
@@ -195,6 +199,12 @@ def _host(url: str) -> str:
 def _short(text: str | None, limit: int = 70) -> str:
     text = re.sub(r"[„“\"]+", "", text or "").strip()
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _quoted(text: str, limit: int = 120) -> str:
+    """Gehörtes wörtlich in Anführungszeichen – ohne zweites Satzzeichen nach „…?“."""
+    said = _short(text, limit)
+    return f"„{verbatim(said)}“" + ("" if re.search(r"[.?!…]$", said) else ".")
 
 
 def _join(parts: list[str]) -> str:
@@ -391,8 +401,10 @@ class PlainStyle:
         return text + question.get(offer or "", "")
 
     # -- Gesprächs-Intents ---------------------------------------------------------------------------------
-    def conversation(self, intent: str, situation: Any, *, capabilities: Iterable[str] = ()) -> str:
+    def conversation(self, intent: str, situation: Any, *, capabilities: Iterable[str] = (), heard: str = "") -> str:
         now: datetime = situation.now
+        if intent == "hear_check":
+            return f"Ja, ich verstehe Sie. Angekommen ist: {_quoted(heard)}" if heard else "Ja, ich verstehe Sie."
         if intent == "greeting":
             return "Guten Morgen." if 5 <= now.hour < 11 else "Guten Tag." if now.hour < 18 else "Guten Abend."
         if intent == "time":
@@ -407,6 +419,42 @@ class PlainStyle:
             "goodnight": "Gute Nacht.", "identity": "Ich bin JARVIS, Ihr persönlicher Assistent.",
             "how_are_you": "Danke, alles läuft.", "capabilities": "Fragen Sie mich einfach, was Sie brauchen.",
         }.get(intent, "Wie kann ich helfen?")
+
+    # -- E-Mail-Assistent -------------------------------------------------------------------------------
+    def mail_text(self, kind: str, draft: Any, *, heard: str = "") -> str:
+        """Rückfragen des E-Mail-Assistenten (maildialog.py). Adressen und Betreff bleiben wörtlich."""
+        sir = f", {self.address}" if self.address else ""
+        dictate = "„at“ für das @ und „Punkt“ für den Punkt"
+        if kind == "ask_to":
+            return f"An wen soll die E-Mail gehen{sir}? Nennen Sie einen Kontakt oder diktieren Sie die Adresse – {dictate}."
+        if kind == "ask_to_again":
+            return f"Verzeihung{sir}. Wie lautet die Adresse? Diktieren Sie sie bitte in Ruhe – {dictate}."
+        if kind == "bad_to":
+            return (f"Daraus wird keine gültige Adresse{sir}: „{verbatim(_short(heard, 80))}“. Bitte noch einmal – "
+                    "etwa „max punkt mustermann at gmx punkt de“.")
+        if kind == "unknown_contact":
+            return (f"„{verbatim(heard)}“ steht nicht in meinen Kontakten{sir}. Diktieren Sie die Adresse bitte – oder "
+                    "sagen Sie „weiter“, dann tragen Sie sie im Entwurf selbst ein.")
+        if kind == "ask_subject":
+            address, named = draft.address, draft.to
+            if address and named and not re.search(r"@|\b(?:at|punkt)\b", named, re.I) and \
+                    named.lower() != address.lower():
+                target = f"An {verbatim(_cap(named))} ({verbatim(address)}){sir}."  # Kontakt: Name und Adresse
+            elif address:
+                target = f"An {verbatim(address)}{sir}."
+            elif named:
+                target = f"An „{verbatim(named)}“ – die Adresse tragen Sie im Entwurf ein{sir}."
+            else:
+                target = f"Ohne Empfänger – den tragen Sie im Entwurf ein{sir}."
+            return f"{target} Wie lautet der Betreff?"
+        if kind == "ask_subject_again":
+            return f"Verzeihung{sir}. Wie soll der Betreff lauten?"
+        if kind == "ask_body":
+            subject = f"Betreff: „{verbatim(draft.subject)}“." if draft.subject else "Ohne Betreff."
+            return f"{subject} Was soll in der E-Mail stehen{sir}?"
+        if kind == "cancel":
+            return f"{self.phrase('very_well')} Die E-Mail ist verworfen."
+        return self.phrase("very_well")
 
     # -- Systemtexte -------------------------------------------------------------------------------------
     def system_text(self, key: str) -> str:
@@ -727,9 +775,14 @@ class JarvisStyle(PlainStyle):
         return f"{self.phrase('apology')} {detail}"
 
     # -- Gesprächs-Intents ---------------------------------------------------------------------------------
-    def conversation(self, intent: str, situation: Any, *, capabilities: Iterable[str] = ()) -> str:
+    def conversation(self, intent: str, situation: Any, *, capabilities: Iterable[str] = (), heard: str = "") -> str:
         sir = f", {self.address}" if self.address else ""
         now: datetime = situation.now
+        if intent == "hear_check":
+            # Ehrlich statt „Ich überwache die Kommunikation“: zeigen, was die Spracherkennung geliefert hat
+            if not heard:
+                return f"Laut und deutlich{sir}."
+            return f"Laut und deutlich{sir}. Bei mir angekommen ist: {_quoted(heard)}"
         if intent == "help":
             return self.phrase("ready")
         if intent == "thanks":

@@ -221,6 +221,14 @@ MAIL = re.compile(r"^(?:schreib|schreibe|verfass|verfasse|erstell|erstelle|entwi
                   r"(?:eine[nm]?\s+)?(?:neue\s+)?(?:e-?mail|mail|email|mailentwurf|e-mail-entwurf)"
                   r"(?:\s+an\s+(?P<to>.+?))?(?:\s+mit dem betreff\s+(?P<subject>.+?))?"
                   r"(?:\s+(?:mit dem text|mit dem inhalt|mit dem inhalt|und schreib(?:e)?)\s+(?P<body>.+))?$", re.I)
+# Lose Anfänge ohne Inhalt („Dir eine E-Mail“, „E-Mail an Mama“, „Ich will eine Mail schreiben“) – der
+# E-Mail-Assistent fragt Empfänger, Betreff und Text danach einzeln ab
+MAIL_START = re.compile(r"^(?:(?:kannst|könntest|würdest) du|(?:können|könnten|würden) sie|ich (?:möchte|will|würde gerne?|"
+                        r"hätte gerne?|muss)|lass uns|wir (?:müssen|sollten))?\s*"
+                        r"(?:(?:schreib|schreibe|verfass|verfasse|erstell|erstelle|entwirf|mach|mache|öffne|schick|"
+                        r"schicke|sende|send)\s+)?(?:(?:dir|mir|uns)\s+)?(?:eine[nm]?\s+|ne\s+)?(?:neue[nm]?\s+)?"
+                        r"(?:e-?mail|mail|email|mailentwurf|e-mail-entwurf)(?:\s+an\s+(?P<to>.+?))?"
+                        r"(?:\s+(?:schreiben|verfassen|erstellen|entwerfen|aufsetzen|machen|senden|schicken))?$", re.I)
 LOGIN = [
     re.compile(r"^(?:melde|log|logg|logge)\s+mich\s+(?:bei|auf|in)\s+(?P<site>.+?)\s+(?:an|ein)$", re.I),
     re.compile(r"^(?:kannst du\s+)?mich\s+(?:bei|auf|in)\s+(?P<site>.+?)\s+(?:anmelden|einloggen)$", re.I),
@@ -408,6 +416,10 @@ CONVERSATION = [
     ("name", re.compile(r"^(?:wie heiße ich|wer bin ich|weißt du wie ich heiße|kennst du meinen namen)$")),
     ("time", re.compile(r"^(?:wie spät ist es|wie viel uhr ist es|wieviel uhr ist es|uhrzeit)$")),
     ("date", re.compile(r"^(?:welcher tag ist heute|welches datum (?:ist|haben wir)(?: heute)?|was ist heute für ein tag|datum)$")),
+    ("hear_check", re.compile(r"^(?:(?:kannst|verstehst|hörst) du mich|(?:können|verstehen|hören) sie mich|"
+                              r"hört man mich|hörst du)(?: (?:jetzt|nun|gut|besser|wieder|richtig|überhaupt|noch))*"
+                              r"(?: (?:verstehen|hören))?$|^(?:test|testen|mikrofon ?test|mikrotest|eins zwei(?: drei)?|"
+                              r"1 2(?: 3)?)$")),
     ("goodnight", re.compile(r"^gute nacht$")),
     ("goodbye", re.compile(r"^(?:tschüss|tschau|ciao|bis später|bis dann|auf wiedersehen|das wars|danke das wars)$")),
 ]
@@ -652,11 +664,14 @@ class FastPath:
                     elif key in _STEPS and re.search(r"\b(?:etwas|ein bisschen|ein wenig)\b", variant):
                         steps = 3
                     return _press(key, steps)
-        if MAIL.match(text) and (m := MAIL.match(text)):
+        if m := MAIL.match(text) or MAIL_START.match(text):
             to = (m["to"] or "").strip()
             if re.search(r"\b(?:dass|wegen|ob|weil|damit)\b", to):
                 return None  # „… an Max, dass ich später komme“: den Text formuliert das Sprachmodell
-            arguments = {k: v.strip() for k, v in (("to", to), ("subject", m["subject"]), ("body", m["body"])) if v}
+            subject, body = m.groupdict().get("subject"), m.groupdict().get("body")
+            if not subject and not body:  # nur Empfänger oder gar nichts: der E-Mail-Assistent fragt nach
+                return FastPathMatch("pc.compose_mail", {}, 0.9, "mail_dialog", {"to": to})
+            arguments = {k: v.strip() for k, v in (("to", to), ("subject", subject), ("body", body)) if v}
             return FastPathMatch("pc.compose_mail", arguments, 0.92, "compose_mail", {"to": to})
         for pattern in LOGIN:
             if m := pattern.match(text):

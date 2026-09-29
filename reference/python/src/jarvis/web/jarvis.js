@@ -275,6 +275,12 @@
       item.card.classList.add("leaving");
       setTimeout(done, 340);
     },
+    touch(key, lifetimeMs) {  // Karte bleibt stehen und wird nur aktualisiert – Ablaufzeit neu setzen
+      const item = this.items.get(key);
+      if (!item) return;
+      clearTimeout(item.timer);
+      item.timer = lifetimeMs ? setTimeout(() => this.remove(key), lifetimeMs) : 0;
+    },
   };
 
   function el(tag, className, text) {
@@ -522,6 +528,49 @@
     return seen.size ? box : null;
   }
 
+  // -- E-Mail-Assistent: der Entwurf füllt sich Schritt für Schritt ---------------------------------------------
+  const MAIL_STEPS = ["to", "subject", "body", "done"];
+  const MAIL_HINTS = {
+    to: "Kontakt nennen oder diktieren: „max punkt mustermann at gmx punkt de“ · „abbrechen“ verwirft",
+    subject: "„Nein“ = Adresse korrigieren · „ohne Betreff“ · „fertig“ öffnet sofort",
+    body: "„Der Betreff ist falsch“ korrigiert · „fertig“ öffnet ohne Text",
+    done: "Bitte im Mailprogramm prüfen und selbst absenden – JARVIS verschickt nie in Ihrem Namen.",
+    failed: "Der Entwurf ließ sich nicht öffnen – ist die PC-Steuerung verbunden?",
+  };
+  let mailShown = null;
+
+  function showMail(data) {
+    if (data.step === "cancel") { mailShown = null; cards.remove("mail"); return; }
+    const existing = cards.items.get("mail")?.card;
+    const card = existing ?? el("section", "card mail");
+    card.dataset.step = data.step;
+    const index = MAIL_STEPS.indexOf(data.step === "failed" ? "done" : data.step);
+    const kicker = data.step === "done" ? "E-Mail-Entwurf · geöffnet ✓" : data.step === "failed" ? "E-Mail-Entwurf · nicht geöffnet"
+      : `E-Mail-Entwurf · Schritt ${index + 1} von 3`;
+    const inner = el("div", "inner");
+    inner.append(el("p", "kicker", kicker));
+    const rows = el("dl", "rows");
+    [["to", "An"], ["subject", "Betreff"], ["body", "Text"]].forEach(([field, label], i) => {
+      const value = data[field] ?? "";
+      const current = i === index;
+      const dt = el("dt", current ? "current" : "", label);
+      const dd = el("dd", "", value || (current ? "" : i < index ? (field === "to" ? "im Entwurf eintragen" : "ohne") : "…"));
+      if (current) dd.classList.add("current");
+      else if (!value) dd.classList.add(i < index ? "empty" : "todo");
+      if (value && mailShown && value !== mailShown[field]) dd.classList.add("fresh");  // eben verstanden
+      rows.append(dt, dd);
+    });
+    inner.append(rows);
+    const progress = el("div", "progress");
+    for (let i = 0; i < 3; i += 1) progress.append(el("i", i < index || data.step === "done" ? "on" : i === index ? "now" : ""));
+    inner.append(progress, el("p", "hint", MAIL_HINTS[data.step] ?? ""));
+    card.querySelector(".inner")?.remove();
+    card.append(inner);
+    const lifetime = data.step === "done" ? 60000 : data.step === "failed" ? 30000 : 190000;  // Server vergisst nach 3 min
+    if (existing) cards.touch("mail", lifetime); else cards.show("mail", card, lifetime);
+    mailShown = data.step === "done" || data.step === "failed" ? null : { ...data };
+  }
+
   // -- Timer mit Countdown-Ring --------------------------------------------------------------------------------
   const RING = 2 * Math.PI * 22;
   const timers = {
@@ -584,6 +633,8 @@
       else if (action.capability === "timer.start" && data.id) timers.add(data);
       else if (action.capability === "timer.cancel") timers.cancel((data.cancelled ?? []).map((t) => t.label ?? ""));
     }
+    if (result.card?.type === "mail") showMail(result.card);
+    else if (mailShown) { mailShown = null; cards.remove("mail"); }  // Entwurf abgebrochen: anderer Wunsch
     const researched = result.route === "research" || result.route?.endsWith(":research");
     const web = actions.find((a) => a.capability === "web.search" && a.status === "succeeded");
     if (researched && web?.result?.results?.length && item) {
@@ -659,6 +710,9 @@
       .replace(/```[\s\S]*?```/g, " Den Code sehen Sie auf dem Bildschirm. ")
       .replace(/`([^`]*)`/g, "$1")
       .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      // E-Mail-Adressen so vorlesen, wie man sie diktiert: „max punkt mustermann at gmx punkt de“
+      .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, (address) => address.replace(/@/g, " at ").replace(/\./g, " Punkt ")
+        .replace(/_/g, " Unterstrich ").replace(/-/g, " Minus "))
       .replace(/https?:\/\/\S+/g, "Link")
       .replace(/^\s*(?:[-*+•]|\d+[.)])\s+/gm, "")
       .replace(/^#{1,6}\s*/gm, "")

@@ -1,5 +1,46 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.6.0 – 2026-09-29
+
+E-Mails schreiben, ohne dass das Sprachmodell Adressen verdreht – und ehrliche Antworten auf „Verstehst du mich?“.
+
+### Neu
+- **E-Mail-Assistent** (`maildialog.py`, ohne Sprachmodell): „Schreib eine E-Mail“, „Dir eine E-Mail“, „Neue E-Mail“,
+  „Ich will eine Mail an Max schreiben“ oder „E-Mail an Mama“ starten ihn. JARVIS fragt nacheinander:
+  1. **Empfänger:** Kontakt („Mama“) oder diktierte Adresse. JARVIS liest die erkannte Adresse vor
+     („An hegemann.daniel@gmx.de, Sir. Wie lautet der Betreff?“). Die Stimme buchstabiert sie so, wie man sie
+     diktiert („… Punkt daniel at gmx Punkt de“).
+  2. **Betreff** – oder „ohne Betreff“.
+  3. **Text.** Anrede („Hallo,“) und Gruß („Viele Grüße, Daniel“) ergänzt JARVIS, wenn sie fehlen.
+  4. Danach öffnet sich der Entwurf im Mailprogramm. Abschicken tut der Nutzer selbst.
+- **Korrekturen im Assistenten:**
+  - „Nein“ direkt nach dem Vorlesen, „Die E-Mail ist falsch“ oder „Die Adresse stimmt nicht“ fragen die Adresse neu ab.
+  - Die Adresse einfach noch einmal zu diktieren, ersetzt sie ebenfalls.
+  - „Der Betreff ist falsch“ fragt den Betreff neu.
+  - „fertig“ oder „den Rest schreib ich selbst“ öffnen den Entwurf sofort; „abbrechen“ verwirft ihn.
+  - „weiter“ überspringt einen unbekannten Kontakt – die Adresse trägt der Nutzer dann im Entwurf ein.
+  - Wer statt einer Adresse etwas anderes fragt („Wie spät ist es?“), bekommt die Antwort; der Entwurf wird verworfen.
+    Nach drei Minuten Pause ist er vergessen.
+- **Mail-Karte in der Oberfläche:**
+  - Der Entwurf füllt sich live (An, Betreff, Text), mit Schrittanzeige und blinkender Schreibmarke im aktuellen Feld.
+  - Eben Verstandenes leuchtet kurz auf; Hinweise nennen die möglichen Korrekturen.
+  - Die Karte wird grün, sobald der Entwurf geöffnet ist.
+  - Die Antwort trägt dafür das neue Feld `card` (OpenAPI `TurnResult`, ebenso das bisher undokumentierte
+    `awaiting_reply`).
+- **„Kannst du mich (jetzt) verstehen?“**, „Hörst du mich?“ und „Test“ beantwortet JARVIS sofort und ehrlich – mit
+  dem, was bei ihm angekommen ist: „Laut und deutlich, Sir. Bei mir angekommen ist: „…““.
+
+### Behoben
+- Diktierte Adressen wurden vom lokalen Modell falsch zusammengesetzt („Hegemann@punkt.daniel.at.gmx.de“). Der
+  Adress-Erkenner (`pc.spoken_email`) versteht jetzt:
+  - Satzzeichen der Spracherkennung („GMX, Punkt. DE.“);
+  - Füllwörter am Ende („… und“, „bitte“) und Einleitungen („die Adresse ist …“);
+  - „ät“, „at-Zeichen“, „Klammeraffe“, „Minus“, „Bindestrich“, „Unterstrich“.
+  Auch Tool-Aufrufe des Sprachmodells laufen über ihn (`pc.resolve_recipient`).
+- „Ich überwache stets die Kommunikation“: JARVIS behauptet keine Dauerüberwachung mehr. Die Stil-Engine streicht
+  solche Sätze, und die Persona nennt „Ich überwache die Situation.“ nicht mehr als Baustein. Im Statusbericht bleibt
+  der Satz, dort stimmt er.
+
 ## Jarvis-Modul 2.5.0 – 2026-09-28
 
 KI-Modell und Claude-Schlüssel direkt in der Oberfläche wählen – und eine Anzeige, die zeigt, was JARVIS gerade tut.

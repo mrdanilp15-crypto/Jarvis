@@ -183,9 +183,14 @@ EXPECTED = [
     ("Tippe Pizza Berlin und drück Enter", "Sehr wohl. Der Text ist eingefügt und abgeschickt."),
     ("Tippe mein Passwort", "Passwörter tippe ich aus Sicherheitsgründen nicht ein, Sir – sie liefen dabei durch "
                             "Spracherkennung und Protokoll. Der Passwortmanager Ihres Browsers erledigt das sicherer."),
-    ("Schreib eine Mail an Mama", "Sehr wohl. Der E-Mail-Entwurf ist geöffnet. Die Adresse von „Mama“ kenne ich noch "
-                                  "nicht – tragen Sie sie bitte ein."),
+    # E-Mails: der Assistent fragt Empfänger, Betreff und Text einzeln ab (test_maildialog.py)
+    ("Schreib eine E-Mail", "An wen soll die E-Mail gehen, Sir? Nennen Sie einen Kontakt oder diktieren Sie die "
+                            "Adresse – „at“ für das @ und „Punkt“ für den Punkt."),
+    ("Schreib eine Mail an Mama", "„Mama“ steht nicht in meinen Kontakten, Sir. Diktieren Sie die Adresse bitte – "
+                                  "oder sagen Sie „weiter“, dann tragen Sie sie im Entwurf selbst ein."),
     ("Schreib eine Mail an max punkt mustermann at gmail punkt com",
+     "An max.mustermann@gmail.com, Sir. Wie lautet der Betreff?"),
+    ("Schreib eine Mail an max punkt mustermann at gmail punkt com mit dem Betreff Treffen",
      "Sehr wohl. Der E-Mail-Entwurf an max.mustermann@gmail.com ist geöffnet – Sie müssen ihn nur noch absenden."),
     ("Melde mich bei Netflix an", "Sehr wohl. Die Anmeldeseite von Netflix ist geöffnet. Passwörter gebe ich aus "
                                   "Sicherheitsgründen nicht ein – das übernimmt der Passwortmanager Ihres Browsers."),
@@ -202,6 +207,22 @@ def test_jarvis_answers(text, expected):
 @pytest.mark.parametrize("expected", [e for _, e in EXPECTED])
 def test_formatter_keeps_jarvis_sentences_unchanged(expected):
     assert JarvisStyle().finalize(expected) == expected  # der Formatter ist für fertige Jarvis-Sätze idempotent
+
+
+@pytest.mark.parametrize("text", ["Kannst du mich nun besser verstehen?", "Hörst du mich?", "Test"])
+def test_hear_check_says_what_arrived_instead_of_claiming_to_monitor(text):
+    # Daniels Protokoll: „Ich überwache stets die Kommunikation, Sir.“ – erfunden. Jetzt: was angekommen ist, wörtlich
+    reply = ask(make_orchestrator(), text).text
+    assert reply == f"Laut und deutlich, Sir. Bei mir angekommen ist: „{text}“" + ("" if text.endswith("?") else ".")
+
+
+@pytest.mark.parametrize("llm, expected", [
+    ("Ich überwache stets die Kommunikation, Sir. Sie sind gut zu verstehen.", "Sie sind gut zu verstehen."),
+    ("Ich höre ständig mit. Was darf es sein?", "Was darf es sein?"),
+])
+def test_invented_monitoring_is_dropped(llm, expected):
+    assert JarvisStyle().finalize(llm) == expected
+    assert JarvisStyle().finalize("Ich überwache die Situation.") == "Ich überwache die Situation."  # Statusbericht
 
 
 def test_status_reports_real_problems():
@@ -286,7 +307,7 @@ def test_persona_selects_style_and_version():
     jarvis = Persona.load(REPO / "config" / "persona.jarvis.yaml", schema_path=REPO / "schemas" / "persona.schema.json")
     neutral = Persona.load(REPO / "config" / "persona.neutral.yaml")
     assert isinstance(JarvisStyle.from_persona(jarvis), JarvisStyle)
-    assert jarvis.config["version"] == STYLE_VERSION == "2.5.0"
+    assert jarvis.config["version"] == STYLE_VERSION == "2.6.0"
     assert type(JarvisStyle.from_persona(neutral)) is PlainStyle
 
 

@@ -92,6 +92,8 @@ def turn_to_json(result: TurnResult) -> dict[str, Any]:
         p = result.pending_confirmation
         out["pending_confirmation"] = {"confirmation_id": p.id, "method": p.method, "prompt": p.prompt,
                                        "expires_at": p.expires_at.isoformat()}
+    if result.card is not None:
+        out["card"] = result.card  # z. B. der E-Mail-Entwurf im Entstehen
     return out
 
 

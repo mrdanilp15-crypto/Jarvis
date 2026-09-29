@@ -39,7 +39,9 @@ from .llm.base import (
     Turn,
     UserTurn,
 )
+from .maildialog import MailDraft, Step, advance, compose_body, take_recipient
 from .memory import MemoryService
+from .pc import resolve_recipient
 from .policy import Decision, PolicyContext, PolicyEngine, Principal
 from .style import JarvisStyle, PlainStyle
 from .tools import Capability, InvocationContext, ToolRegistry
@@ -129,6 +131,7 @@ class TurnResult:
     tainted: bool = False
     awaiting_reply: bool = False  # JARVIS hat nachgefragt – die Oberfläche hört direkt wieder zu
     sources: str = field(default="", repr=False)  # nachgeschlagene Quellen – für Folgefragen im Verlauf
+    card: dict[str, Any] | None = None  # Karte für die Oberfläche (z. B. der E-Mail-Entwurf im Entstehen)
 
 
 @dataclass
@@ -173,6 +176,7 @@ class Session:
     last_search: tuple[str, dict[str, Any], datetime] | None = None  # für Korrekturen im nächsten Satz
     recent_terms: list[str] = field(default_factory=list)  # zuletzt allein geschriebene Begriffe („ARTERIION“)
     topic: Topic | None = None  # worüber gerade gesprochen wird („Erzähl mir mehr“, „Das ist ein Künstler“)
+    mail: MailDraft | None = None  # E-Mail im Entstehen: die nächsten Sätze sind Empfänger, Betreff, Text
 
 
 class AuditSink(Protocol):
@@ -243,6 +247,7 @@ class Orchestrator:
         session_idle_timeout_s: float = 300.0,
         style: PlainStyle | None = None,
         app_resolver: Callable[[str], str | None] | None = None,
+        recipient_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         self.registry = registry
         self.policy = policy
@@ -260,6 +265,8 @@ class Orchestrator:
         self.style = style or JarvisStyle.from_persona(context.persona)
         # Welches installierte Programm meint „Öffne Steam“? (PC-Agent: eigene Liste + Windows-Startmenü)
         self.app_resolver = app_resolver
+        # Wen meint „an Mama“ bzw. „max punkt mustermann at gmx punkt de“? (Kontakte aus der Konfiguration)
+        self.recipient_resolver = recipient_resolver or resolve_recipient
 
     # ------------------------------------------------------------------
     # Einstieg für Sprache/Text
@@ -284,7 +291,8 @@ class Orchestrator:
         await stream.flush()
         result.text = self.style.finalize(result.text)
         session = self.sessions.get(req.session_id)
-        result.awaiting_reply = bool(session and (session.expect or (session.offer and session.offer.affirm)))
+        result.awaiting_reply = bool(session and (session.expect or session.mail or
+                                                  (session.offer and session.offer.affirm)))
         if session is not None and result.text and not result.route.startswith("llm"):
             # Auch Sofortbefehle und Nachgeschlagenes gehören in den Verlauf – sonst weiß das Sprachmodell bei der
             # nächsten Frage nicht, was JARVIS eben getan oder gesagt hat („Wie alt ist er?“)
@@ -316,6 +324,14 @@ class Orchestrator:
             if reply is not None:
                 return await self._resolve_by_voice(pending, req, approve=reply)
 
+        # E-Mail im Entstehen: der Satz ist Empfänger, Betreff oder Text (oder „abbrechen“, „die Adresse ist falsch“)
+        if session.mail is not None and session.mail.expired():
+            session.mail = None
+        if session.mail is not None:
+            mailed = await self._mail(req, session, situation)
+            if mailed is not None:
+                return mailed
+
         # Auswahl aus der eben genannten Liste („die zweite“, „ja“) – nur im direkt folgenden Satz
         offer, session.offer = session.offer, None
         choice = selection_reply(req.text, len(offer.items), affirm=offer.affirm) if offer is not None else None
@@ -346,6 +362,11 @@ class Orchestrator:
         lookup = None
         if match is not None and match.capability == LOOKUP:  # Korrektur einer Wissensfrage („ich meinte …“)
             lookup, match = Lookup(match.arguments["query"], match.arguments.get("hint")), None
+        if match is not None and match.grammar == "mail_dialog":
+            if self.registry.get(match.capability) is None:
+                return TurnResult(text=self.style.unavailable(match.capability), route="fast_path")
+            session.mail, session.offer, session.expect = MailDraft(), None, None
+            return await self._mail(req, session, situation, to=match.slots.get("to") or "")
         if match is not None and match.grammar == "refuse_password":
             return TurnResult(text=self.style.system_text("no_passwords"), route="fast_path")
         if match is not None and match.grammar == "incomplete":
@@ -355,8 +376,8 @@ class Orchestrator:
         if intent == "how_are_you" and self.registry.get("system.status") is not None:
             match = FastPathMatch("system.status", {}, 0.9, "how_are_you", {"intro": "how_are_you"})
         elif intent is not None and match is None:
-            return TurnResult(text=self.style.conversation(intent, situation, capabilities=self.registry.names()),
-                              route="conversation")
+            return TurnResult(text=self.style.conversation(intent, situation, capabilities=self.registry.names(),
+                                                           heard=req.text), route="conversation")
         if match is not None and match.grammar.endswith("_unavailable"):
             if self.registry.get(match.capability) is None:
                 return TurnResult(text=self.style.unavailable(match.capability), route="fast_path")
@@ -816,6 +837,49 @@ class Orchestrator:
         if match.capability == "assistant.day_plan" and situation.location:
             arguments.setdefault("location", situation.location)
         return arguments
+
+    async def _mail(self, req: TurnRequest, session: Session, situation: Situation,
+                    to: str | None = None) -> TurnResult | None:
+        """Ein Schritt des E-Mail-Assistenten. ``to`` gesetzt = Start („Schreib eine Mail an Mama“).
+        None heißt: der Satz war gar keine Antwort („Wie spät ist es?“) – der Entwurf ist verworfen."""
+        draft = session.mail
+        assert draft is not None
+        if to is None:
+            step = advance(draft, req.text, self.recipient_resolver)
+            if step.kind in ("bad_to", "unknown_contact") and self._other_request(req, situation):
+                session.mail = None  # statt einer Adresse ein anderer Wunsch: den normal bearbeiten
+                return None
+        else:
+            step = take_recipient(draft, to, self.recipient_resolver) if to else Step("ask_to")
+        draft.touch()
+        if step.kind == "cancel":
+            session.mail = None
+            return TurnResult(self.style.mail_text("cancel", draft), route="fast_path", card=draft.card("cancel"))
+        if step.kind != "open":
+            return TurnResult(self.style.mail_text(step.kind, draft, heard=step.heard), route="fast_path",
+                              card=draft.card())
+        session.mail = None
+        arguments = {key: value for key, value in (
+            ("to", draft.address or draft.to), ("subject", draft.subject),
+            ("body", compose_body(draft.body, req.principal.name))) if value}
+        await report("action", capability="pc.compose_mail")
+        record = await self.request_action(
+            capability="pc.compose_mail", arguments=arguments, principal=req.principal,
+            correlation_id=req.correlation_id, session_id=req.session_id, via="fast_path",
+            ctx=PolicyContext(tainted=False, allowed_domains=None, mode=req.mode, now=situation.now),
+        )
+        result = self._fast_path_result(record, {"to": draft.address or draft.to})
+        result.card = draft.card("done" if record.status in ("succeeded", "pending_confirmation") else "failed")
+        return result
+
+    def _other_request(self, req: TurnRequest, situation: Situation) -> bool:
+        """Ist der Satz erkennbar ein eigener Befehl oder eine Frage – statt eines Empfängers?"""
+        if conversation_intent(req.text) is not None or knowledge_question(req.text) is not None or \
+                req.text.strip().endswith("?"):
+            return True
+        match = self.fast_path.match(req.text, default_area=req.principal.area, now=situation.now) \
+            if self.fast_path else None
+        return match is not None and match.grammar not in ("incomplete", "pc_open_guess")
 
     def _fast_path_result(self, record: ActionRecord, slots: dict[str, Any] | None = None) -> TurnResult:
         pending = self.confirmations.get(record.confirmation_id) if record.confirmation_id else None

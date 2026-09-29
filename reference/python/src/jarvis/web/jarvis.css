@@ -654,10 +654,37 @@ body.has-cards .stage { --hud-size: min(40vmin, 360px); justify-content: flex-st
 .card.timer.due { --accent: var(--c-confirm); animation: due 0.9s ease-in-out infinite; }
 @keyframes due { 50% { box-shadow: 0 0 36px color-mix(in srgb, var(--accent) 55%, transparent); } }
 
+/* E-Mail-Entwurf (Assistent) */
+.card.mail { --accent: var(--c-tool); }
+.card.mail[data-step="done"] { --accent: var(--c-found); }
+.card.mail[data-step="failed"] { --accent: var(--c-error); }
+.mail .rows { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 2px 0 0; padding-right: 22px; }
+.mail dt {
+  font-family: var(--font-hud); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted); padding-top: 3px;
+}
+.mail dt.current { color: var(--accent); text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent); }
+.mail dd {
+  margin: 0; min-width: 0; color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap;
+  max-height: 7.6em; overflow-y: auto;
+}
+.mail dd.empty { color: var(--muted); font-style: italic; }
+.mail dd.todo { color: color-mix(in srgb, var(--muted) 55%, transparent); }
+.mail dd.current::after { content: "▍"; color: var(--accent); margin-left: 1px; animation: caret 1s steps(1) infinite; }
+.mail dd.fresh { animation: fresh 1.4s ease; }
+.mail .progress { display: flex; gap: 5px; margin: 12px 0 0; }
+.mail .progress i { flex: 1; height: 3px; border-radius: 2px; background: var(--line); }
+.mail .progress i.on { background: var(--accent); box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 70%, transparent); }
+.mail .progress i.now { background: linear-gradient(90deg, var(--accent), var(--line)); animation: mail-now 1.6s ease-in-out infinite; }
+.mail .hint { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+@keyframes caret { 50% { opacity: 0; } }
+@keyframes fresh { from { color: var(--accent); text-shadow: 0 0 14px var(--accent); } }
+@keyframes mail-now { 50% { opacity: 0.45; } }
+
 /* Effekte-Einstellung */
 body[data-fx="dezent"] .ambient { display: none; }
 body[data-fx="aus"] .ambient, body[data-fx="aus"] .radar { display: none; }
-body[data-fx="aus"] .wx *, body[data-fx="aus"] .flash { animation: none !important; }
+body[data-fx="aus"] .wx *, body[data-fx="aus"] .flash, body[data-fx="aus"] .mail * { animation: none !important; }
 body[data-fx="aus"] { transition: none; }
 
 /* ---------- Einstellungen: Reiter, Modelle ---------- */

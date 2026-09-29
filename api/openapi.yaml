@@ -493,3 +493,14 @@ components:
             method: { enum: [voice, app, app_biometric, pin] }
             prompt: { type: string }
             expires_at: { type: string, format: date-time }
+        awaiting_reply: { type: boolean, description: "JARVIS hat nachgefragt – die Oberfläche hört direkt wieder zu" }
+        card:
+          type: object
+          description: "Karte für die Oberfläche – z. B. der E-Mail-Entwurf, während der E-Mail-Assistent nachfragt"
+          required: [type]
+          properties:
+            type: { enum: [mail] }
+            to: { type: string }
+            subject: { type: string }
+            body: { type: string }
+            step: { enum: [to, subject, body, done, failed, cancel] }

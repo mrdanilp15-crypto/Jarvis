@@ -39,7 +39,7 @@ from .logging_setup import configure_logging
 from .mail import MailConfig, MailReader, register_mail_capabilities
 from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingWeights
 from .orchestrator import ConfirmationStore, Orchestrator
-from .pc import AgentHub, register_pc_capabilities
+from .pc import AgentHub, register_pc_capabilities, resolve_recipient
 from .skills import register_assistant_capabilities
 from .timers import Alarm, AlarmScheduler, Notifier, register_timer_capabilities
 from .persona import Persona
@@ -165,6 +165,7 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         # Sofortbefehle ohne LLM („Öffne den Explorer“, Timer); Licht-Grammatiken brauchen Räume aus Home Assistant
         fast_path=FastPath({}, {}),
         app_resolver=agents.find_app if pc_enabled else None,
+        recipient_resolver=lambda text: resolve_recipient(text, contacts),
         max_iterations=cfg["orchestrator"]["max_tool_iterations"],
         turn_timeout_s=cfg["orchestrator"]["turn_timeout_s"],
         session_idle_timeout_s=cfg["context"]["session_idle_timeout_s"],
