@@ -1,0 +1,202 @@
+# JARVIS Referenz-Deployment (Single-Node-Home-Server)
+#   cd deploy && cp .env.example .env && docker compose up -d
+#   Optional: --profile homeassistant --profile nodered --profile observability --profile plugins
+#
+# Netze: core (intern, keine Außenverbindung) · devices (IoT/Satelliten) · egress (Internet über Allowlist-Proxy)
+# Geplante Dienste gemäß Roadmap (docs/06): jarvis-voice, jarvis-worker, jarvis-plugin-host (eigene Entrypoints).
+
+name: jarvis
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  jarvis-core:
+    <<: *restart
+    build: ../reference/python
+    image: jarvis/core:0.1.0
+    environment:
+      JARVIS_CONFIG: /app/config/${JARVIS_CONFIG_FILE:-jarvis.example.yaml}
+      JARVIS_DATABASE_URL: postgresql://jarvis:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD fehlt}@postgres:5432/jarvis
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN: ${JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN:-}
+      JARVIS_SECRET_KV_JARVIS_MQTT_PASSWORD: ${JARVIS_SECRET_KV_JARVIS_MQTT_PASSWORD:-}
+      JARVIS_DEV_TOKENS: ${JARVIS_DEV_TOKENS:-{}}
+      JARVIS_LLM_MODEL: ${JARVIS_LLM_MODEL:-}           # leer = Modell aus der Konfiguration
+      JARVIS_HOME_LOCATION: ${JARVIS_HOME_LOCATION:-}   # Standardort fürs Wetter
+      JARVIS_USER_NAME: ${JARVIS_USER_NAME:-}           # Vorname des Nutzers (Anzeige, „Wie heiße ich?“)
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY:-}           # optional: JARVIS-Stimme „Conrad“ (Azure Speech)
+      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION:-}
+      JARVIS_TTS_VOICE: ${JARVIS_TTS_VOICE:-}
+      JARVIS_SEARXNG_URL: ${JARVIS_SEARXNG_URL:-}       # optional: eigene SearXNG-Suche statt DuckDuckGo
+      JARVIS_CALENDAR_ICS: ${JARVIS_CALENDAR_ICS:-}     # optional: abonnierte Kalender (ICS-Adressen)
+      JARVIS_CONTACTS: ${JARVIS_CONTACTS:-}             # optional: „Mama=mama@example.de; …“ für Mail-Entwürfe
+      JARVIS_MAIL_COMPOSE: ${JARVIS_MAIL_COMPOSE:-mailto}  # mailto | gmail | outlook
+      JARVIS_MAIL_IMAP_HOST: ${JARVIS_MAIL_IMAP_HOST:-} # optional: E-Mails lesen (IMAP, App-Passwort)
+      JARVIS_MAIL_USER: ${JARVIS_MAIL_USER:-}
+      JARVIS_MAIL_PASSWORD: ${JARVIS_MAIL_PASSWORD:-}
+    volumes:
+      - ../config:/app/config:ro
+      - ../schemas:/app/schemas:ro
+      - jarvis-data:/app/data             # Timer, Erinnerungen, eigene Termine
+    ports:
+      - "127.0.0.1:8080:8080"          # extern nur über Reverse Proxy / VPN
+    depends_on:                         # Mosquitto ist optional (Bridge verbindet sich bei Bedarf neu)
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      ollama: { condition: service_started }
+    networks: [core, devices, egress]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/v1/system/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    <<: *restart
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: jarvis
+      POSTGRES_USER: jarvis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD fehlt}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    networks: [core]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jarvis -d jarvis"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    <<: *restart
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: [redisdata:/data]
+    networks: [core]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  mosquitto:
+    <<: *restart
+    image: eclipse-mosquitto:2
+    volumes:
+      - ../integrations/mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ../integrations/mqtt/acl:/mosquitto/config/acl:ro
+      - ./secrets/mosquitto/passwd:/mosquitto/config/passwd:ro   # mosquitto_passwd -c …
+      - ./secrets/certs:/mosquitto/certs:ro
+      - mqttdata:/mosquitto/data
+    ports:
+      - "8883:8883"                      # Geräte & Satelliten (TLS)
+    networks: [core, devices]
+
+  ollama:
+    <<: *restart
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h             # Modelle im Speicher halten, sonst nach 5 min Pause neu laden
+      OLLAMA_NUM_PARALLEL: "1"           # ein Gespräch zur Zeit: ein KV-Cache, weniger Speicher
+      OLLAMA_FLASH_ATTENTION: "1"
+    volumes: [ollama:/root/.ollama]
+    networks: [core, egress]             # egress nur für "ollama pull"; danach entfernbar
+    # GPU (NVIDIA): docker-compose.gpu.yml – start.sh aktiviert es automatisch über COMPOSE_FILE in .env
+
+  wyoming-whisper:
+    <<: *restart
+    image: rhasspy/wyoming-whisper:latest
+    command: ["--model", "small-int8", "--language", "de"]   # GPU: größeres Modell, siehe docs/06
+    volumes: [whisper:/data]
+    networks: [core, devices]
+
+  wyoming-piper:
+    <<: *restart
+    image: rhasspy/wyoming-piper:latest
+    command: ["--voice", "de_DE-thorsten-high"]
+    volumes: [piper:/data]
+    networks: [core, devices]
+
+  wyoming-openwakeword:
+    <<: *restart
+    image: rhasspy/wyoming-openwakeword:latest
+    command: ["--preload-model", "hey_jarvis"]               # serverseitige Zweitprüfung
+    networks: [core, devices]
+
+  searxng:
+    <<: *restart
+    image: searxng/searxng:latest
+    volumes: [searxng:/etc/searxng]
+    networks: [core, egress]
+
+  homeassistant:
+    <<: *restart
+    profiles: [homeassistant]
+    image: ghcr.io/home-assistant/home-assistant:stable
+    volumes:
+      - hadata:/config
+      - ../integrations/homeassistant/packages:/config/packages:ro
+    ports: ["8123:8123"]
+    networks: [devices, egress]
+
+  nodered:
+    <<: *restart
+    profiles: [nodered]
+    image: nodered/node-red:latest
+    environment:
+      JARVIS_CORE_URL: http://jarvis-core:8080
+      JARVIS_TOKEN: ${NODERED_JARVIS_TOKEN:-}
+      FLOWS: jarvis-flows.json
+    volumes:
+      - noderedata:/data
+      - ../integrations/node-red/jarvis-flows.json:/data/jarvis-flows.json
+      - ./secrets/certs/ca.crt:/data/certs/ca.crt:ro
+    ports: ["127.0.0.1:1880:1880"]
+    networks: [devices, core]
+
+  plugin-weather:
+    <<: *restart
+    profiles: [plugins]
+    image: node:22-alpine
+    working_dir: /plugin
+    command: ["node", "server.mjs"]
+    environment:
+      JARVIS_CORE_URL: http://jarvis-core:8080
+      JARVIS_PLUGIN_CONFIG: '{"home_latitude": 52.52, "home_longitude": 13.40}'
+    volumes: [../reference/node/plugin-weather:/plugin:ro]
+    networks: [core, egress]
+
+  loki:
+    <<: *restart
+    profiles: [observability]
+    image: grafana/loki:latest
+    networks: [core]
+
+  grafana:
+    <<: *restart
+    profiles: [observability]
+    image: grafana/grafana:latest
+    ports: ["127.0.0.1:3000:3000"]
+    volumes: [grafana:/var/lib/grafana]
+    networks: [core]
+
+networks:
+  core:
+    internal: true
+  devices: {}
+  egress: {}
+
+volumes:
+  jarvis-data: {}
+  pgdata: {}
+  redisdata: {}
+  mqttdata: {}
+  ollama: {}
+  whisper: {}
+  piper: {}
+  searxng: {}
+  hadata: {}
+  noderedata: {}
+  grafana: {}

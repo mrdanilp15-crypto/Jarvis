@@ -1,0 +1,30 @@
+# Mosquitto-ACL für JARVIS (Topic-Präfix jarvis/v1)
+# %u = Benutzername. Geräte/Satelliten melden sich mit ihrer Geräte-ID als Benutzername an.
+
+# Kern: vollständiger Zugriff auf den JARVIS-Namensraum + HA-Discovery
+user jarvis-core
+topic readwrite jarvis/v1/#
+topic write homeassistant/#
+
+# Home Assistant: liest Status/Events, schreibt eigene Discovery- und Statusdaten
+user homeassistant
+topic read jarvis/v1/status
+topic read jarvis/v1/event/#
+topic read jarvis/v1/state/#
+topic write jarvis/v1/cmd/core/mode
+topic readwrite homeassistant/#
+
+# Node-RED: liest Events, liefert eigene Sensorwerte, empfängt eigene Kommandos
+user nodered
+topic read jarvis/v1/event/#
+topic write jarvis/v1/in/sensor/nodered/#
+topic read jarvis/v1/cmd/nodered
+topic write jarvis/v1/state/nodered/#
+topic read zigbee2mqtt/#
+topic write zigbee2mqtt/+/set
+
+# Geräte und Satelliten: ausschließlich eigene Topics
+pattern write jarvis/v1/in/sensor/%u/#
+pattern read jarvis/v1/cmd/%u
+pattern write jarvis/v1/state/%u/#
+pattern readwrite jarvis/v1/satellite/%u/#

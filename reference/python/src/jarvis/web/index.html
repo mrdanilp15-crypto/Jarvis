@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https://upload.wikimedia.org; style-src 'self'; script-src 'self'">
+  <meta name="color-scheme" content="dark">
+  <title>J.A.R.V.I.S</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="jarvis.css">
+  <script src="jarvis.js" defer></script>
+</head>
+<body data-state="offline">
+  <header class="topbar">
+    <div class="brand">J.A.R.V.I.S<small>Just A Rather Very Intelligent System</small></div>
+    <div class="clock" aria-hidden="true"><span id="clock-time">--:--</span><small id="clock-date"></small></div>
+    <button class="weather-chip" id="weather-chip" type="button" hidden title="Letzte Wetterabfrage – anzeigen"></button>
+    <div class="conn" id="conn" data-conn="connecting"><span class="dot"></span><span id="conn-text">Verbinde …</span></div>
+    <button class="conn model-chip" id="model-chip" type="button" data-conn="none" title="KI-Modell – ändern im Zahnrad-Menü">
+      <span class="dot"></span><span id="model-text">KI</span></button>
+    <div class="conn" id="pc-status" data-conn="none" title="PC-Steuerung"><span class="dot"></span><span id="pc-text">PC</span></div>
+    <button class="icon-btn" id="settings-btn" type="button" aria-label="Einstellungen" title="Einstellungen">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </header>
+
+  <main class="layout">
+    <section class="stage">
+      <canvas class="ambient" id="ambient" aria-hidden="true"></canvas>
+      <button class="hud" id="hud" type="button" aria-label="Mit JARVIS sprechen">
+        <svg viewBox="-200 -200 400 400" aria-hidden="true">
+          <defs>
+            <radialGradient id="core-gradient">
+              <stop offset="0" stop-color="currentColor" stop-opacity="0.55"/>
+              <stop offset="1" stop-color="currentColor" stop-opacity="0"/>
+            </radialGradient>
+            <linearGradient id="radar-gradient" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="currentColor" stop-opacity="0"/>
+              <stop offset="1" stop-color="currentColor" stop-opacity="0.45"/>
+            </linearGradient>
+          </defs>
+
+          <!-- Recherche: Radar-Schwenk über dem ganzen Kreis -->
+          <g class="radar"><path d="M 0 0 L 170 0 A 170 170 0 0 0 147.2 -85 Z" fill="url(#radar-gradient)" stroke="none"/></g>
+          <!-- Treffer, Fehler, Hinweis: ein Ring, der sich einmal ausbreitet -->
+          <circle r="120" stroke-width="3" class="flash"/>
+          <circle r="120" stroke-width="1.5" class="flash f2"/>
+
+          <g class="spin">
+            <circle r="176" stroke-width="7" pathLength="360" stroke-dasharray="55 5 16 5 78 14 40 5 10 22 9 5 40 56"/>
+            <circle r="188" stroke-width="1" pathLength="360" stroke-dasharray="120 6 60 20 100 54" class="faint"/>
+          </g>
+          <g class="spin-rev">
+            <circle r="163" stroke-width="8" pathLength="360" stroke-dasharray="0.5 2.5" class="faint"/>
+            <path d="M -129.9 75 A 150 150 0 0 1 -51.3 -140.95" stroke-width="3" stroke-linecap="round" pathLength="100" stroke-dasharray="0 3.2"/>
+          </g>
+          <circle r="150" stroke-width="1.2" class="fainter"/>
+          <g class="spin-mid">
+            <path d="M 47.88 -131.56 A 140 140 0 0 1 137.87 24.31" stroke-width="9" pathLength="100" stroke-dasharray="2.4 1.6"/>
+          </g>
+          <g class="spin-fast">
+            <circle r="122" stroke-width="2" pathLength="360" stroke-dasharray="70 6 24 6 100 10 60 6 30 48"/>
+          </g>
+          <circle r="112" stroke-width="1" class="faint"/>
+          <g class="sweep">
+            <circle r="106" stroke-width="3.5" stroke-linecap="round" pathLength="360" stroke-dasharray="46 314"/>
+          </g>
+          <path d="M 53.92 77 A 94 94 0 0 1 -53.92 77" stroke-width="8" pathLength="100" stroke-dasharray="0.8 2.6" class="faint"/>
+          <path d="M -47 -81.41 A 94 94 0 0 1 47 -81.41" stroke-width="3" stroke-linecap="round" pathLength="100" stroke-dasharray="0 6"/>
+
+          <circle r="80" stroke-width="1.5" class="ripple r1"/>
+          <circle r="80" stroke-width="1.5" class="ripple r2"/>
+          <g class="core">
+            <circle r="78" class="core-glow"/>
+            <circle r="86" stroke-width="1" class="faint"/>
+            <circle r="80" stroke-width="2.5"/>
+            <text class="title" x="0" y="1" text-anchor="middle" dominant-baseline="middle">J.A.R.V.I.S</text>
+          </g>
+        </svg>
+      </button>
+      <p class="status" id="status" aria-live="polite">Verbinde …</p>
+      <p class="caption" id="caption" aria-live="polite"></p>
+      <button class="pill" id="wake-toggle" type="button" aria-pressed="false"
+              title="Hört dauerhaft auf „Jarvis“. Dafür sendet Chrome bzw. Edge das Mikrofon-Audio laufend an Google bzw. Microsoft.">
+        <span class="dot" aria-hidden="true"></span><span id="wake-text">„Jarvis“-Aktivierung aus</span>
+      </button>
+      <p class="heard" id="heard" hidden><span id="heard-text"></span>
+        <button class="link-btn" id="heard-learn" type="button">Das war „Jarvis“</button></p>
+      <div class="cards" id="cards" aria-live="polite"></div>
+    </section>
+
+    <section class="log-panel" aria-label="Gesprächsprotokoll">
+      <div class="panel-title">Gesprächsprotokoll</div>
+      <ol class="log" id="log"></ol>
+      <form class="composer" id="composer" autocomplete="off">
+        <button class="round-btn" id="mic-btn" type="button" aria-label="Sprechen" title="Sprechen (Leertaste)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
+        </button>
+        <input id="text" type="text" placeholder="Nachricht an JARVIS …" aria-label="Nachricht an JARVIS" maxlength="32000">
+        <button class="round-btn" id="send-btn" type="submit" aria-label="Senden" title="Senden (Enter)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+        </button>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="login">
+    <form id="login-form" method="dialog">
+      <h2>Zugang</h2>
+      <p>Geben Sie Ihr JARVIS-Token ein. <code>./deploy/start.sh</code> zeigt es am Ende an; es steht außerdem in
+        <code>deploy/.env</code> bei <code>JARVIS_DEV_TOKENS</code>.</p>
+      <label class="field">Token
+        <input id="login-token" type="text" required spellcheck="false" autocomplete="off" placeholder="jarvis-…">
+      </label>
+      <p class="form-error" id="login-error" hidden></p>
+      <div class="actions"><button class="btn primary" type="submit">Verbinden</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="settings" class="wide">
+    <form method="dialog">
+      <h2>Einstellungen</h2>
+      <div class="tabs" role="tablist" aria-label="Bereiche">
+        <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true">Allgemein</button>
+        <button type="button" role="tab" id="tab-voice" aria-controls="panel-voice" aria-selected="false">Stimme &amp; Hören</button>
+        <button type="button" role="tab" id="tab-ai" aria-controls="panel-ai" aria-selected="false">KI-Modell</button>
+      </div>
+
+      <section class="tab-panel" id="panel-general" role="tabpanel" aria-labelledby="tab-general">
+      <label class="check"><input type="checkbox" id="opt-speak"> <span>JARVIS spricht die Antworten</span></label>
+      <label class="check"><input type="checkbox" id="opt-convo">
+        <span>Dauergespräch: nach jeder gesprochenen Antwort automatisch wieder zuhören</span></label>
+      <label class="field">Ihr Ort (für das Wetter)
+        <input id="opt-location" type="text" maxlength="100" placeholder="z. B. Hamburg" autocomplete="address-level2">
+      </label>
+      <label class="field">Visuelle Effekte
+        <select id="opt-fx">
+          <option value="voll">voll – Farben, Wetter-Animationen, Partikel</option>
+          <option value="dezent">dezent – Farben ohne Partikel</option>
+          <option value="aus">aus – ruhige Anzeige (für langsame Rechner)</option>
+        </select>
+      </label>
+      <p class="hint">Farben: Cyan = bereit · Weiß = hört zu · Gold = denkt · Violett = schlägt nach · Blau = führt aus ·
+        Grün = gefunden bzw. erledigt · Orange = wartet auf Bestätigung · Rot = Fehler.</p>
+      </section>
+
+      <section class="tab-panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
+      <label class="field">Stimme <select id="voice"></select></label>
+      <label class="field">KI-Effekt der JARVIS-Stimme
+        <select id="opt-effect">
+          <option value="dezent">dezent</option>
+          <option value="stark">stark</option>
+          <option value="aus">aus</option>
+        </select>
+      </label>
+      <div class="field">„Jarvis“-Erkennung
+        <p class="hint">Hört JARVIS schlecht auf seinen Namen? Beim Einlernen sagen Sie viermal „Jarvis“; JARVIS merkt
+          sich, was die Spracherkennung bei Ihrer Stimme daraus macht (etwa „Service“ oder „Davis“).</p>
+        <div class="train">
+          <button class="btn" type="button" id="wake-train">„Jarvis“ einlernen</button>
+          <button class="btn" type="button" id="wake-forget">Gelerntes vergessen</button>
+        </div>
+        <p class="hint" id="wake-train-status" aria-live="polite"></p>
+      </div>
+      <p class="hint">Stimme „Automatisch“ nimmt die beste verfügbare: Microsoft Conrad über Azure (falls in
+        <code>deploy/.env</code> eingerichtet), in Microsoft Edge die kostenlose Conrad-Browserstimme, sonst die lokale
+        Piper-Stimme. Spracheingabe funktioniert in Chrome und Edge; deren Spracherkennung läuft über die Server von
+        Google bzw. Microsoft – bei eingeschalteter „Jarvis“-Aktivierung dauerhaft, sonst nur nach einem Tipp auf den
+        Kreis.</p>
+      </section>
+
+      <section class="tab-panel" id="panel-ai" role="tabpanel" aria-labelledby="tab-ai" hidden>
+        <p class="ai-now" id="ai-now">Lade …</p>
+        <p class="form-error" id="ai-error" hidden></p>
+
+        <h3>Lokales Modell <small>läuft auf Ihrem PC, kostenlos, privat</small></h3>
+        <ul class="models" id="local-models"></ul>
+        <div class="progress" id="pull-progress" hidden>
+          <div class="bar"><span id="pull-bar"></span></div>
+          <p class="hint" id="pull-text"></p>
+        </div>
+        <div class="row-field">
+          <input id="custom-model" type="text" maxlength="120" spellcheck="false" placeholder="anderes Ollama-Modell, z. B. mistral-nemo"
+                 aria-label="Anderes Ollama-Modell">
+          <button class="btn" type="button" id="custom-pull">Herunterladen</button>
+        </div>
+
+        <h3>Claude <small>Cloud-Modell von Anthropic, kostet pro Nutzung</small></h3>
+        <p class="hint" id="claude-state"></p>
+        <div class="row-field">
+          <input id="claude-key" type="password" maxlength="300" autocomplete="off" spellcheck="false"
+                 placeholder="API-Schlüssel (sk-ant-…)" aria-label="Claude-API-Schlüssel">
+          <button class="btn primary" type="button" id="claude-save">Prüfen &amp; speichern</button>
+        </div>
+        <p class="hint warn" id="claude-http" hidden>Die Verbindung zu JARVIS ist unverschlüsselt. Tragen Sie den Schlüssel
+          am besten direkt am PC mit JARVIS ein (Adresse 127.0.0.1).</p>
+        <p class="form-error" id="claude-error" hidden></p>
+        <button class="btn danger small" type="button" id="claude-remove" hidden>Gespeicherten Schlüssel entfernen</button>
+        <label class="field">Claude-Modell <select id="claude-model"></select></label>
+        <fieldset class="modes" id="llm-modes">
+          <legend>Wer antwortet?</legend>
+          <label class="check"><input type="radio" name="llm-mode" value="auto">
+            <span><b>Automatisch</b> – schwierige Fragen (Planen, Erklären, Texte) an Claude, alles andere lokal</span></label>
+          <label class="check"><input type="radio" name="llm-mode" value="cloud">
+            <span><b>Immer Claude</b> – am klügsten, kostet pro Frage</span></label>
+          <label class="check"><input type="radio" name="llm-mode" value="local">
+            <span><b>Nur lokal</b> – nichts verlässt Ihren PC</span></label>
+        </fieldset>
+        <p class="hint">Sensibles (Gesundheit, Passwörter, Konten, Kamera) beantwortet immer das lokale Modell. Den
+          Schlüssel erstellen Sie auf platform.claude.com unter „API Keys“. JARVIS prüft ihn kostenlos und speichert ihn nur
+          auf dem JARVIS-Server – die Oberfläche zeigt danach nur noch die letzten vier Zeichen.</p>
+      </section>
+
+      <div class="actions">
+        <button class="btn danger left" type="button" id="logout">Abmelden</button>
+        <button class="btn" type="button" id="voice-test">Stimme testen</button>
+        <button class="btn primary" type="submit">Fertig</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
