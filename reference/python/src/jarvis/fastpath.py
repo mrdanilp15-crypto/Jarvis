@@ -403,6 +403,13 @@ def canonical_command(text: str) -> str:
 # Status und Tagesplan (Skills mit Capability) sowie Gesprächs-Intents ohne Aktion. Verglichen wird die ganze,
 # normalisierte Äußerung – „Status?“ ja, „Wie ist der Status der Waschmaschine?“ nein (geht an das LLM).
 # Gedächtnis: „Merk dir, dass ich Kaffee schwarz trinke“, „Was weißt du über mich?“, „Vergiss, dass …“
+# Durchsagen: „Sag in der Küche, dass das Essen fertig ist“, „Durchsage an alle: Abfahrt in fünf Minuten“
+_ROOM = r"(?P<room>(?:in|im|ins|an|für)\s+(?:der\s+|dem\s+|die\s+|den\s+|das\s+)?[\wäöüß-]+|an\s+alle|allen|überall)"
+ANNOUNCE = [
+    re.compile(r"^(?:mach\w*\s+(?:eine\s+)?)?durchsage(?:\s+" + _ROOM + r")?\s*[:,]?\s+(?P<text>.+)$", re.I),
+    re.compile(r"^(?:sag|sage|richte|richt)\s+" + _ROOM + r"\s*,?\s*(?:bescheid\s*,?\s*)?(?:aus\s*,?\s*)?"
+               r"(?P<dass>dass\s+)?(?P<text>.+)$", re.I),
+]
 REMEMBER = re.compile(r"^(?:bitte\s+)?(?:merk|merke|notier|notiere|speicher|speichere)\s+(?:dir|dir bitte)\s*[,:]?\s*"
                       r"(?:bitte\s+)?(?:(?P<dass>dass)\s+|folgendes\s*:?\s*)?(?P<what>.+?)[.!]?$", re.I)
 MEMORY_LIST = re.compile(r"^(?:was weißt du (?:alles )?über mich|was hast du dir (?:alles )?(?:über mich )?gemerkt|"
@@ -647,6 +654,16 @@ class FastPath:
                 return FastPathMatch("home.set_light", {"on": on}, 0.9, "light_unavailable")
         simple = normalize_utterance(text)
         raw = re.sub(r"\s+", " ", _PREFIX.sub("", text.strip())).strip()
+        for pattern in ANNOUNCE:
+            if (m := pattern.match(raw)) and len(m["text"].split()) >= 2:
+                text = m["text"].strip(" ,.!?")
+                if m.groupdict().get("dass"):
+                    text = main_clause(text)
+                room = (m["room"] or "").strip()
+                everywhere = not room or bool(re.fullmatch(r"an alle|allen|überall", room, re.I))
+                arguments = {"text": text[0].upper() + text[1:], **({} if everywhere else {"room": room})}
+                prep = " ".join(room.split()[:-1]).lower()  # „in der“ – für die Antwort „… in der Küche angekommen“
+                return FastPathMatch("message.announce", arguments, 0.95, "announce", {"prep": prep})
         if (m := REMEMBER.match(raw)) and len(m["what"].split()) >= 2:
             what = m["what"].strip(" ,")
             if m["dass"]:

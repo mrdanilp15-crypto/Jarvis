@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import html
 import json
 import logging
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,6 +65,7 @@ class Container:
     learner: Any = None  # gelernte Routinen (patterns.PatternLearner)
     calendar: Any = None  # Kalender (agenda.CalendarService) – für den nächsten Termin in der Begrüßung
     devices: Any = None  # gekoppelte Raumgeräte (devices.DeviceRegistry)
+    wake: Any = None  # rooms.WakeArbiter: bei mehreren Geräten antwortet nur das nächste
 
     async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
                        location: str | None = None, on_status: OnStatus | None = None) -> TurnResult:
@@ -513,12 +516,28 @@ def create_app(container: Container) -> FastAPI:
                 await send({"type": "action.update", "action": record.to_result_dict()})
             elif kind == "ping":
                 await send({"type": "pong"})
+            elif kind == "wake.listen":  # dieses Fenster hört (nicht mehr) auf „Jarvis“
+                if container.wake is not None:
+                    container.wake.listen(client, bool(msg.get("on")))
+            elif kind == "wake.claim":  # „Jarvis“ gehört – darf dieses Gerät antworten?
+                score = msg.get("score")
+                score = float(score) if isinstance(score, int | float) and not isinstance(score, bool) else None
+
+                async def decide(ref: Any = msg.get("ref")) -> None:
+                    granted = True if container.wake is None else await container.wake.claim(client, score)
+                    with contextlib.suppress(Exception):  # Fenster inzwischen geschlossen
+                        await send({"type": "wake.result", "ref": ref, "granted": granted})
+
+                claims.add(task := asyncio.create_task(decide()))  # nicht blockieren: Abstimmung dauert bis 0,6 s
+                task.add_done_callback(claims.discard)
             else:
                 raise JarvisError("JRV-VAL-001", f"Unbekannter Nachrichtentyp {kind}")
 
+        client = f"{who.actor}#{secrets.token_hex(4)}"
+        claims: set[asyncio.Task[None]] = set()
         notifier = container.notifier
         if notifier is not None:
-            notifier.attach(who.actor, send)
+            notifier.attach(who.actor, send, area=who.area)
             for message in notifier.drain(who.actor):  # verpasste Meldungen (kein Fenster offen)
                 await send(message)
         try:
@@ -538,6 +557,8 @@ def create_app(container: Container) -> FastAPI:
         except WebSocketDisconnect:
             return
         finally:
+            if container.wake is not None:
+                container.wake.listen(client, False)
             if notifier is not None:
                 notifier.detach(who.actor, send)
 

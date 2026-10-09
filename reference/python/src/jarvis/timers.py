@@ -34,6 +34,7 @@ class Alarm:
     label: str
     actor: str
     duration_s: int | None = None
+    area: str | None = None  # Raum, in dem er gestellt wurde – dort meldet er sich auch
     created: datetime = field(default_factory=lambda: datetime.now(UTC))
     late: bool = False  # während einer Abschaltung fällig geworden
 
@@ -60,24 +61,28 @@ class AlarmScheduler:
         self._load()
 
     # -- Verwaltung ------------------------------------------------------------------------------------
-    def add(self, kind: str, due: datetime, label: str, actor: str, *, duration_s: int | None = None) -> Alarm:
+    def add(self, kind: str, due: datetime, label: str, actor: str, *, duration_s: int | None = None,
+            area: str | None = None) -> Alarm:
         if due.tzinfo is None:
             raise ValueError("due braucht eine Zeitzone")
         if len(self.alarms) >= MAX_ALARMS:
             raise JarvisError("JRV-VAL-001", "Zu viele Timer", user_message="Es laufen bereits sehr viele Timer.")
-        alarm = Alarm(new_id("alm"), kind, due, label.strip(), actor, duration_s)
+        alarm = Alarm(new_id("alm"), kind, due, label.strip(), actor, duration_s, area)
         self.alarms[alarm.id] = alarm
         self._changed()
         return alarm
 
-    def active(self, actor: str | None = None, kinds: tuple[str, ...] = ("timer", "reminder", "event")) -> list[Alarm]:
-        return sorted((a for a in self.alarms.values() if (actor is None or a.actor == actor) and a.kind in kinds),
-                      key=lambda a: a.due)
+    def active(self, actor: str | None = None, kinds: tuple[str, ...] = ("timer", "reminder", "event"),
+               area: str | None = None) -> list[Alarm]:
+        """Eigene Timer – und die, die im selben Raum gestellt wurden („Wie lange läuft der Timer?“ in der Küche)."""
+        return sorted((a for a in self.alarms.values()
+                       if (actor is None or a.actor == actor or (area is not None and a.area == area))
+                       and a.kind in kinds), key=lambda a: a.due)
 
     def cancel(self, *, actor: str | None = None, label: str | None = None, everything: bool = False,
-               kinds: tuple[str, ...] = ("timer", "reminder")) -> list[Alarm]:
+               kinds: tuple[str, ...] = ("timer", "reminder"), area: str | None = None) -> list[Alarm]:
         """Alle, passende nach Bezeichnung oder – ohne Angabe – den nächsten fälligen."""
-        candidates = self.active(actor, kinds)
+        candidates = self.active(actor, kinds, area)
         if label:
             wanted = label.lower()
             candidates = [a for a in candidates if wanted in a.label.lower()]
@@ -157,7 +162,7 @@ def register_timer_capabilities(registry: ToolRegistry, scheduler: AlarmSchedule
     async def start(args: dict[str, Any], ctx: InvocationContext) -> Any:
         seconds = int(args["duration_s"])
         alarm = scheduler.add("timer", scheduler.clock() + timedelta(seconds=seconds), args.get("label") or "",
-                              ctx.actor, duration_s=seconds)
+                              ctx.actor, duration_s=seconds, area=ctx.area)
         return {"id": alarm.id, "label": alarm.label, "duration_s": seconds, "due": local(alarm.due),
                 "now": local(scheduler.clock())}
 
@@ -172,7 +177,7 @@ def register_timer_capabilities(registry: ToolRegistry, scheduler: AlarmSchedule
         if due <= scheduler.clock():
             raise JarvisError("JRV-VAL-002", "Zeitpunkt liegt in der Vergangenheit",
                               user_message="Dieser Zeitpunkt liegt bereits in der Vergangenheit.")
-        alarm = scheduler.add("reminder", due, args["text"], ctx.actor)
+        alarm = scheduler.add("reminder", due, args["text"], ctx.actor, area=ctx.area)
         return {"id": alarm.id, "text": alarm.label, "due": local(alarm.due), "now": local(scheduler.clock())}
 
     async def listing(args: dict[str, Any], ctx: InvocationContext) -> Any:
@@ -180,13 +185,13 @@ def register_timer_capabilities(registry: ToolRegistry, scheduler: AlarmSchedule
         return {"now": local(now), "alarms": [{"kind": a.kind, "label": a.label, "due": local(a.due),
                                                "duration_s": a.duration_s,
                                                "remaining_s": max(0, int((a.due - now).total_seconds()))}
-                                              for a in scheduler.active(ctx.actor, ("timer", "reminder"))]}
+                                              for a in scheduler.active(ctx.actor, ("timer", "reminder"), ctx.area)]}
 
     async def cancel(args: dict[str, Any], ctx: InvocationContext) -> Any:
         kinds = ("reminder",) if args.get("kind") == "reminder" else ("timer",) if args.get("kind") == "timer" \
             else ("timer", "reminder")
         cancelled = scheduler.cancel(actor=ctx.actor, label=args.get("label"), everything=bool(args.get("all")),
-                                     kinds=kinds)
+                                     kinds=kinds, area=ctx.area)
         return {"cancelled": [{"kind": a.kind, "label": a.label, "duration_s": a.duration_s} for a in cancelled]}
 
     registry.register(Capability(
@@ -230,33 +235,57 @@ def register_timer_capabilities(registry: ToolRegistry, scheduler: AlarmSchedule
 
 
 class Notifier:
-    """Meldungen an die offenen Oberflächen eines Nutzers; ohne offenes Fenster bleiben sie bis zu 12 h liegen."""
+    """Meldungen an die offenen Oberflächen; ohne offenes Fenster bleiben sie bis zu 12 h liegen.
+
+    Jede Verbindung gehört zu einem Nutzer bzw. Gerät (actor) und optional zu einem Raum (area): Ein Timer meldet
+    sich auf dem Gerät, auf dem er gestellt wurde, und in dessen Raum; Durchsagen gehen an alle Geräte eines Raums."""
 
     def __init__(self, clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         self.clock = clock
         self.listeners: dict[str, list[Callable[[dict[str, Any]], Awaitable[None]]]] = {}
+        self.areas: dict[Callable[[dict[str, Any]], Awaitable[None]], str | None] = {}
         self.pending: dict[str, list[tuple[datetime, dict[str, Any]]]] = {}
 
-    def attach(self, actor: str, send: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+    def attach(self, actor: str, send: Callable[[dict[str, Any]], Awaitable[None]], area: str | None = None) -> None:
         self.listeners.setdefault(actor, []).append(send)
+        self.areas[send] = area
 
     def detach(self, actor: str, send: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
         if send in self.listeners.get(actor, []):
             self.listeners[actor].remove(send)
+        self.areas.pop(send, None)
+
+    def connected_areas(self) -> set[str]:
+        return {area for area in self.areas.values() if area}
 
     def drain(self, actor: str) -> list[dict[str, Any]]:
         cutoff = self.clock() - timedelta(hours=12)
         return [message for at, message in self.pending.pop(actor, []) if at >= cutoff]
 
-    async def send(self, actor: str, message: dict[str, Any]) -> bool:
-        delivered = False
-        for send in list(self.listeners.get(actor, [])):
+    async def _deliver(self, targets: list[tuple[str, Callable[[dict[str, Any]], Awaitable[None]]]],
+                       message: dict[str, Any]) -> set[str]:
+        reached: set[str] = set()
+        for actor, send in targets:
             try:
                 await send(message)
-                delivered = True
+                reached.add(actor)
             except Exception:  # Verbindung gerade getrennt
                 self.detach(actor, send)
+        return reached
+
+    async def send(self, actor: str, message: dict[str, Any], area: str | None = None) -> bool:
+        """An alle Fenster von ``actor`` und – mit ``area`` – an alle Geräte in diesem Raum."""
+        targets = [(a, s) for a, sends in self.listeners.items() for s in list(sends)
+                   if a == actor or (area is not None and self.areas.get(s) == area)]
+        delivered = bool(await self._deliver(targets, message))
         if not delivered:
             self.pending.setdefault(actor, []).append((self.clock(), message))
             del self.pending[actor][:-20]
         return delivered
+
+    async def send_area(self, area: str | None, message: dict[str, Any], *,
+                        exclude_actor: str | None = None) -> set[str]:
+        """Durchsage: an alle Verbindungen eines Raums (``area=None``: alle) – nichts wird aufgehoben."""
+        targets = [(a, s) for a, sends in self.listeners.items() for s in list(sends)
+                   if a != exclude_actor and (area is None or self.areas.get(s) == area)]
+        return await self._deliver(targets, message)

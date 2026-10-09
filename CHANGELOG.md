@@ -1,5 +1,23 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.9.0 – 2026-10-09
+
+### Neu
+- **Durchsagen:** „Sag in der Küche, dass das Essen fertig ist“, „Durchsage an alle: Abfahrt in fünf Minuten“,
+  „Sag allen Bescheid, dass …“.
+  - Die Geräte des Raums spielen einen Hinweiston und sprechen die Durchsage.
+  - JARVIS sagt, ob sie angekommen ist oder ob dort gerade kein Gerät verbunden ist.
+  - Fähigkeit `message.announce` (R0); Kinderprofile dürfen sie auch.
+- **Timer und Erinnerungen bleiben im Raum:**
+  - Was auf dem Küchen-Tablet gestellt wurde, meldet sich in der Küche, nicht am PC (auch kein Windows-Hinweis).
+  - „Wie lange läuft der Timer?“ und „Stopp den Timer“ gelten für alle Timer des Raums.
+- **Nur das nächste Gerät antwortet:**
+  - Hören mehrere Geräte „Jarvis“, meldet jedes, wie laut es ankam: Abstand der Stimme zum Grundrauschen in dB, aus
+    der lokalen Spracherkennung.
+  - JARVIS sammelt die Meldungen höchstens 0,6 s und lässt nur das lauteste antworten. Die anderen bleiben still.
+  - Ist nur ein Gerät aktiv, antwortet es ohne Wartezeit.
+  - Bei Browser-Spracherkennung fehlt die Lautstärke; dann gewinnt ein Gerät mit lokaler Erkennung.
+
 ## Jarvis-Modul 2.8.2 – 2026-10-09
 
 ### Neu

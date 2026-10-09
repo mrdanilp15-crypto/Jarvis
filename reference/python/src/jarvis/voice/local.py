@@ -119,6 +119,16 @@ def openwakeword_detector(threshold: float = 0.5) -> Callable[[], WakeDetector] 
     return factory
 
 
+def snr_db(pcm: bytes, noise: float, frame: int = 480) -> float:
+    """Lautester 30-ms-Abschnitt gegenüber dem Grundrauschen (16-Bit-PCM) in dB – das Maß für „wie nah“."""
+    samples = array("h", pcm[: len(pcm) - len(pcm) % 2])
+    peak = 0.0
+    for start in range(0, max(0, len(samples) - frame + 1), frame):
+        chunk = samples[start:start + frame]
+        peak = max(peak, math.sqrt(sum(s * s for s in chunk) / len(chunk)))
+    return round(20 * math.log10(max(peak, 1.0) / max(noise, 1.0)), 1)
+
+
 @dataclass
 class Segmenter:
     """Sprachende-Erkennung über die Energie (Grundrauschen wird laufend nachgeführt)."""
@@ -214,6 +224,7 @@ class AudioSession:
         self.segmenter = Segmenter()
         self._listen_since = 0.0
         self._utterance = False
+        self._recent = bytearray()  # die letzten 1,5 s – für „wie laut kam ‚Jarvis‘ hier an?“
 
     def set_mode(self, mode: str) -> None:
         if mode not in ("idle", "wake", "listen"):
@@ -228,10 +239,13 @@ class AudioSession:
         if self.mode == "idle":
             return []
         out: list[dict[str, Any]] = []
+        self._recent.extend(pcm)
+        del self._recent[:-RATE * 3]  # 1,5 s bei 16 Bit
         if self.mode == "wake" and self.wake is not None and not self._utterance:
             if await asyncio.to_thread(self.wake, pcm):
+                score = snr_db(bytes(self._recent), self.segmenter.noise)
                 self.set_mode("listen")
-                return [{"type": "wake"}]
+                return [{"type": "wake", "score": score}]
         for kind, audio in self.segmenter.feed(pcm):
             if kind == "start":
                 self._utterance = True
@@ -261,11 +275,12 @@ class AudioSession:
         if not (match := WAKE_WORD.match(text)):
             return [{"type": "heard", "text": text}] if text else []
         command = text[match.end():].strip(" ,.")
+        score = snr_db(audio, self.segmenter.noise)  # Abstimmung zwischen mehreren Geräten (rooms.WakeArbiter)
         if re.search(r"\w{2,}", command):
             self.set_mode("idle")
-            return [{"type": "transcript", "text": command}]
+            return [{"type": "transcript", "text": command, "wake": True, "score": score}]
         self.set_mode("listen")
-        return [{"type": "wake"}]
+        return [{"type": "wake", "score": score}]
 
 
 def create_local_speech(prompt: Callable[[], str] | None = None) -> LocalSpeech | None:

@@ -49,6 +49,10 @@ def feed(session, audio, chunk_ms=80):
     return events
 
 
+def plain(events):  # Lautstärke („score“) prüft test_wake_score_follows_loudness
+    return [{k: v for k, v in e.items() if k != "score"} for e in events]
+
+
 def test_segmenter_cuts_one_utterance_with_preroll():
     events = Segmenter().feed(utterance(600))
     assert [kind for kind, _ in events] == ["start", "end"]
@@ -60,7 +64,8 @@ def test_wake_word_and_command_in_one_breath():
     whisper = FakeWhisper("Jarvis, mach das Licht im Wohnzimmer an.")
     session = LocalSpeech(whisper, prompt=lambda: "Jarvis, Wohnzimmer").session()
     session.set_mode("wake")
-    assert feed(session, utterance()) == [{"type": "transcript", "text": "mach das Licht im Wohnzimmer an"}]
+    assert plain(feed(session, utterance())) == [{"type": "transcript", "text": "mach das Licht im Wohnzimmer an",
+                                                  "wake": True}]
     assert whisper.calls[0][1] == "Jarvis, Wohnzimmer"  # Wörterbuch für Räume und Namen
     assert session.mode == "idle"  # danach nichts hören, bis JARVIS geantwortet hat
 
@@ -68,7 +73,7 @@ def test_wake_word_and_command_in_one_breath():
 def test_only_jarvis_then_the_command():
     session = LocalSpeech(FakeWhisper("Hey Jarwis!", "Wie wird das Wetter morgen?")).session()
     session.set_mode("wake")
-    assert feed(session, utterance(500)) == [{"type": "wake"}]
+    assert plain(feed(session, utterance(500))) == [{"type": "wake"}]
     assert session.mode == "listen"
     assert feed(session, utterance()) == [{"type": "speech"},
                                           {"type": "transcript", "text": "Wie wird das Wetter morgen?"}]
@@ -94,7 +99,18 @@ def test_openwakeword_triggers_before_whisper():
     session = LocalSpeech(FakeWhisper("Schalte die Kaffeemaschine an"), wake_factory=lambda: (lambda pcm: True)).session()
     session.set_mode("wake")
     events = feed(session, quiet(100))
-    assert events == [{"type": "wake"}] and session.mode == "listen"
+    assert plain(events) == [{"type": "wake"}] and session.mode == "listen"
+
+
+def test_wake_score_follows_loudness():
+    """Mehrere Geräte hören „Jarvis“: das, bei dem es lauter (also näher) ankam, hat den höheren Wert."""
+    scores = []
+    for amplitude in (1500, 9000):
+        session = LocalSpeech(FakeWhisper("Jarvis")).session()
+        session.set_mode("wake")
+        [event] = feed(session, quiet(300) + tone(500, amplitude) + quiet(1000))
+        scores.append(event["score"])
+    assert event["type"] == "wake" and 10 < scores[0] < scores[1] - 10
 
 
 def test_transcription_errors_are_reported():
@@ -137,7 +153,7 @@ def test_audio_endpoint(tmp_path):
         audio = utterance()
         for start in range(0, len(audio), 2560):
             ws.send_bytes(audio[start:start + 2560])
-        assert ws.receive_json() == {"type": "transcript", "text": "wie spät ist es?"}
+        assert plain([ws.receive_json()]) == [{"type": "transcript", "text": "wie spät ist es?", "wake": True}]
     assert client.get("/v1/system/health").json()["stt"] == "local:ready"
 
 

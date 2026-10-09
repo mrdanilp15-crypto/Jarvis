@@ -1635,6 +1635,38 @@
   window.jarvisFindWake = findWake;  // für Tests
   window.jarvisLearnWake = (text) => learned.add(text);
 
+  // Mehrere Geräte hören „Jarvis“: der Server lässt nur das antworten, bei dem es am lautesten ankam
+  const arbiter = {
+    seq: 0, waiting: new Map(), announced: null,
+    sync() {  // dem Server sagen, ob dieses Fenster auf „Jarvis“ hört
+      const on = Boolean(settings.wake && (canListen || localVoice.enabled));
+      if (ws?.readyState !== WebSocket.OPEN || on === this.announced) return;
+      this.announced = on;
+      ws.send(JSON.stringify({ type: "wake.listen", on }));
+    },
+    claim(score) {
+      if (ws?.readyState !== WebSocket.OPEN) return Promise.resolve(true);
+      const ref = `w${(this.seq += 1)}`;
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => { this.waiting.delete(ref); resolve(true); }, 2500);  // Server still: antworten
+        this.waiting.set(ref, (granted) => { clearTimeout(timer); resolve(granted); });
+        ws.send(JSON.stringify({ type: "wake.claim", ref, score: typeof score === "number" ? score : null }));
+      });
+    },
+    result(message) {
+      const resolve = this.waiting.get(message.ref);
+      this.waiting.delete(message.ref);
+      resolve?.(message.granted !== false);
+    },
+    yield() {  // ein anderes Gerät ist näher: still bleiben und weiter auf „Jarvis“ hören
+      els.caption.textContent = "";
+      heard.hide();
+      setState("idle");
+      els.status.textContent = "Ein anderes Gerät ist näher und antwortet.";
+    },
+  };
+  window.jarvisArbiter = arbiter;  // für Tests
+
   const wake = {
     rec: null, timer: 0, settle: 0, failures: 0, collecting: false, buffer: "", interim: null, interimTimer: 0,
     wanted() {
@@ -1757,17 +1789,23 @@
     acknowledge() {
       this.stop();
       document.body.classList.remove("wake-heard");
-      acknowledgement.say(() => {
-        if (turn || recognition) return;
-        listenHint = "Ja? Ich höre …";
-        startListening();
+      arbiter.claim(null).then((granted) => {
+        if (!granted) { arbiter.yield(); return; }
+        acknowledgement.say(() => {
+          if (turn || recognition) return;
+          listenHint = "Ja? Ich höre …";
+          startListening();
+        });
       });
     },
     hand(command) {  // Befehl an JARVIS übergeben
       this.stop();
-      els.caption.textContent = "";
-      if (hasWords(command)) sendText(command, true);
-      else setState("idle");
+      if (!hasWords(command)) { els.caption.textContent = ""; setState("idle"); return; }
+      arbiter.claim(null).then((granted) => {
+        els.caption.textContent = "";
+        if (granted) sendText(command, true);
+        else arbiter.yield();
+      });
     },
     reset() {
       this.collecting = false;
@@ -1814,6 +1852,7 @@
       els.sttState.textContent = settings.stt !== "browser" ? (STT_STATE[sttLocal] ?? "") : "";
       if (before && !this.enabled) this.close();
       if (!before && this.enabled && settings.wake && state === "idle") wake.schedule(200);
+      arbiter.sync();
     },
     async ensure() {
       if (this.socket && this.socket.readyState <= WebSocket.OPEN && this.context) return;
@@ -1885,10 +1924,13 @@
       switch (event.type) {
         case "wake":
           this.setMode("idle");  // „Ja, Sir?“ nicht selbst hören
-          acknowledgement.say(() => {
-            if (turn) return;
-            setState("listening", "Ja? Ich höre …");
-            this.setMode("listen");
+          arbiter.claim(event.score).then((granted) => {
+            if (!granted) { arbiter.yield(); return; }
+            acknowledgement.say(() => {
+              if (turn) return;
+              setState("listening", "Ja? Ich höre …");
+              this.setMode("listen");
+            });
           });
           break;
         case "speech":
@@ -1897,7 +1939,11 @@
         case "transcript":
           this.setMode("idle");
           els.caption.textContent = "";
-          sendText(event.text, true);
+          if (!event.wake) { sendText(event.text, true); break; }
+          arbiter.claim(event.score).then((granted) => {  // „Jarvis, …“ in einem Atemzug
+            if (granted) sendText(event.text, true);
+            else arbiter.yield();
+          });
           break;
         case "heard":
           heard.show(event.text);
@@ -2017,6 +2063,7 @@
     store.set("wake", on);
     els.wakeToggle.setAttribute("aria-pressed", String(on));
     els.wakeText.textContent = on ? "Hört auf „Jarvis“" : "„Jarvis“-Aktivierung aus";
+    arbiter.sync();
     if (on) {
       if (state === "idle") setState("idle");
     } else {
@@ -2098,6 +2145,8 @@
       reconnectDelay = 500;
       jarvisVoiceBroken = false;
       setConnection("online", "Online");
+      arbiter.announced = null;
+      arbiter.sync();
       if (state === "offline") setState("idle");
       checkHealth();
       if (!greeted) {
@@ -2137,6 +2186,7 @@
       case "status": onStatus(message); break;
       case "action.update": onActionUpdate(message.action); break;
       case "notification": onNotification(message); break;
+      case "wake.result": arbiter.result(message); break;
       case "error": onServerError(message.error ?? {}); break;
       default: break;
     }
@@ -2159,7 +2209,8 @@
       try { new Notification("JARVIS", { body: text, icon: "favicon.svg" }); } catch { /* ohne Desktop-Hinweis */ }
     }
   }
-  const NOTICE_LABELS = { timer: "Timer", reminder: "Erinnerung", event: "Termin", suggestion: "Vorschlag" };
+  const NOTICE_LABELS = { timer: "Timer", reminder: "Erinnerung", event: "Termin", suggestion: "Vorschlag",
+    announcement: "Durchsage" };
 
   function onServerError(problem) {
     const text = problem.user_message || problem.detail || problem.title || "Unbekannter Fehler";

@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.8.2"
+STYLE_VERSION = "2.9.0"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -821,6 +821,19 @@ class JarvisStyle(PlainStyle):
                 return very_well, (f"Aufgeräumt: {result.get('files', 0)} temporäre Dateien, "
                                    f"{result.get('freed_mb', 0)} MB frei.")
             return very_well, SYSTEM_ACTION_REPLIES.get(name, "Erledigt.")
+        if capability == "message.announce" and isinstance(result, dict):
+            room = result.get("room") or ""
+            prep = {"in der": "in der", "in die": "in der", "im": "im", "ins": "im", "in den": "im"}.get(
+                slots.get("prep", ""))
+            where = f"{prep} {room}" if prep else f"im Raum „{room}“"
+            if result.get("everywhere"):
+                count = result.get("delivered", 0)
+                if not count:
+                    return "", "Außer diesem ist gerade kein Gerät mit JARVIS verbunden – die Durchsage hört niemand."
+                return very_well, f"Die Durchsage läuft auf {count} {'Gerät' if count == 1 else 'Geräten'}."
+            if not result.get("delivered"):
+                return "", f"{where[:1].upper()}{where[1:]} ist gerade kein Gerät mit JARVIS verbunden."
+            return very_well, f"Die Durchsage ist {where} angekommen."
         if capability == "memory.remember":
             return very_well, "Ich habe es mir notiert."
         if capability == "memory.list":

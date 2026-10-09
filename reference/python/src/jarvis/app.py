@@ -41,6 +41,7 @@ from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingW
 from .orchestrator import ConfirmationStore, Orchestrator
 from .pc import AgentHub, register_pc_capabilities, resolve_recipient
 from .devices import LAN_PORT, DeviceRegistry, ensure_certificate
+from .rooms import WakeArbiter, register_room_capabilities
 from .smarthome import SmartHome
 from .patterns import PatternLearner, action_call, describe, run_routines
 from .sysmon import register_sysmon_capabilities
@@ -255,10 +256,22 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         style = orchestrator.style
         text = style.finalize(style.alarm_text(alarm.kind, alarm.label, duration_s=alarm.duration_s,
                                                due=alarm.due.astimezone(tz), late=alarm.late))
-        await notifier.send(alarm.actor, {"type": "notification", "kind": alarm.kind, "id": alarm.id, "text": text})
-        await agents.notify("JARVIS", text)  # Windows-Hinweis, auch ohne offenes JARVIS-Fenster
+        message = {"type": "notification", "kind": alarm.kind, "id": alarm.id, "text": text}
+        await notifier.send(alarm.actor, message, area=alarm.area)  # dort, wo er gestellt wurde
+        if not alarm.actor.startswith("device:"):  # Küchen-Timer bleiben in der Küche
+            await agents.notify("JARVIS", text)  # Windows-Hinweis, auch ohne offenes JARVIS-Fenster
 
     scheduler = AlarmScheduler(notify=announce, path=data_dir / "alarms.json")
+
+    def known_rooms() -> dict[str, str]:  # Räume aus Home Assistant und von gekoppelten Geräten
+        found = dict(smarthome.index.areas) if smarthome.index else {}
+        for device in devices.devices:
+            if device.get("area"):
+                found.setdefault(device["area"], device.get("area_name") or device["area"])
+        return found
+
+    register_room_capabilities(registry, notifier, known_rooms)
+    container.wake = WakeArbiter()
     register_timer_capabilities(registry, scheduler, tz)
     background.append(scheduler.run())
     cal_cfg = assistant_cfg.get("calendar") or {}

@@ -147,6 +147,8 @@ kurzlebigen Token im Query-Parameter (≤ 60 s gültig, einmalig), da beim Hands
 | → | `output.cancel` | – | Barge-in: laufende Ausgabe abbrechen |
 | → | `confirmation.resolve` | `confirmation_id`, `decision`, `method` | Bestätigung aus der App |
 | → | `ping` | – | Heartbeat (alle 25 s) |
+| → | `wake.listen` | `on` | Dieses Gerät hört (nicht mehr) auf „Jarvis“ – zählt für die Abstimmung |
+| → | `wake.claim` | `ref`, `score` (dB über Grundrauschen oder `null`) | „Jarvis“ gehört: darf dieses Gerät antworten? |
 | ← | `transcript.partial` / `transcript.final` | `text` | STT-Zwischen-/Endergebnis |
 | ← | `status` | `phase` (`research` \| `tool` \| `action`), `query?`, `capability?` | Zwischenstand: JARVIS schlägt nach, ruft ein Werkzeug auf oder führt einen Befehl aus (die Oberfläche färbt danach den Kreis) |
 | ← | `output.text_delta` | `delta` | Token-Stream der Antwort |
@@ -154,6 +156,7 @@ kurzlebigen Token im Query-Parameter (≤ 60 s gültig, einmalig), da beim Hands
 | ← | `output.final` | `text`, `route`, `actions`, `pending_confirmation?` | Turn abgeschlossen |
 | ← | `action.update` | `action` | Statusänderung einer Aktion |
 | ← | `notification` | `title`, `body`, `priority` | proaktiver Hinweis |
+| ← | `wake.result` | `ref`, `granted` | Abstimmung entschieden: nur das lauteste Gerät antwortet (höchstens 0,6 s Wartezeit, mit nur einem Gerät sofort) |
 | ← | `error` | `error` (Problem Details) | Fehler zu einer Nachricht; Verbindung bleibt offen |
 | ← | `pong` | – | Heartbeat-Antwort |
 

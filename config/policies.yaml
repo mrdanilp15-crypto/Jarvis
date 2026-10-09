@@ -49,7 +49,7 @@ roles:
     max_risk: R1
     allow: ["home.set_light", "home.set_cover", "home.media_control", "home.activate_scene", "home.get_state",
             "info.weather", "timer.*", "reminder.*", "task.*", "memory.search", "system.status", "system.monitor",
-            "assistant.*"]
+            "assistant.*", "message.announce"]
   guest:
     max_risk: R1
     allow: ["home.set_light", "home.set_cover", "home.media_control", "home.get_state", "info.weather", "timer.start"]
