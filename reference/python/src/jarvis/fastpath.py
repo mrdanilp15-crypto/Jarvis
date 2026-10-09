@@ -163,6 +163,8 @@ PC_SEARCH = [
     # „Such Arteriion auf Spotify“ (ohne „nach“, aber mit Dienst)
     re.compile(rf"^{_FIND}\s+(?P<query>.+?)\s+{_AT}\s+(?P<site>{_SERVICE})$", re.I),
     re.compile(rf"^(?:such|suche)\s+{_ONLINE}\s+(?P<query>.+)$", re.I),
+    # „Such Arteriion im Internet“, „Arteriion suchen im Web“ (Befehlsform: „such nach … im web“)
+    re.compile(rf"^{_FIND}\s+(?P<query>.+?)\s+{_ONLINE}$", re.I),
     re.compile(r"^(?:google|googel)\s+(?P<query>.+)$", re.I),
     # „Zeig mir Katzenvideos auf YouTube“, „Spiel Arteriion auf Spotify“ (YouTube-Spielen öffnet das erste Video)
     re.compile(rf"^(?:zeig|zeige|öffne|starte|spiel|spiele)\s+(?P<query>.+?)\s+{_AT}\s+(?P<site>{_SERVICE})(?:\s+ab)?$",
@@ -398,6 +400,9 @@ def canonical_command(text: str) -> str:
         r"^(?:such|suche|google|finde|find|zeig|zeige|öffne|spiel|spiele|hol|hole|gib|schau|guck)\s+mir\s", text,
         re.I) else text
     text = _GO_TO.sub("öffne die webseite ", text)
+    # „Arteriion suchen im Web“, „Arteriion googeln im Internet“ -> „such nach Arteriion im web“
+    text = re.sub(r"^(?P<q>.+?)\s+(?:suchen|googeln|nachschlagen)\s+(?P<w>im (?:internet|web|netz)|online)$",
+                  r"such nach \g<q> \g<w>", text, flags=re.I)
     text = re.sub(r"^(?:wechsel|wechsle|wechsele)\s+(?:zu|zum|zur|in)\s+(?:(?:den|die|das|dem|der)\s+)?", "öffne ", text,
                   flags=re.I)
     text = re.sub(r"\s+(?:suchen|raussuchen|heraussuchen|finden)\s+und\s+(?:öffnen|aufmachen|anzeigen|zeigen)$",
@@ -489,7 +494,8 @@ CONVERSATION = [
     ("help", re.compile(r"^(?:kannst du mir helfen|können sie mir helfen|hilf mir|hilfe|ich brauche (?:deine |ihre )?hilfe)$")),
     ("thanks", re.compile(r"^(?:danke(?: schön| sehr| dir| ihnen)?|dankeschön|vielen dank|herzlichen dank|merci)$")),
     ("greeting", re.compile(r"^(?:hallo|hi|hey|servus|moin|guten (?:morgen|tag|abend)|grüß dich|grüß gott)$")),
-    ("how_are_you", re.compile(r"^(?:wie geht(?:s| es)(?: dir| ihnen)?|wie läuft(?:s| es)|alles (?:gut|klar) bei dir)$")),
+    ("how_are_you", re.compile(r"^(?:wie geht(?:s| es)(?: dir| ihnen)?|wie läuft(?:s| es)|alles (?:gut|klar) bei dir|"
+                               r"was geht(?: ab)?|was läuft|na(?: du)?|wie sieht'?s aus)$")),
     ("identity", re.compile(r"^(?:wer bist du|was bist du|stell dich vor)$")),
     ("capabilities", re.compile(r"^(?:was kannst du(?: alles)?(?: tun)?|was sind deine fähigkeiten|wobei kannst du helfen)$")),
     ("name", re.compile(r"^(?:wie heiße ich|wer bin ich|weißt du wie ich heiße|kennst du meinen namen)$")),

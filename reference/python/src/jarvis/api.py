@@ -106,6 +106,8 @@ def turn_to_json(result: TurnResult) -> dict[str, Any]:
                                        "expires_at": p.expires_at.isoformat()}
     if result.card is not None:
         out["card"] = result.card  # z. B. der E-Mail-Entwurf im Entstehen
+    if result.retracted:
+        out["retracted"] = True  # gestreamten Text verwerfen (nicht weitersprechen)
     return out
 
 
@@ -574,6 +576,8 @@ def create_app(container: Container) -> FastAPI:
             await ws.send_json({"type": "error", "message": "Lokale Spracherkennung ist nicht installiert."})
             await ws.close(code=4404)
             return
+        if container.speech.state == "idle":  # erst jetzt laden: nur wer lokal erkennen will, braucht das Modell
+            asyncio.create_task(container.speech.warm_up())
         session = container.speech.session()
         await ws.send_json({"type": "ready", "state": container.speech.state, "wake": session.wake is not None})
         try:

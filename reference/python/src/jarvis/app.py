@@ -230,7 +230,8 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         if hasattr(engine, "warm_up"):
             background.append(engine.warm_up())  # lokale Piper-Stimme laden (beim ersten Start: Download)
     speech = create_local_speech(stt_prompt)
-    if speech is not None:
+    if speech is not None and os.environ.get("JARVIS_STT", "").lower() == "local":
+        # Standard ist die Erkennung des Browsers; Whisper lädt sonst erst, wenn jemand „Lokal“ wählt (/v1/audio)
         background.append(speech.warm_up())  # Modell laden (beim ersten Start: Download)
     container = Container(orchestrator=orchestrator, bus=bus, router=router, tokens=tokens,
                           webhook_secrets={}, situation=situation, agents=agents, tts=tts, smarthome=smarthome,

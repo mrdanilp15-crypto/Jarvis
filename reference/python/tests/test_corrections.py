@@ -29,6 +29,9 @@ ACTIONS = ["open_url", "open_app", "open_folder", "search_files", "find_files", 
     ("Die Datei Bewerbung", "pc.find_files", {"query": "Bewerbung", "kind": "file"}),
     ("Ordner Dokumente", "pc.open_folder", {"folder": "documents"}),
     ("Suche nach Arterien so wie ich es dir gerade geschrieben habe mit 2 i.", "pc.search_web", {"query": "Arterien"}),
+    ("arteriion suchen im web", "pc.search_web", {"query": "arteriion"}),
+    ("Suche Arteriion im Internet", "pc.search_web", {"query": "Arteriion"}),
+    ("Such Arteriion online", "pc.search_web", {"query": "Arteriion"}),
 ])
 def test_commands_from_the_protocol(text, capability, arguments):
     match = FastPath({}, {}).match(text, now=NOW)

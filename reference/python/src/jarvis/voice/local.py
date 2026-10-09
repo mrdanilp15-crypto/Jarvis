@@ -196,10 +196,11 @@ class LocalSpeech:
     async def warm_up(self) -> None:
         loader = getattr(self.transcriber, "load", None)
         if loader is not None:
-            try:
-                await asyncio.to_thread(loader)
-            except Exception:
-                pass  # Zustand „error“ zeigt die Oberfläche; Browser-Erkennung bleibt nutzbar
+            async with self._lock:  # nie zweimal gleichzeitig laden (Start und erste Verbindung)
+                try:
+                    await asyncio.to_thread(loader)
+                except Exception:
+                    pass  # Zustand „error“ zeigt die Oberfläche; Browser-Erkennung bleibt nutzbar
 
     async def transcribe(self, pcm: bytes) -> str:
         async with self._lock:

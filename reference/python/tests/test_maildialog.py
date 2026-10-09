@@ -72,6 +72,12 @@ def test_hear_check(text):
     assert conversation_intent(text) == "hear_check"
 
 
+@pytest.mark.parametrize("text", ["Was geht ab?", "Was geht", "Na?", "Wie siehts aus?"])
+def test_small_talk_is_answered_without_the_model(text):
+    """Lockere Begrüßung ohne Sprachmodell – das erfand dazu sonst Termine und Wetter."""
+    assert conversation_intent(text) == "how_are_you"
+
+
 def test_steps_without_the_orchestrator():
     draft = MailDraft()
     resolve = lambda text: resolve_recipient(text, CONTACTS)  # noqa: E731

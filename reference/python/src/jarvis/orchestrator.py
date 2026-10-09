@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -132,6 +133,15 @@ class TurnResult:
     awaiting_reply: bool = False  # JARVIS hat nachgefragt – die Oberfläche hört direkt wieder zu
     sources: str = field(default="", repr=False)  # nachgeschlagene Quellen – für Folgefragen im Verlauf
     card: dict[str, Any] | None = None  # Karte für die Oberfläche (z. B. der E-Mail-Entwurf im Entstehen)
+    retracted: bool = False  # Gestreamter Text wurde zurückgezogen (erfundene Links) – Oberfläche hört auf zu sprechen
+
+
+_URL = re.compile(r"https?://[^\s)\]>\"'<]+")
+
+
+def invented_links(text: str, known: str) -> list[str]:
+    """Links in einer Modellantwort, die in keinem Tool-Ergebnis und keiner Quelle dieses Turns vorkommen."""
+    return [url for url in (u.rstrip(".,;:!?") for u in _URL.findall(text)) if url not in known]
 
 
 @dataclass
@@ -478,6 +488,11 @@ class Orchestrator:
             session.transcript.append(response.assistant_turn)
             if not response.tool_calls:
                 result.text = response.text
+                known = sources + json.dumps([a.result for a in result.actions], ensure_ascii=False, default=str)
+                if invented_links(result.text, known):  # kleine lokale Modelle „finden“ gern Treffer, die es nicht gibt
+                    log.warning("Modellantwort mit erfundenen Links verworfen", extra={"correlation_id": req.correlation_id})
+                    result.text, result.retracted = self.style.system_text("invented_links"), True
+                    session.transcript[-1] = AssistantTurn(text=result.text, tool_calls=[], provider="system")
                 result.stop_reason = response.stop_reason
                 result.tainted = session.tainted
                 return result

@@ -208,3 +208,20 @@ def test_each_question_keeps_its_own_context(orchestrator, situation):
     users = [t for t in orchestrator.sessions["ctx"].transcript if isinstance(t, UserTurn)]
     assert [u.text for u in users] == ["Erzähl mir etwas", "Und noch etwas"]
     assert all("<situation>" in u.context for u in users)
+
+
+def test_invented_links_are_retracted(orchestrator, situation):
+    """Kleine lokale Modelle „finden“ gern Treffer ohne Suche – solche Antworten gibt JARVIS nicht aus."""
+    llm = ScriptedProvider([say("Hier sind Ergebnisse:\n1. Arteriion-Klinik – [Link](https://www.arteriion.de/)")])
+    result = turn(orchestrator, "Erzähl mir was über die Arteriion-Klinik", provider=llm, situation=situation)
+    assert result.retracted and result.text.startswith("Echte Suchergebnisse habe ich dazu nicht")
+    assert all("arteriion.de" not in getattr(t, "text", "") for t in orchestrator.sessions["s1"].transcript)
+
+
+def test_links_from_tool_results_stay(orchestrator, situation):
+    llm = ScriptedProvider([
+        call_tool("web__fetch", {"url": "https://example.org/a"}),
+        say("Laut https://example.org/a steht dort ein Hinweis."),
+    ])
+    result = turn(orchestrator, "Lies https://example.org/a", provider=llm, situation=situation)
+    assert not result.retracted and "https://example.org/a" in result.text

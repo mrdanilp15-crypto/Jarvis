@@ -557,6 +557,7 @@ class PlainStyle:
         return {
             "timeout": "Das dauert länger als erwartet; ich habe den Vorgang abgebrochen.",
             "not_processed": "Das konnte ich nicht vollständig verarbeiten. Bitte formulieren Sie es anders.",
+            "invented_links": "Echte Suchergebnisse habe ich dazu nicht. Sagen Sie „Such nach …“, dann sehe ich nach.",
             "max_iterations": "Ich habe die Aufgabe nach mehreren Schritten angehalten, um nichts Unbeabsichtigtes "
                               "zu tun.",
             "confirm_in_app": "Für diese Aktion benötige ich Ihre Bestätigung in der App.",
@@ -1006,6 +1007,8 @@ class JarvisStyle(PlainStyle):
             "confirm_in_app": f"Für diese Aktion benötige ich Ihre Bestätigung in der App{', ' + self.address if self.address else ''}.",
             "confirm_same_person": "Diese Bestätigung muss von der Person kommen, die den Auftrag erteilt hat.",
             "generic_error": f"{apology} Dabei ist ein Fehler aufgetreten.",
+            "invented_links": (f"Echte Suchergebnisse habe ich dazu nicht{', ' + self.address if self.address else ''} – und "
+                               "Links erfinde ich nicht. Sagen Sie „Such nach …“, dann sehe ich im Web nach."),
             "no_passwords": (f"Passwörter tippe ich aus Sicherheitsgründen nicht ein{', ' + self.address if self.address else ''} "
                              "– sie liefen dabei durch Spracherkennung und Protokoll. Der Passwortmanager Ihres "
                              "Browsers erledigt das sicherer."),

@@ -72,7 +72,7 @@
   const settings = {
     speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice.v2", ""),
     wake: store.get("wake", false), location: store.get("location", ""), effect: store.get("effect", "dezent"),
-    fx: store.get("fx", "voll"), stt: store.get("stt", "auto"),
+    fx: store.get("fx", "voll"), stt: store.get("stt.v2", "auto"),
     presence: store.get("presence", false), presenceMinutes: Number(store.get("presence.minutes", 20)) || 20,
   };
   document.body.dataset.fx = settings.fx;
@@ -1334,7 +1334,9 @@
     const streamed = current.streamed.trim();
     current.body.textContent = finalText || streamed || "(keine Antwort)";
 
-    if (!current.muted) {
+    if (result.retracted) {  // Server hat den gestreamten Text verworfen (erfundene Links): nicht weitersprechen
+      if (!current.muted) { tts.stop(); tts.speak(finalText); }
+    } else if (!current.muted) {
       current.sentences.flush();
       if (!streamed) tts.speak(finalText);
     }
@@ -1843,13 +1845,16 @@
     socket: null, context: null, stream: null, node: null, mode: "idle", opening: null, retry: 0,
     get enabled() {
       // „auto“ (Standard): lokal, sobald der Server Whisper bereit hat – sonst die Browser-Erkennung
-      return settings.stt !== "browser" && sttLocal === "local:ready";
+      // „auto“ (Standard): die Erkennung von Chrome/Edge – schneller und treffsicherer als Whisper auf dem Prozessor.
+      // Lokal (privat) nur auf Wunsch oder in Browsern ohne eigene Spracherkennung.
+      if (settings.stt === "local") return ["local:ready", "local:loading", "local:idle"].includes(sttLocal);
+      return sttLocal === "local:ready" && settings.stt === "auto" && !SpeechRecognition;
     },
     update(status) {
       const before = this.enabled;
       sttLocal = status || "browser";
       canListen = Boolean(SpeechRecognition) || this.enabled;
-      els.sttState.textContent = settings.stt !== "browser" ? (STT_STATE[sttLocal] ?? "") : "";
+      els.sttState.textContent = settings.stt === "local" ? (STT_STATE[sttLocal] ?? "") : "";
       if (before && !this.enabled) this.close();
       if (!before && this.enabled && settings.wake && state === "idle") wake.schedule(200);
       arbiter.sync();
@@ -1977,7 +1982,7 @@
   window.jarvisLocalVoice = localVoice;  // für Tests
   els.optStt.addEventListener("change", () => {
     settings.stt = els.optStt.value;
-    store.set("stt", settings.stt);
+    store.set("stt.v2", settings.stt);
     wake.stop();
     localVoice.close();
     localVoice.update(sttLocal);
@@ -2268,7 +2273,7 @@
     els.optFx.value = settings.fx;
     els.optPresence.checked = settings.presence;
     els.optPresenceMin.value = String(settings.presenceMinutes);
-    els.optStt.value = settings.stt === "browser" ? "browser" : "local";
+    els.optStt.value = ["auto", "browser", "local"].includes(settings.stt) ? settings.stt : "auto";
     localVoice.update(sttLocal);
     els.wakeTrainStatus.textContent = "";
     showLearned();
