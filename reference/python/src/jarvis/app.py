@@ -301,6 +301,11 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         path=data_dir / "llm.json", router=router, local=local, env_key=api_key, cloud_options=cloud_cfg,
         make_cloud=make_cloud, warm_up=warm_up_local_model, status=lambda: container.llm_status)
 
+    from .vision import VisionService
+
+    # Sehen: Bildmodell über dasselbe Ollama; fehlt es, lädt JARVIS es beim ersten „Was siehst du?“ nach
+    container.vision = VisionService(ollama_url or local_cfg["base_url"],
+                                     on_missing_model=container.llm_settings.start_pull)
     background.append(warm_up_local_model())
     return container, background
 

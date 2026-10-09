@@ -579,6 +579,61 @@
     mailShown = data.step === "done" || data.step === "failed" ? null : { ...data };
   }
 
+  // -- Sehen: ein Einzelbild auf Zuruf, Kamera sofort wieder aus, Bild bleibt auf dem JARVIS-Rechner -----------------
+  const vision = {
+    busy: false,
+    async capture(question) {
+      if (this.busy) return;
+      this.busy = true;
+      let stream = null;
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Dieser Browser gibt keine Kamera frei.");
+        stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 960 }, facingMode: "user" } });
+        const video = document.createElement("video");
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = stream;
+        await video.play();
+        await new Promise((resolve) => setTimeout(resolve, 700));  // Belichtung einregeln lassen
+        const width = Math.min(960, video.videoWidth || 640);
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = Math.round(width * (video.videoHeight || 480) / (video.videoWidth || 640));
+        canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+        const image = canvas.toDataURL("image/jpeg", 0.82);
+        stream.getTracks().forEach((t) => t.stop());  // Kamera sofort aus
+        stream = null;
+        const card = el("section", "card vision");
+        const img = el("img");
+        img.alt = "Aufgenommenes Kamerabild";
+        img.src = image;
+        const text = el("div");
+        text.append(el("p", "kicker", "Gesehen · lokales Bildmodell"), el("p", "answer", "Ich sehe mir das Bild an …"));
+        card.append(img, text);
+        cards.show("vision", card, 120000);
+        document.body.dataset.phase = "research";
+        if (!tts.busy) setState("thinking", "Ich sehe mir das Bild an …");
+        const { text: answer } = await api("POST", "/v1/vision", { image, question });
+        card.querySelector(".answer").textContent = answer;
+        addMessage("jarvis", answer, `JARVIS · ${timeNow()} · Sehen`);
+        tts.speak(answer);
+        flash("found");
+      } catch (err) {
+        const message = err.name === "NotAllowedError"
+          ? "Die Kamera ist blockiert. Erlauben Sie sie links in der Adressleiste über das Schloss-Symbol."
+          : err.name === "NotFoundError" ? "Ich finde keine Kamera an diesem Gerät." : err.message;
+        addSystem(message, true);
+        tts.speak(message);
+        flash("error");
+      } finally {
+        stream?.getTracks().forEach((t) => t.stop());
+        this.busy = false;
+        delete document.body.dataset.phase;
+        if (state === "thinking" && !turn) setState("idle");
+      }
+    },
+  };
+
   // -- Systemmonitor: Balken für Prozessor, Speicher, Laufwerke, Grafikkarte ----------------------------------------
   function showSysmon(data) {
     const card = el("section", "card sysmon");
@@ -681,6 +736,7 @@
       else if (action.capability === "timer.cancel") timers.cancel((data.cancelled ?? []).map((t) => t.label ?? ""));
     }
     if (result.card?.type === "mail") showMail(result.card);
+    else if (result.card?.type === "vision") vision.capture(result.card.question);
     else if (mailShown) { mailShown = null; cards.remove("mail"); }  // Entwurf abgebrochen: anderer Wunsch
     const researched = result.route === "research" || result.route?.endsWith(":research");
     const web = actions.find((a) => a.capability === "web.search" && a.status === "succeeded");

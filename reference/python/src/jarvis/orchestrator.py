@@ -367,6 +367,10 @@ class Orchestrator:
                 return TurnResult(text=self.style.unavailable(match.capability), route="fast_path")
             session.mail, session.offer, session.expect = MailDraft(), None, None
             return await self._mail(req, session, situation, to=match.slots.get("to") or "")
+        if match is not None and match.grammar == "vision":
+            # Das Bild nimmt die Oberfläche auf (nur jetzt, Kamera danach aus) und schickt es an /v1/vision
+            return TurnResult(text=self.style.vision_text("looking"), route="fast_path",
+                              card={"type": "vision", "question": req.text})
         if match is not None and match.grammar == "refuse_password":
             return TurnResult(text=self.style.system_text("no_passwords"), route="fast_path")
         if match is not None and match.grammar == "incomplete":

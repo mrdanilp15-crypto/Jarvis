@@ -55,6 +55,8 @@ def local_snapshot(sample_s: float = 0.4) -> dict[str, Any]:
             usage = psutil.disk_usage(part.mountpoint)
         except OSError:
             continue
+        if usage.total < 2e9 or "ro" in part.opts.split(","):
+            continue  # kleine bzw. schreibgeschützte Einhängepunkte (Docker, Snap, Wiederherstellung) auslassen
         disks.append({"name": part.device if platform.system() == "Windows" else part.mountpoint,
                       "total_gb": round(usage.total / 1e9, 1), "free_gb": round(usage.free / 1e9, 1)})
     temperatures = []

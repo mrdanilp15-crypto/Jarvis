@@ -24,6 +24,7 @@ from .llm.base import OnText
 from .llm.router import HeuristicClassifier, ModelRouter
 from .orchestrator import OnStatus, Orchestrator, TurnRequest, TurnResult
 from .pc import AgentHub
+from .vision import decode_image
 from .policy import Principal
 from .timers import Notifier
 from .webhooks import ReplayCache, verify
@@ -57,6 +58,7 @@ class Container:
     llm_settings: Any = None  # KI-Modell zur Laufzeit wählen (LLMSettings): lokales Modell, Claude-Schlüssel, Modus
     smarthome: Any = None  # Home Assistant: finden, verbinden, Räume und Geräte (smarthome.SmartHome)
     speech: Any = None  # lokale Spracherkennung (voice.local.LocalSpeech) – None: nur Browser-Erkennung
+    vision: Any = None  # Bildmodell (vision.VisionService) für „Was siehst du?“
 
     async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
                        location: str | None = None, on_status: OnStatus | None = None) -> TurnResult:
@@ -102,6 +104,11 @@ def turn_to_json(result: TurnResult) -> dict[str, Any]:
 
 class ClaudeKeyIn(BaseModel):
     api_key: str = Field(min_length=10, max_length=300, description="Anthropic-API-Schlüssel (sk-ant-…)")
+
+
+class VisionIn(BaseModel):
+    image: str = Field(min_length=100, max_length=6_000_000, description="Kamerabild als Data-URL (JPEG/PNG)")
+    question: str = Field(default="Was siehst du?", max_length=500)
 
 
 class HomeTokenIn(BaseModel):
@@ -284,6 +291,18 @@ def create_app(container: Container) -> FastAPI:
     async def delete_home(who: Principal = Depends(household_adult)) -> dict:
         smarthome().disconnect()
         return smarthome().status()
+
+    @app.post("/v1/vision", tags=["Sehen"])
+    async def vision(body: VisionIn, who: Principal = Depends(principal)) -> dict:
+        """Ein Kamerabild beschreiben (lokales Bildmodell). Das Bild wird nicht gespeichert."""
+        if who.role == "guest" or who.trust in ("guest", "external_untrusted"):
+            raise JarvisError("JRV-POL-002", "Gäste dürfen die Kamera nicht nutzen")
+        if container.vision is None:
+            raise JarvisError("JRV-NFD-001", "Sehen ist nicht eingerichtet",
+                              user_message="Sehen ist in dieser Installation nicht eingerichtet.")
+        image = decode_image(body.image)
+        text = await container.vision.describe(image, body.question)
+        return {"text": style.finalize(text), "model": container.vision.model}
 
     @app.post("/v1/conversations/{conversation_id}/messages")
     async def post_message(conversation_id: str, body: MessageIn, who: Principal = Depends(principal)) -> dict:

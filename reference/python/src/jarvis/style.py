@@ -496,6 +496,11 @@ class PlainStyle:
             "how_are_you": "Danke, alles läuft.", "capabilities": "Fragen Sie mich einfach, was Sie brauchen.",
         }.get(intent, "Wie kann ich helfen?")
 
+    # -- Sehen ------------------------------------------------------------------------------------------------
+    def vision_text(self, kind: str) -> str:
+        sir = f", {self.address}" if self.address else ""
+        return {"looking": f"Einen Moment{sir} – ich sehe nach."}.get(kind, self.phrase("very_well"))
+
     # -- E-Mail-Assistent -------------------------------------------------------------------------------
     def mail_text(self, kind: str, draft: Any, *, heard: str = "") -> str:
         """Rückfragen des E-Mail-Assistenten (maildialog.py). Adressen und Betreff bleiben wörtlich."""

@@ -417,6 +417,13 @@ STOCK = [
     re.compile(r"^was macht (?:die |der )?(?P<name>.+?)[- ]aktie$"),
     re.compile(r"^was (?:kostet|ist) (?:ein |eine )?(?P<name>bitcoin|ethereum|gold|silber)(?: gerade| heute| wert)?$"),
 ]
+# Sehen: „Was siehst du?“, „Was halte ich in der Hand?“ – die Oberfläche nimmt dann ein Kamerabild auf
+VISION = re.compile(r"^(?:was siehst du(?: gerade| hier| da)?|was ist (?:das hier|hier|das in meiner hand)|"
+                    r"was halte ich (?:hier |gerade )?(?:in der hand|in die kamera|hoch)|schau (?:mal )?(?:her|hin|"
+                    r"in die kamera)|beschreib(?:e)? (?:mir )?(?:was du siehst|das bild|die szene|was vor dir ist)|"
+                    r"(?:lies|lese) (?:mir )?(?:das|den text|das etikett|das schild)(?: hier)? vor|"
+                    r"wie viele finger (?:halte ich hoch|zeige ich)|welche farbe hat (?:das|mein) .+|"
+                    r"(?:wie )?sehe ich (?:aus|gut aus)|kannst du (?:mich|das) sehen)$")
 # Systemmonitor und feste Systemaktionen (normalisierte Äußerung)
 SYSMON = [
     ("cpu", re.compile(r"^(?:wie (?:hoch|stark|sehr) ist (?:die |der )?(?:cpu|prozessor)(?:[- ]?auslastung| ausgelastet)?|"
@@ -649,6 +656,8 @@ class FastPath:
             return FastPathMatch("memory.list", {"limit": 10}, 0.95, "memory_list")
         if (m := FORGET.match(raw)) and len(m["what"].split()) >= 2:
             return FastPathMatch("memory.forget", {"query": m["what"].strip(" ,")}, 0.95, "forget")
+        if VISION.match(simple):
+            return FastPathMatch("vision.describe", {}, 0.95, "vision")
         for pattern in STOCK:
             if m := pattern.match(simple):
                 from .stocks import SYMBOLS
