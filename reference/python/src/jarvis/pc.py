@@ -108,7 +108,7 @@ def build_search_url(template: str, query: str) -> str:
     return template.format(query=quote_plus(query), path=quote(query, safe=""))
 NOT_CONNECTED = ("Die PC-Steuerung ist nicht verbunden. Starten Sie JARVIS über die Desktop-Verknüpfung "
                  "(einrichten mit ./deploy/start.sh autostart).")
-OUTDATED = ("Der PC-Agent ist veraltet. Bitte führen Sie ./deploy/start.sh autostart erneut aus – "
+OUTDATED = ("Der PC-Agent ist veraltet. Bitte führen Sie „JARVIS installieren.cmd“ bzw. ./deploy/start.sh autostart erneut aus – "
             "danach steht auch diese Funktion bereit.")
 LEGACY_ACTIONS = ("open_url", "open_app", "open_folder")  # Agenten vor 2.1.0 melden ihre Aktionen nicht
 

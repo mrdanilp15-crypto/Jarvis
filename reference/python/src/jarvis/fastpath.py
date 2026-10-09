@@ -409,6 +409,36 @@ MEMORY_LIST = re.compile(r"^(?:was weißt du (?:alles )?über mich|was hast du d
                          r"was hast du (?:alles )?gespeichert|was merkst du dir (?:alles )?|woran erinnerst du dich)$")
 FORGET = re.compile(r"^(?:bitte\s+)?vergiss\s*,?\s*(?:bitte\s+)?(?:dass|das mit|das mit dem|das mit der)\s+(?P<what>.+?)[.!]?$",
                     re.I)
+# Systemmonitor und feste Systemaktionen (normalisierte Äußerung)
+SYSMON = [
+    ("cpu", re.compile(r"^(?:wie (?:hoch|stark|sehr) ist (?:die |der )?(?:cpu|prozessor)(?:[- ]?auslastung| ausgelastet)?|"
+                       r"(?:cpu|prozessor)[- ]?auslastung|wie ist die (?:cpu|prozessor)[- ]?auslastung|"
+                       r"wie ausgelastet ist (?:der pc|der rechner|die cpu|der prozessor))$")),
+    ("memory", re.compile(r"^(?:wie viel (?:arbeits)?speicher ist (?:noch )?(?:frei|belegt)|(?:arbeits)?speicherauslastung|"
+                          r"wie voll ist der arbeitsspeicher|wie viel ram (?:ist )?(?:noch )?(?:frei|belegt))$")),
+    ("disk", re.compile(r"^(?:wie (?:viel|voll) (?:speicherplatz|platz) (?:ist |habe ich )?(?:noch )?(?:frei|auf der festplatte)|"
+                        r"wie voll ist (?:die festplatte|die platte|das laufwerk|laufwerk c)|wie viel platz ist (?:noch )?frei)$")),
+    ("temperature", re.compile(r"^(?:wie (?:warm|heiß) ist (?:die cpu|der prozessor|der pc|der rechner|die grafikkarte)|"
+                               r"(?:cpu|gpu|pc)[- ]?temperatur(?:en)?|wie ist die temperatur (?:der cpu|des pcs|der grafikkarte))$")),
+    ("all", re.compile(r"^(?:systemmonitor|zeig (?:mir )?den systemmonitor|wie geht es (?:dem pc|meinem pc|dem rechner)|"
+                       r"(?:pc|rechner)[- ]?(?:status|auslastung|zustand)|wie läuft (?:der pc|mein pc|der rechner))$")),
+]
+SYSTEM_ACTION = [
+    ("lock_screen", re.compile(r"^(?:sperr|sperre)\s+(?:den|meinen)\s+(?:bildschirm|pc|rechner|computer)$|"
+                               r"^(?:bildschirm|pc|rechner) sperren$")),
+    ("empty_recycle_bin", re.compile(r"^(?:leer|leere)\s+(?:den\s+)?papierkorb$|^papierkorb leeren$")),
+    ("check_updates", re.compile(r"^(?:such|suche|prüf|prüfe)\s+(?:nach\s+)?(?:windows[- ]?)?updates$|"
+                                 r"^(?:gibt es|sind) (?:neue )?(?:windows[- ]?)?updates(?: da)?$")),
+    ("clean_temp", re.compile(r"^(?:räum|räume|lösch|lösche)\s+(?:die\s+)?(?:temporären dateien|temp[- ]?dateien|temp ordner|"
+                              r"den temp[- ]?ordner)(?:\s+auf)?$")),
+    ("restart", re.compile(r"^(?:starte?|start)\s+(?:den|meinen)\s+(?:pc|rechner|computer)\s+neu$|^(?:pc|rechner) neu starten$")),
+    ("shutdown", re.compile(r"^(?:fahr|fahre)\s+(?:den|meinen)\s+(?:pc|rechner|computer)\s+(?:herunter|runter)$|"
+                            r"^(?:pc|rechner) (?:herunterfahren|runterfahren|ausschalten)$|^schalte? (?:den )?(?:pc|rechner) aus$")),
+    ("sleep", re.compile(r"^(?:schick|versetz|leg)e?\s+(?:den\s+)?(?:pc|rechner)\s+(?:in den )?(?:ruhezustand|energiesparmodus|"
+                         r"schlafen)$|^(?:pc|rechner) (?:schlafen legen|in den ruhezustand)$")),
+    ("cancel_shutdown", re.compile(r"^(?:brich|breche)\s+das\s+(?:herunterfahren|neustarten)\s+ab$|"
+                                   r"^(?:herunterfahren|neustart) abbrechen$")),
+]
 STATUS = re.compile(r"^(?:status|systemstatus|status ?bericht|wie ist der status|diagnose|systemdiagnose|"
                     r"systemcheck|system check|alle systeme)$")
 DAY_PLAN = re.compile(r"^(?:(?:was ist (?:der|mein) )?(?:tages)?plan für (?P<a>morgen|heute)|tagesplan|"
@@ -611,6 +641,12 @@ class FastPath:
             return FastPathMatch("memory.list", {"limit": 10}, 0.95, "memory_list")
         if (m := FORGET.match(raw)) and len(m["what"].split()) >= 2:
             return FastPathMatch("memory.forget", {"query": m["what"].strip(" ,")}, 0.95, "forget")
+        for focus, pattern in SYSMON:
+            if pattern.match(simple):
+                return FastPathMatch("system.monitor", {"focus": focus}, 0.95, "sysmon", {"focus": focus})
+        for name, pattern in SYSTEM_ACTION:
+            if pattern.match(simple):
+                return FastPathMatch("pc.system_action", {"name": name}, 0.93, "system_action", {"name": name})
         if STATUS.match(simple):
             return FastPathMatch("system.status", {}, 0.97, "status")
         if m := DAY_PLAN.match(simple):

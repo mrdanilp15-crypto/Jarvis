@@ -577,6 +577,44 @@
     mailShown = data.step === "done" || data.step === "failed" ? null : { ...data };
   }
 
+  // -- Systemmonitor: Balken für Prozessor, Speicher, Laufwerke, Grafikkarte ----------------------------------------
+  function showSysmon(data) {
+    const card = el("section", "card sysmon");
+    card.append(el("p", "kicker", `Systemmonitor · ${data.host || (data.source === "pc" ? "PC" : "JARVIS-Rechner")}`));
+    const rows = el("div", "meters");
+    const meter = (label, percent, detail) => {
+      const row = el("div", "meter");
+      const value = Math.max(0, Math.min(100, Math.round(percent)));
+      row.dataset.level = value >= 90 ? "high" : value >= 70 ? "mid" : "low";
+      const bar = el("div", "bar");
+      const fill = el("span");
+      fill.style.width = "0%";
+      requestAnimationFrame(() => { fill.style.width = `${value}%`; });
+      bar.append(fill);
+      row.append(el("span", "label", label), bar, el("span", "value", detail ?? `${value} %`));
+      rows.append(row);
+    };
+    const gb = (v) => Number(v || 0).toLocaleString("de-DE", { maximumFractionDigits: 1 });
+    meter("Prozessor", data.cpu_percent ?? 0);
+    if (data.memory_total_gb) {
+      meter("Speicher", (100 * data.memory_used_gb) / data.memory_total_gb, `${gb(data.memory_used_gb)} / ${gb(data.memory_total_gb)} GB`);
+    }
+    for (const disk of (data.disks ?? []).slice(0, 3)) {
+      meter(`Laufwerk ${String(disk.name).replace(/:$/, "")}`, 100 * (1 - disk.free_gb / (disk.total_gb || 1)), `${gb(disk.free_gb)} GB frei`);
+    }
+    for (const gpu of (data.gpus ?? []).slice(0, 2)) {
+      meter("Grafikkarte", gpu.percent, `${gpu.percent} % · ${gpu.celsius} °C`);
+    }
+    card.append(rows);
+    const facts = [];
+    for (const t of (data.temperatures ?? []).slice(0, 3)) facts.push(`${t.label}: ${t.celsius} °C`);
+    if (data.battery) facts.push(`Akku ${data.battery.percent} %${data.battery.plugged ? " ⚡" : ""}`);
+    if (data.net_down_mbit !== undefined) facts.push(`Netz ↓ ${gb(data.net_down_mbit)} · ↑ ${gb(data.net_up_mbit)} Mbit/s`);
+    if (data.uptime_hours !== undefined) facts.push(`läuft seit ${gb(data.uptime_hours)} h`);
+    if (facts.length) card.append(el("p", "facts", facts.join(" · ")));
+    cards.show("sysmon", card, 90000);
+  }
+
   // -- Timer mit Countdown-Ring --------------------------------------------------------------------------------
   const RING = 2 * Math.PI * 22;
   const timers = {
@@ -637,6 +675,7 @@
       else if (action.capability === "assistant.day_plan" && data.weather?.current) showWeather(data.weather);
       else if (action.capability === "info.wikipedia" && data.found) showKnowledge(data);
       else if (action.capability === "timer.start" && data.id) timers.add(data);
+      else if (action.capability === "system.monitor") showSysmon(data);
       else if (action.capability === "timer.cancel") timers.cancel((data.cancelled ?? []).map((t) => t.label ?? ""));
     }
     if (result.card?.type === "mail") showMail(result.card);

@@ -41,6 +41,7 @@ from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingW
 from .orchestrator import ConfirmationStore, Orchestrator
 from .pc import AgentHub, register_pc_capabilities, resolve_recipient
 from .smarthome import SmartHome
+from .sysmon import register_sysmon_capabilities
 from .skills import register_assistant_capabilities
 from .timers import Alarm, AlarmScheduler, Notifier, register_timer_capabilities
 from .persona import Persona
@@ -132,6 +133,9 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
             registry, agents, web=web, contacts=contacts,
             search_url=pc_cfg.get("search_url", "https://www.google.com/search?q={query}"),
             mail_compose=os.environ.get("JARVIS_MAIL_COMPOSE") or pc_cfg.get("mail_compose", "mailto"))
+
+    # Systemmonitor (PC-Agent oder dieser Rechner) und feste Systemaktionen (Freigabeliste, keine freien Befehle)
+    register_sysmon_capabilities(registry, agents if pc_enabled else None)
 
     providers = cfg["llm"]["providers"]
     local_cfg = providers[cfg["llm"]["default_local"]]

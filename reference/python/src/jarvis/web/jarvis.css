@@ -654,6 +654,19 @@ body.has-cards .stage { --hud-size: min(40vmin, 360px); justify-content: flex-st
 .card.timer.due { --accent: var(--c-confirm); animation: due 0.9s ease-in-out infinite; }
 @keyframes due { 50% { box-shadow: 0 0 36px color-mix(in srgb, var(--accent) 55%, transparent); } }
 
+/* Systemmonitor */
+.card.sysmon { --accent: var(--c-tool); }
+.sysmon .meters { display: flex; flex-direction: column; gap: 8px; padding-right: 22px; }
+.sysmon .meter { display: grid; grid-template-columns: 96px 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
+.sysmon .meter .label { color: var(--muted); }
+.sysmon .meter .value { font-family: var(--font-hud); font-size: 12px; color: var(--text); min-width: 92px; text-align: right; }
+.sysmon .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.sysmon .bar span { display: block; height: 100%; border-radius: 4px; background: var(--c-found);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--c-found) 60%, transparent); transition: width 0.9s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.sysmon .meter[data-level="mid"] .bar span { background: var(--c-think); }
+.sysmon .meter[data-level="high"] .bar span { background: var(--c-error); }
+.sysmon .facts { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+
 /* E-Mail-Entwurf (Assistent) */
 .card.mail { --accent: var(--c-tool); }
 .card.mail[data-step="done"] { --accent: var(--c-found); }

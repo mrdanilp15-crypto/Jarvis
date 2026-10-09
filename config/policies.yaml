@@ -43,12 +43,13 @@ roles:
     allow: ["home.*", "info.*", "web.*", "calendar.*", "task.*", "reminder.*", "timer.*",
             "mail.*", "message.*", "call.*", "contacts.*", "memory.*", "automation.*",
             "system.diagnose", "system.logs_query", "code.run_sandbox", "energy.*", "events.*", "persona.set",
-            "pc.*", "system.status", "assistant.*"]
+            "pc.*", "system.status", "system.monitor", "assistant.*", "vision.*"]
     deny: ["system.run_script", "system.container_update"]
   child:
     max_risk: R1
     allow: ["home.set_light", "home.set_cover", "home.media_control", "home.activate_scene", "home.get_state",
-            "info.weather", "timer.*", "reminder.*", "task.*", "memory.search", "system.status", "assistant.*"]
+            "info.weather", "timer.*", "reminder.*", "task.*", "memory.search", "system.status", "system.monitor",
+            "assistant.*"]
   guest:
     max_risk: R1
     allow: ["home.set_light", "home.set_cover", "home.media_control", "home.get_state", "info.weather", "timer.start"]

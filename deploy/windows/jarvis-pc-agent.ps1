@@ -16,7 +16,7 @@ $jarvisHome = Join-Path $env:LOCALAPPDATA 'JARVIS'
 $logFile = Join-Path $jarvisHome 'pc-agent.log'
 $config = Get-Content -Raw -Encoding UTF8 (Join-Path $jarvisHome 'config.json') | ConvertFrom-Json
 
-$agentVersion = '2.3.0'
+$agentVersion = '2.8.0'
 $mutex = New-Object System.Threading.Mutex($false, 'Local\JarvisPcAgent')
 try { $owned = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }   # Vorgänger beendet
 if (-not $owned) { exit 0 }   # läuft bereits
@@ -484,6 +484,70 @@ function Show-Notification([string]$title, [string]$text) {
     return @{ shown = $true }
 }
 
+function Get-SystemInfo {
+    # Systemmonitor: Auslastung, Speicher, Laufwerke, Akku, Temperaturen und Grafikkarte dieses PCs
+    $os = Get-CimInstance Win32_OperatingSystem
+    $cpu = @(Get-CimInstance Win32_Processor)
+    $load = ($cpu | Measure-Object -Property LoadPercentage -Average).Average
+    $disks = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType = 3' | ForEach-Object {
+        @{ name = $_.DeviceID; total_gb = [math]::Round($_.Size / 1GB, 1); free_gb = [math]::Round($_.FreeSpace / 1GB, 1) }
+    })
+    $info = @{
+        source = 'pc'; host = $env:COMPUTERNAME
+        cpu_percent = [math]::Round([double]$load, 0); cpu_name = $cpu[0].Name.Trim()
+        cpu_cores = ($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
+        memory_total_gb = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
+        memory_used_gb = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 1)
+        uptime_hours = [math]::Round(((Get-Date) - $os.LastBootUpTime).TotalHours, 1)
+        disks = $disks; temperatures = @(); gpus = @(); battery = $null
+    }
+    try {
+        # Nur mit Administratorrechten bzw. auf manchen Geräten verfügbar – sonst bleibt die Liste leer
+        $zones = Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop
+        $info.temperatures = @($zones | ForEach-Object { @{ label = 'Mainboard'; celsius = [math]::Round($_.CurrentTemperature / 10 - 273.15, 0) } })
+    } catch { }
+    $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+    if ($smi) {
+        try {
+            $rows = & $smi.Source --query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total --format=csv,noheader,nounits
+            $info.gpus = @($rows | ForEach-Object {
+                $f = $_.Split(',') | ForEach-Object { $_.Trim() }
+                @{ name = $f[0]; percent = [int]$f[1]; celsius = [int]$f[2]; memory_used_gb = [math]::Round([double]$f[3] / 1024, 1); memory_total_gb = [math]::Round([double]$f[4] / 1024, 1) }
+            })
+        } catch { }
+    }
+    $battery = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($battery) { $info.battery = @{ percent = [int]$battery.EstimatedChargeRemaining; plugged = ($battery.BatteryStatus -eq 2) } }
+    return $info
+}
+
+function Invoke-SystemAction([string]$name) {
+    # Feste Freigabeliste – nie ein frei formulierter Befehl
+    switch ($name) {
+        'lock_screen' { Start-Process rundll32.exe -ArgumentList 'user32.dll,LockWorkStation' }
+        'sleep' { Start-Process rundll32.exe -ArgumentList 'powrprof.dll,SetSuspendState 0,1,0' }
+        'empty_recycle_bin' { Clear-RecycleBin -Force -ErrorAction SilentlyContinue }
+        'open_task_manager' { Start-Process taskmgr.exe }
+        'check_updates' { Start-Process 'ms-settings:windowsupdate-action' }
+        'clean_temp' {
+            $limit = (Get-Date).AddDays(-1)
+            $files = @(Get-ChildItem -Path $env:TEMP -Recurse -File -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -lt $limit })
+            $bytes = ($files | Measure-Object -Property Length -Sum).Sum
+            $removed = 0
+            foreach ($file in $files) {
+                try { Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop; $removed++ } catch { }
+            }
+            return @{ action = $name; files = $removed; freed_mb = [math]::Round([double]$bytes / 1MB, 0) }
+        }
+        'restart' { & shutdown.exe /r /t 60 /c 'JARVIS: Neustart in einer Minute (abbrechen: shutdown /a)' }
+        'shutdown' { & shutdown.exe /s /t 60 /c 'JARVIS: Herunterfahren in einer Minute (abbrechen: shutdown /a)' }
+        'cancel_shutdown' { & shutdown.exe /a }
+        default { throw "Unbekannte Systemaktion '$name'." }
+    }
+    return @{ action = $name; done = $true }
+}
+
 function Invoke-Action([string]$action, $arguments) {
     switch ($action) {
         'open_url' {
@@ -571,6 +635,8 @@ function Invoke-Action([string]$action, $arguments) {
         'click' { return Invoke-ClickByName ([string]$arguments.label) }
         'compose_mail' { return Open-MailDraft $arguments }
         'notify' { return Show-Notification ([string]$arguments.title) ([string]$arguments.text) }
+        'system_info' { return Get-SystemInfo }
+        'system_action' { return Invoke-SystemAction ([string]$arguments.name) }
         default { throw "Unbekannte Aktion '$action'." }
     }
 }
@@ -607,7 +673,8 @@ while ($true) {
             type = 'agent.hello'; name = $env:COMPUTERNAME; version = $agentVersion; apps = @($apps.Keys)
             start_apps = @(Get-StartAppNames); folders = @($folders.Keys)
             actions = @('open_url', 'open_app', 'open_folder', 'search_files', 'find_files', 'open_file', 'app_search',
-                        'close_app', 'type_text', 'press_key', 'click', 'compose_mail', 'notify')
+                        'close_app', 'type_text', 'press_key', 'click', 'compose_mail', 'notify', 'system_info',
+                        'system_action')
         }
         $script:appsChanged = $false
         Write-Log 'Mit JARVIS verbunden'

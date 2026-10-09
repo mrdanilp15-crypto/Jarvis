@@ -188,6 +188,66 @@ def format_number(value: Any) -> str:
     return str(value)
 
 
+def _gb(value: Any) -> str:
+    return format_number(float(value or 0))
+
+
+def sysmon_text(data: dict[str, Any]) -> str:
+    """Systemmonitor in Sätzen – je nach Frage nur der passende Teil („Wie warm ist die Grafikkarte?“)."""
+    focus = data.get("focus", "all")
+    gpus, temps, disks = data.get("gpus") or [], data.get("temperatures") or [], data.get("disks") or []
+    cpu = f"Der Prozessor ist zu {data.get('cpu_percent', 0)} Prozent ausgelastet."
+    memory = (f"Arbeitsspeicher: {_gb(data.get('memory_used_gb'))} von {_gb(data.get('memory_total_gb'))} GB belegt, "
+              f"{_gb((data.get('memory_total_gb') or 0) - (data.get('memory_used_gb') or 0))} GB frei.")
+    disk = " ".join(f"Laufwerk {d['name'].rstrip(':')}: {_gb(d['free_gb'])} von {_gb(d['total_gb'])} GB frei."
+                    for d in disks[:3]) or "Zu den Laufwerken liegen keine Werte vor."
+    gpu = " ".join(f"Grafikkarte {g['name']}: {g['percent']} Prozent Last, {g['celsius']} Grad, "
+                   f"{_gb(g['memory_used_gb'])} von {_gb(g['memory_total_gb'])} GB Grafikspeicher." for g in gpus[:2])
+    temperature = " ".join([*(f"{t['label']}: {t['celsius']} Grad." for t in temps[:3]),
+                            *(f"Grafikkarte: {g['celsius']} Grad." for g in gpus[:2])])
+    if not temperature:
+        temperature = ("Temperaturen liefert dieser PC nicht – Windows gibt sie meist nur mit Administratorrechten "
+                       "oder über Herstellerprogramme heraus.")
+    network = (f"Netz: {format_number(float(data['net_down_mbit']))} Mbit/s herunter, "
+               f"{format_number(float(data['net_up_mbit']))} Mbit/s hoch." if "net_down_mbit" in data
+               else "Den Netzdurchsatz misst JARVIS nur auf dem eigenen Rechner.")
+    if focus == "cpu":
+        return f"{cpu} {gpu}".strip()
+    if focus == "memory":
+        return memory
+    if focus == "disk":
+        return disk
+    if focus == "temperature":
+        return temperature
+    if focus == "gpu":
+        return gpu or "Eine NVIDIA-Grafikkarte habe ich nicht gefunden."
+    if focus == "network":
+        return network
+    parts = [cpu, memory, disk.split(". ")[0].rstrip(".") + "."]
+    if gpus:
+        parts.append(f"Grafikkarte bei {gpus[0]['percent']} Prozent und {gpus[0]['celsius']} Grad.")
+    elif temps:
+        parts.append(f"{temps[0]['label']}: {temps[0]['celsius']} Grad.")
+    if data.get("battery"):
+        battery = data["battery"]
+        parts.append(f"Akku {battery['percent']} Prozent{', lädt' if battery.get('plugged') else ''}.")
+    return " ".join(parts)
+
+
+SYSTEM_ACTION_REPLIES = {
+    "lock_screen": "Der Bildschirm ist gesperrt.", "sleep": "Der PC geht in den Energiesparmodus.",
+    "open_task_manager": "Der Task-Manager ist geöffnet.", "check_updates": "Die Suche nach Windows-Updates ist geöffnet.",
+    "empty_recycle_bin": "Der Papierkorb ist geleert.",
+    "restart": "Der PC startet in einer Minute neu. „Brich das Neustarten ab“ hält ihn noch auf.",
+    "shutdown": "Der PC fährt in einer Minute herunter. „Brich das Herunterfahren ab“ hält ihn noch auf.",
+    "cancel_shutdown": "Abgebrochen – der PC bleibt an.",
+}
+SYSTEM_ACTION_QUESTIONS = {"restart": "Soll ich den PC neu starten?", "shutdown": "Soll ich den PC herunterfahren?",
+                           "sleep": "Soll ich den PC in den Energiesparmodus schicken?",
+                           "empty_recycle_bin": "Soll ich den Papierkorb leeren?",
+                           "clean_temp": "Soll ich die temporären Dateien löschen?"}
+
+
 FOLDER_SEGMENTS = {"Documents": "Dokumente", "Pictures": "Bilder", "Music": "Musik", "Videos": "Videos",
                    "Desktop": "Desktop", "Downloads": "Downloads"}
 
@@ -707,6 +767,14 @@ class JarvisStyle(PlainStyle):
             if items:
                 text += f" Der neueste Treffer: „{items[0].get('name')}“ in {folder_label(items[0].get('folder'))}."
             return very_well, text
+        if capability == "system.monitor":
+            return "", sysmon_text(result if isinstance(result, dict) else {})
+        if capability == "pc.system_action":
+            name = args.get("name", "")
+            if name == "clean_temp" and isinstance(result, dict):
+                return very_well, (f"Aufgeräumt: {result.get('files', 0)} temporäre Dateien, "
+                                   f"{result.get('freed_mb', 0)} MB frei.")
+            return very_well, SYSTEM_ACTION_REPLIES.get(name, "Erledigt.")
         if capability == "memory.remember":
             return very_well, "Ich habe es mir notiert."
         if capability == "memory.list":
@@ -786,6 +854,8 @@ class JarvisStyle(PlainStyle):
         elif name == "pc.open_url":
             host = (urlsplit(str(arguments.get("url", ""))).hostname or "die Seite").removeprefix("www.")
             question = f"Soll ich {host} öffnen?"
+        elif name == "pc.system_action" and arguments.get("name") in SYSTEM_ACTION_QUESTIONS:
+            question = SYSTEM_ACTION_QUESTIONS[arguments["name"]]
         elif name in ("home.set_switch", "home.set_light"):
             label = ", ".join(entity_label(e) for e in arguments.get("entity_ids", [])) or "das Gerät"
             question = f"Soll ich {label} {'einschalten' if arguments.get('on') else 'ausschalten'}?"
