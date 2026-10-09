@@ -131,7 +131,7 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
             try { & docker compose down | Out-Host } finally { Pop-Location }
         }
     } catch {
-        Write-Host '! Docker antwortet nicht – falls die Docker-Fassung noch läuft: ./deploy/start.sh stop' -ForegroundColor Yellow
+        # Docker Desktop läuft nicht – dann läuft auch die Docker-Fassung von JARVIS nicht: nichts zu tun
     }
 }
 [void](Stop-JarvisServer)   # ältere Programmfassung beenden, damit das Update greift
