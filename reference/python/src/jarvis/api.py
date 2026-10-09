@@ -60,6 +60,7 @@ class Container:
     speech: Any = None  # lokale Spracherkennung (voice.local.LocalSpeech) – None: nur Browser-Erkennung
     vision: Any = None  # Bildmodell (vision.VisionService) für „Was siehst du?“
     learner: Any = None  # gelernte Routinen (patterns.PatternLearner)
+    calendar: Any = None  # Kalender (agenda.CalendarService) – für den nächsten Termin in der Begrüßung
 
     async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
                        location: str | None = None, on_status: OnStatus | None = None) -> TurnResult:
@@ -105,6 +106,11 @@ def turn_to_json(result: TurnResult) -> dict[str, Any]:
 
 class ClaudeKeyIn(BaseModel):
     api_key: str = Field(min_length=10, max_length=300, description="Anthropic-API-Schlüssel (sk-ant-…)")
+
+
+class PresenceIn(BaseModel):
+    state: Literal["arrived", "left"]
+    away_minutes: int = Field(default=0, ge=0, le=60 * 24 * 60)
 
 
 class VisionIn(BaseModel):
@@ -314,6 +320,33 @@ def create_app(container: Container) -> FastAPI:
         if found is None:
             raise JarvisError("JRV-NFD-001", f"Vorschlag {suggestion_id} unbekannt")
         return {"suggestion": found.to_json()}
+
+    @app.post("/v1/presence", tags=["Sehen"])
+    async def presence(body: PresenceIn, who: Principal = Depends(principal)) -> dict:
+        """Anwesenheit aus der Kamera der Oberfläche (nur der Zustand, nie ein Bild): Bus-Ereignis
+        ``jarvis.presence.changed`` und bei „arrived“ eine Begrüßung."""
+        if who.role == "guest" or who.trust in ("guest", "external_untrusted"):
+            raise JarvisError("JRV-POL-002", "Gäste dürfen die Anwesenheit nicht melden")
+        await container.bus.publish(CloudEvent(
+            type="jarvis.presence.changed", source="/ui/camera", subject=who.actor, actor=who.actor, trust=who.trust,
+            data={"state": body.state, "away_minutes": body.away_minutes, "area": who.area}))
+        if body.state != "arrived":
+            return {"text": None}
+        situation = container.situation(who, "voice")
+        next_event = None
+        if container.calendar is not None:
+            from datetime import timedelta
+
+            from .agenda import describe
+
+            try:
+                upcoming = await container.calendar.between(situation.now, situation.now + timedelta(hours=3))
+                timed = [e for e in upcoming if not e.all_day]
+                if timed:
+                    next_event = describe(timed[0], container.calendar.tz)
+            except JarvisError:
+                log.warning("Kalender für die Begrüßung nicht lesbar", exc_info=True)
+        return {"text": style.finalize(style.presence_text(body.away_minutes, situation.now, next_event))}
 
     @app.post("/v1/vision", tags=["Sehen"])
     async def vision(body: VisionIn, who: Principal = Depends(principal)) -> dict:

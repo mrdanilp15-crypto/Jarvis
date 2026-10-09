@@ -344,6 +344,7 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
                                             "text": text})
 
     container.learner = learner
+    container.calendar = calendar
     background.append(run_routines(learner, run_routine, learn))
     return container, background
 

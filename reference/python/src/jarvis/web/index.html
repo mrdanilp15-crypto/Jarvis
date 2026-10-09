@@ -20,6 +20,9 @@
     <button class="conn model-chip" id="model-chip" type="button" data-conn="none" title="KI-Modell – ändern im Zahnrad-Menü">
       <span class="dot"></span><span id="model-text">KI</span></button>
     <div class="conn" id="pc-status" data-conn="none" title="PC-Steuerung"><span class="dot"></span><span id="pc-text">PC</span></div>
+    <button class="conn cam-chip" id="cam-chip" type="button" data-conn="online" hidden
+            title="Anwesenheitserkennung aktiv – die Kamerabilder bleiben im Browser">
+      <span class="dot"></span><span>Kamera</span></button>
     <button class="conn home-chip" id="home-chip" type="button" data-conn="none" hidden title="Smart Home">
       <span class="dot"></span><span id="home-chip-text">Haus</span></button>
     <button class="icon-btn" id="settings-btn" type="button" aria-label="Einstellungen" title="Einstellungen">
@@ -144,6 +147,18 @@
           <option value="aus">aus – ruhige Anzeige (für langsame Rechner)</option>
         </select>
       </label>
+      <label class="check"><input type="checkbox" id="opt-presence">
+        <span>Anwesenheit über die Kamera erkennen und mich nach einer Abwesenheit begrüßen</span></label>
+      <label class="field">Begrüßen nach
+        <select id="opt-presence-min">
+          <option value="10">10 Minuten Abwesenheit</option>
+          <option value="20">20 Minuten Abwesenheit</option>
+          <option value="30">30 Minuten Abwesenheit</option>
+          <option value="60">einer Stunde Abwesenheit</option>
+        </select>
+      </label>
+      <p class="hint">Die Kamera prüft nur, ob sich etwas bewegt – die Bilder verlassen den Browser nie, an JARVIS geht
+        nur „angekommen“ bzw. „gegangen“. Keine Gesichtserkennung. Solange sie läuft, zeigt die Kopfzeile „Kamera“.</p>
       <p class="hint">Farben: Cyan = bereit · Weiß = hört zu · Gold = denkt · Violett = schlägt nach · Blau = führt aus ·
         Grün = gefunden bzw. erledigt · Orange = wartet auf Bestätigung · Rot = Fehler.</p>
       </section>

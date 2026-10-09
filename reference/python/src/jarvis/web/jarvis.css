@@ -654,6 +654,10 @@ body.has-cards .stage { --hud-size: min(40vmin, 360px); justify-content: flex-st
 .card.timer.due { --accent: var(--c-confirm); animation: due 0.9s ease-in-out infinite; }
 @keyframes due { 50% { box-shadow: 0 0 36px color-mix(in srgb, var(--accent) 55%, transparent); } }
 
+/* Anwesenheit */
+.conn.cam-chip { border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; background: transparent; cursor: pointer; }
+.conn.cam-chip .dot { background: var(--c-research); box-shadow: 0 0 8px var(--c-research); animation: breathe 2.4s ease-in-out infinite; }
+
 /* Sehen */
 .card.vision { --accent: var(--c-research); display: grid; grid-template-columns: 160px 1fr; gap: 14px; align-items: start; }
 .vision img { width: 160px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); }

@@ -17,7 +17,8 @@
     homeNow: $("#home-now"), homeError: $("#home-error"), homeSetup: $("#home-setup"), homeFound: $("#home-found"),
     homeUrl: $("#home-url"), homeSearch: $("#home-search"), homeLogin: $("#home-login"), homeToken: $("#home-token"),
     homeTokenSave: $("#home-token-save"), homeConnected: $("#home-connected"), homeRooms: $("#home-rooms"),
-    homeRemove: $("#home-remove"), homeRoutines: $("#home-routines"), homeRoutinesEmpty: $("#home-routines-empty"),
+    homeRemove: $("#home-remove"), camChip: $("#cam-chip"), optPresence: $("#opt-presence"),
+    optPresenceMin: $("#opt-presence-min"), homeRoutines: $("#home-routines"), homeRoutinesEmpty: $("#home-routines-empty"),
     heard: $("#heard"), heardText: $("#heard-text"), heardLearn: $("#heard-learn"),
     wakeTrain: $("#wake-train"), wakeForget: $("#wake-forget"), wakeTrainStatus: $("#wake-train-status"),
     clockTime: $("#clock-time"), clockDate: $("#clock-date"), weatherChip: $("#weather-chip"),
@@ -68,6 +69,7 @@
     speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice.v2", ""),
     wake: store.get("wake", false), location: store.get("location", ""), effect: store.get("effect", "dezent"),
     fx: store.get("fx", "voll"), stt: store.get("stt", "auto"),
+    presence: store.get("presence", false), presenceMinutes: Number(store.get("presence.minutes", 20)) || 20,
   };
   document.body.dataset.fx = settings.fx;
 
@@ -587,21 +589,24 @@
       this.busy = true;
       let stream = null;
       try {
-        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Dieser Browser gibt keine Kamera frei.");
-        stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 960 }, facingMode: "user" } });
-        const video = document.createElement("video");
-        video.muted = true;
-        video.playsInline = true;
-        video.srcObject = stream;
-        await video.play();
-        await new Promise((resolve) => setTimeout(resolve, 700));  // Belichtung einregeln lassen
+        let video = presence.video;  // läuft die Anwesenheitserkennung, ihr Bild mitnutzen (Kamera bleibt an)
+        if (!video) {
+          if (!navigator.mediaDevices?.getUserMedia) throw new Error("Dieser Browser gibt keine Kamera frei.");
+          stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 960 }, facingMode: "user" } });
+          video = document.createElement("video");
+          video.muted = true;
+          video.playsInline = true;
+          video.srcObject = stream;
+          await video.play();
+          await new Promise((resolve) => setTimeout(resolve, 700));  // Belichtung einregeln lassen
+        }
         const width = Math.min(960, video.videoWidth || 640);
         const canvas = document.createElement("canvas");
         canvas.width = width;
         canvas.height = Math.round(width * (video.videoHeight || 480) / (video.videoWidth || 640));
         canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
         const image = canvas.toDataURL("image/jpeg", 0.82);
-        stream.getTracks().forEach((t) => t.stop());  // Kamera sofort aus
+        stream?.getTracks().forEach((t) => t.stop());  // eigene Kamera sofort aus
         stream = null;
         const card = el("section", "card vision");
         const img = el("img");
@@ -633,6 +638,118 @@
       }
     },
   };
+
+  // -- Anwesenheit: Bewegung im Kamerabild (64×48 Graustufen, einmal pro Sekunde) – Bilder verlassen den Browser nie
+  function motionScore(previous, current) {
+    let changed = 0;
+    let sum = 0;
+    for (let i = 0; i < current.length; i += 1) {
+      sum += current[i];
+      if (Math.abs(current[i] - previous[i]) > 24) changed += 1;
+    }
+    return { motion: changed / current.length, brightness: sum / current.length };
+  }
+  window.jarvisMotion = motionScore;  // für Tests
+
+  const presence = {
+    stream: null, video: null, canvas: null, timer: 0, previous: null, lastMotion: 0, away: false, noise: 0.004,
+    awayMs: null,  // Tests: Abwesenheit in Millisekunden statt Minuten
+    async start() {
+      if (this.stream) return;
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Dieser Browser gibt keine Kamera frei.");
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 5, max: 10 } }, audio: false });
+        this.video = document.createElement("video");
+        this.video.muted = true;
+        this.video.playsInline = true;
+        this.video.srcObject = this.stream;
+        await this.video.play();
+        this.canvas = document.createElement("canvas");
+        this.canvas.width = 64;
+        this.canvas.height = 48;
+        this.previous = null;
+        this.lastMotion = Date.now();
+        this.away = false;
+        this.timer = setInterval(() => this.tick(), 1000);
+        els.camChip.hidden = false;
+      } catch (err) {
+        this.stop();
+        settings.presence = false;
+        store.set("presence", false);
+        els.optPresence.checked = false;
+        addSystem(err.name === "NotAllowedError"
+          ? "Die Kamera ist blockiert – die Anwesenheitserkennung bleibt aus. Erlauben Sie die Kamera über das Schloss-Symbol in der Adressleiste."
+          : err.name === "NotFoundError" ? "Keine Kamera gefunden – die Anwesenheitserkennung bleibt aus." : `Kamera: ${err.message}`, true);
+      }
+    },
+    stop() {
+      clearInterval(this.timer);
+      this.timer = 0;
+      this.stream?.getTracks().forEach((t) => t.stop());
+      this.stream = null;
+      this.video = null;
+      this.previous = null;
+      els.camChip.hidden = true;
+    },
+    limit() { return this.awayMs ?? settings.presenceMinutes * 60000; },
+    tick() {
+      if (!this.video || this.video.readyState < 2) return;
+      const ctx = this.canvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(this.video, 0, 0, 64, 48);
+      const pixels = ctx.getImageData(0, 0, 64, 48).data;
+      const gray = new Uint8Array(64 * 48);
+      for (let i = 0; i < gray.length; i += 1) {
+        gray[i] = (pixels[i * 4] * 77 + pixels[i * 4 + 1] * 150 + pixels[i * 4 + 2] * 29) >> 8;
+      }
+      const previous = this.previous;
+      this.previous = gray;
+      if (!previous) return;
+      const { motion, brightness } = motionScore(previous, gray);
+      const now = Date.now();
+      if (brightness < 12) return;  // dunkel oder abgedeckt: nichts schließen
+      if (motion > Math.max(0.01, this.noise * 3)) {
+        this.moved(now);
+      } else {
+        this.noise = 0.95 * this.noise + 0.05 * motion;  // Rauschen (Licht, Kamera) laufend nachführen
+        if (!this.away && now - this.lastMotion > this.limit()) {
+          this.away = true;
+          this.report("left", 0);
+        }
+      }
+    },
+    async moved(now) {
+      if (this.away) {
+        this.away = false;
+        const minutes = Math.round((now - this.lastMotion) / 60000);
+        const reply = await this.report("arrived", minutes);
+        if (reply?.text && !turn) {
+          addMessage("jarvis", reply.text, `JARVIS · ${timeNow()} · Anwesenheit`);
+          tts.speak(reply.text);
+          flash("found");
+        }
+      }
+      this.lastMotion = now;
+    },
+    async report(state, awayMinutes) {
+      try {
+        return await api("POST", "/v1/presence", { state, away_minutes: awayMinutes });
+      } catch {
+        return null;  // Server kurz weg: beim nächsten Wechsel wieder
+      }
+    },
+  };
+  window.jarvisPresence = presence;  // für Tests
+  els.camChip.addEventListener("click", () => openSettings("general"));
+  els.optPresence.addEventListener("change", () => {
+    settings.presence = els.optPresence.checked;
+    store.set("presence", settings.presence);
+    if (settings.presence) presence.start(); else presence.stop();
+  });
+  els.optPresenceMin.addEventListener("change", () => {
+    settings.presenceMinutes = Number(els.optPresenceMin.value) || 20;
+    store.set("presence.minutes", settings.presenceMinutes);
+  });
 
   // -- Systemmonitor: Balken für Prozessor, Speicher, Laufwerke, Grafikkarte ----------------------------------------
   function showSysmon(data) {
@@ -2094,6 +2211,8 @@
     els.optConvo.disabled = !canListen;
     els.optLocation.value = settings.location;
     els.optFx.value = settings.fx;
+    els.optPresence.checked = settings.presence;
+    els.optPresenceMin.value = String(settings.presenceMinutes);
     els.optStt.value = settings.stt === "browser" ? "browser" : "local";
     localVoice.update(sttLocal);
     els.wakeTrainStatus.textContent = "";
@@ -2544,6 +2663,7 @@
   });
 
   updateComposer();
+  if (settings.presence && token) presence.start();
   if (homeReturn && token) {  // zurück von der Home-Assistant-Anmeldung: Ergebnis gleich zeigen
     openSettings("home");
     if (homeReturn === "ok") flash("found");

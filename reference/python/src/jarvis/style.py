@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.8.0"
+STYLE_VERSION = "2.8.1"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -495,6 +495,21 @@ class PlainStyle:
             "goodnight": "Gute Nacht.", "identity": "Ich bin JARVIS, Ihr persönlicher Assistent.",
             "how_are_you": "Danke, alles läuft.", "capabilities": "Fragen Sie mich einfach, was Sie brauchen.",
         }.get(intent, "Wie kann ich helfen?")
+
+    # -- Anwesenheit (Kamera) ---------------------------------------------------------------------------------
+    def presence_text(self, away_minutes: int, now: datetime, next_event: dict[str, Any] | None = None) -> str:
+        """Begrüßung nach einer Abwesenheit – knapp; bei langer Abwesenheit mit Uhrzeit, dazu der nächste Termin."""
+        sir = f", {self.address}" if self.address else ""
+        if away_minutes >= 8 * 60 and 5 <= now.hour < 11:
+            text = f"Guten Morgen{sir}. Es ist {now:%H:%M} Uhr."
+        elif away_minutes >= 3 * 60:
+            text = f"Willkommen zurück{sir}. Es ist {now:%H:%M} Uhr."
+        else:
+            text = f"Willkommen zurück{sir}."
+        if next_event:
+            when = f"um {next_event['time']} Uhr" if next_event.get("time") else "heute"
+            text += f" Ihr nächster Termin: {verbatim(next_event['title'])} {when}."
+        return text
 
     # -- Sehen ------------------------------------------------------------------------------------------------
     def vision_text(self, kind: str) -> str:

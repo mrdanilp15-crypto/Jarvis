@@ -409,6 +409,34 @@ paths:
       operationId: deleteClaudeKey
       responses:
         "200": { description: Entfernt }
+  /v1/presence:
+    post:
+      tags: [Sehen]
+      summary: Anwesenheit aus der Kamera der Oberfläche melden (nur der Zustand, nie ein Bild)
+      description: |
+        Veröffentlicht `jarvis.presence.changed` auf dem Bus. Bei `arrived` kommt eine Begrüßung zurück, mit dem
+        nächsten Termin der kommenden drei Stunden. Gäste ausgeschlossen.
+      operationId: reportPresence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: { enum: [arrived, left] }
+                away_minutes: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Begrüßung (bei arrived) oder null
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text: { type: [string, "null"] }
+        "403": { $ref: "#/components/responses/Problem" }
   /v1/vision:
     post:
       tags: [Sehen]

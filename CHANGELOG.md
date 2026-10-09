@@ -1,5 +1,19 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.8.1 – 2026-10-09
+
+### Neu
+- **Anwesenheit über die Kamera** (Zahnrad → Allgemein, standardmäßig aus):
+  - **Erkennung:** Die Oberfläche vergleicht einmal pro Sekunde ein 64×48-Graustufenbild. Die Schwelle folgt dem
+    Bildrauschen; ein dunkles oder abgedecktes Bild zählt nicht.
+  - **Begrüßung:** Nach 10, 20, 30 oder 60 Minuten ohne Bewegung gilt man als abwesend. Bei der nächsten Bewegung
+    begrüßt JARVIS („Willkommen zurück, Sir.“), nach langer Abwesenheit mit Uhrzeit bzw. „Guten Morgen“, dazu der
+    nächste Termin der kommenden drei Stunden.
+  - **Datenschutz:** Bilder verlassen den Browser nie. Nur „angekommen/gegangen“ geht an `POST /v1/presence` und wird
+    als Bus-Ereignis `jarvis.presence.changed` für Automationen veröffentlicht. Keine Gesichtserkennung.
+  - Solange die Erkennung läuft, zeigt die Kopfzeile „Kamera“.
+  - „Was siehst du?“ nutzt die laufende Kamera mit, statt sie ein zweites Mal zu öffnen.
+
 ## Jarvis-Modul 2.8.0 – 2026-10-09
 
 Alle offenen Module der Roadmap – lokal zuerst: Gedächtnis, Spracherkennung, Stimme, Sehen, Systemmonitor, Börse,

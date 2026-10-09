@@ -218,6 +218,7 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Systemaktionen | „Sperr den Bildschirm“, „Leere den Papierkorb“, „Räum die temporären Dateien auf“, „Such nach Updates“, „Starte den PC neu“ / „Fahr den Rechner herunter“ (Bestätigung in der App), „Brich das Herunterfahren ab“ – feste Liste, keine freien Befehle | PC-Agent |
 | Börse | „Wie steht Apple?“, „Wie steht der DAX?“, „Was kostet Bitcoin?“, „Aktienkurs von SAP“ (Tagesschluss) | Internet |
 | Sehen | „Was siehst du?“, „Was halte ich in der Hand?“, „Lies mir das Etikett vor“ – ein Einzelbild, Kamera danach aus, Bild bleibt auf dem Rechner | Kamera, Bildmodell (lädt JARVIS selbst) |
+| Anwesenheit | Zahnrad → Allgemein → „Anwesenheit über die Kamera“: JARVIS merkt, wenn Sie nach einer Abwesenheit (10–60 min) zurückkommen, und begrüßt Sie („Willkommen zurück, Sir. Ihr nächster Termin: …“). Nur Bewegung, keine Gesichtserkennung, Bilder bleiben im Browser | Webcam |
 | Radio & Medien | „Spiel Radio Bob im Wohnzimmer“, „Spiel den Sender 1Live in der Küche“ – auf Chromecast, Sonos, DLNA-Fernsehern | Home Assistant mit Mediaplayern |
 | Routinen | JARVIS bemerkt Gewohnheiten („Küchenlicht werktags gegen 6:45 an“) und übernimmt sie nach Ihrer Zustimmung | Home Assistant |
 | Haus | „Licht im Wohnzimmer aus“, „Alle Lichter aus“, „Dimm das Licht in der Küche auf 30 Prozent“, „Mach die Stehlampe an“, „Rollläden runter“, „Heizung im Bad auf 21 Grad“, „Starte Filmabend“, „Schließ die Haustür ab“ – Räume und Gerätenamen kommen aus Home Assistant | Home Assistant (Zahnrad → Smart Home) |
@@ -231,7 +232,7 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Gedächtnis | – | eingebaut (SQLite); Embedding-Modell `bge-m3` lädt der Installer, ohne es sucht JARVIS nach Wörtern |
 | Spracherkennung lokal | Mikrofon; CPU mit 4+ Kernen (Whisper „small“, ~1–2 s je Satz); GPU optional (`JARVIS_STT_DEVICE=cuda`, `JARVIS_STT_MODEL=medium`) | Extra `voice-local` (faster-whisper, openWakeWord) – Windows-Installer nimmt es mit; Modell lädt beim ersten Start (~500 MB). Zahnrad → Stimme & Hören → Spracherkennung |
 | Stimme | Lautsprecher | Piper lokal (Programm: im Prozess, Docker: Container); optional Microsoft Conrad (Edge kostenlos, Azure F0) |
-| Sehen | Webcam | Bildmodell `qwen2.5vl:3b` (~3 GB, lädt JARVIS beim ersten „Was siehst du?“), anderes per `JARVIS_VISION_MODEL` |
+| Sehen, Anwesenheit | Webcam | Bildmodell `qwen2.5vl:3b` (~3 GB, lädt JARVIS beim ersten „Was siehst du?“), anderes per `JARVIS_VISION_MODEL` |
 | Smart Home, Radio, Routinen | Home Assistant (Raspberry Pi 4/5 oder Mini-PC); Zigbee/Z-Wave/Matter-Stick dort | Zahnrad → Smart Home (findet und verbindet selbst) |
 | Systemmonitor & -aktionen | Windows-PC | PC-Agent (läuft mit JARVIS); Temperaturen nur, wo Windows sie herausgibt |
 | Online-Kalender | – | `JARVIS_CALDAV_URL`, `JARVIS_CALDAV_USER`, `JARVIS_CALDAV_PASSWORD` (App-Passwort) in `jarvis.env` bzw. `deploy/.env` |
