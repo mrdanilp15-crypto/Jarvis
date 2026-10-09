@@ -158,6 +158,19 @@ if ($installed -ne $hash) {
     Set-Content -Path $hashFile -Value $hash -Encoding ASCII
 }
 
+# Raum-Satelliten (Tablets) erreichen JARVIS im Heimnetz über HTTPS-Port 8443 – Freigabe nur für private Netze
+$ruleName = 'JARVIS Heimnetz (Tablets)'
+& netsh advfirewall firewall show rule name="$ruleName" *> $null
+if ($LASTEXITCODE -ne 0) {
+    Say 'Gebe JARVIS im Heimnetz frei (Windows fragt einmal nach Administratorrechten) …'
+    try {
+        $rule = "advfirewall firewall add rule name=`"$ruleName`" dir=in action=allow protocol=TCP localport=8443 profile=private"
+        Start-Process -FilePath netsh -ArgumentList $rule -Verb RunAs -WindowStyle Hidden -Wait
+    } catch {
+        Say 'Freigabe übersprungen – Tablets können JARVIS erst erreichen, wenn Windows den Zugriff erlaubt.'
+    }
+}
+
 # ---------------------------------------------------------------- Einstellungen (jarvis.env)
 function Read-EnvFile([string]$path) {
     $values = [ordered]@{}

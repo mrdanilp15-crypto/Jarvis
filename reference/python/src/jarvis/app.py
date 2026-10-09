@@ -40,6 +40,7 @@ from .mail import MailConfig, MailReader, register_mail_capabilities
 from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingWeights, SqliteMemoryStore
 from .orchestrator import ConfirmationStore, Orchestrator
 from .pc import AgentHub, register_pc_capabilities, resolve_recipient
+from .devices import LAN_PORT, DeviceRegistry, ensure_certificate
 from .smarthome import SmartHome
 from .patterns import PatternLearner, action_call, describe, run_routines
 from .sysmon import register_sysmon_capabilities
@@ -204,6 +205,10 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
     default_name = (os.environ.get("JARVIS_USER_NAME") or "").strip() or None
     tokens = {tok: Principal(**{**p, "name": p.get("name") or default_name})
               for tok, p in json.loads(os.environ.get("JARVIS_DEV_TOKENS", "{}")).items()}
+    # Raumgeräte (Tablets): eigene Tokens, im Heimnetz über HTTPS (JARVIS_LAN=on, Port JARVIS_LAN_PORT/8443)
+    devices = DeviceRegistry(data_dir / "devices.json", tokens,
+                             lan_enabled=os.environ.get("JARVIS_LAN", "").lower() in ("on", "1", "true", "yes"),
+                             lan_port=int(os.environ.get("JARVIS_LAN_PORT") or LAN_PORT))
 
     def situation(principal: Principal, channel: str) -> Situation:
         # Nie die Actor-ID als Namen zeigen (daher kam „Alex“): ohne Namen spricht JARVIS nur mit „Sir“ an
@@ -344,6 +349,7 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
                                             "text": text})
 
     container.learner = learner
+    container.devices = devices
     container.calendar = calendar
     background.append(run_routines(learner, run_routine, learn))
     return container, background
@@ -434,8 +440,22 @@ def main() -> None:
 
     app.router.lifespan_context = lifespan
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    uvicorn.run(app, host=os.environ.get("JARVIS_HOST") or cfg["api"]["host"],
-                port=int(os.environ.get("JARVIS_PORT") or cfg["api"]["port"]))
+    local = uvicorn.Config(app, host=os.environ.get("JARVIS_HOST") or cfg["api"]["host"],
+                           port=int(os.environ.get("JARVIS_PORT") or cfg["api"]["port"]))
+    registry = container.devices
+    if registry is None or not registry.lan_enabled:
+        uvicorn.Server(local).run()
+        return
+    # Zusätzlich im Heimnetz über HTTPS (Tablets brauchen HTTPS für Mikrofon und Kamera); ein Event-Loop, eine App
+    cert, key = ensure_certificate(registry.path.parent / "tls")
+    lan = uvicorn.Config(app, host="0.0.0.0", port=registry.lan_port, ssl_certfile=str(cert), ssl_keyfile=str(key),
+                         lifespan="off")
+    log.info("Im Heimnetz erreichbar: %s", ", ".join(registry.lan_urls()) or f"Port {registry.lan_port}")
+
+    async def serve_both() -> None:
+        await asyncio.gather(uvicorn.Server(local).serve(), uvicorn.Server(lan).serve())
+
+    asyncio.run(serve_both())
 
 
 if __name__ == "__main__":

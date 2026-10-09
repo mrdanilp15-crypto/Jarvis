@@ -122,6 +122,7 @@ function Start-Native {
     $env:JARVIS_PIPER = 'local'                        # lokale Piper-Stimme im JARVIS-Prozess (Download beim 1. Start)
     $env:JARVIS_HOST = '127.0.0.1'
     $env:JARVIS_PORT = '8080'
+    if (-not $env:JARVIS_LAN) { $env:JARVIS_LAN = 'on' }  # Tablets im Heimnetz: https://<PC>:8443 (JARVIS_LAN=off in jarvis.env schaltet ab)
     $env:PYTHONIOENCODING = 'utf-8'
     $log = Join-Path $jarvisHome 'server.log'
     foreach ($file in @($log, "$log.out")) {

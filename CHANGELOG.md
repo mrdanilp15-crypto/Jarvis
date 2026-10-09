@@ -1,5 +1,20 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.8.2 – 2026-10-09
+
+### Neu
+- **Raum-Satelliten: Tablet oder Handy als JARVIS im Raum** (Zahnrad → Geräte):
+  - **Heimnetz:** Mit `JARVIS_LAN=on` ist JARVIS zusätzlich unter `https://<PC>:8443` erreichbar. Browser geben
+    Mikrofon und Kamera nur über HTTPS frei. Das Zertifikat stellt JARVIS selbst aus (`data/tls`, 10 Jahre, alle
+    Heimnetz-Adressen) und erneuert es, wenn sich die Adresse ändert. Das Windows-Programm schaltet das von selbst ein,
+    der Installer gibt Port 8443 einmal für private Netze frei. Docker: `JARVIS_LAN=on` und
+    `JARVIS_LAN_ADDRESS=<IP>`.
+  - **Koppeln:** Raum wählen (aus Home Assistant oder frei) → „Koppeln“ → QR-Code mit dem Tablet scannen. Jedes Gerät
+    hat einen eigenen Zugang (`data/devices.json`, Dateirechte 0600), der jederzeit widerrufbar ist. Ein Tablet kann
+    selbst keine weiteren Geräte koppeln.
+  - **Raum-Modus:** Das Tablet zeigt seinen Raum in der Kopfzeile, hört auf „Jarvis“ und hält den Bildschirm an.
+    „Licht an“ meint dort diesen Raum.
+
 ## Jarvis-Modul 2.8.1 – 2026-10-09
 
 ### Neu

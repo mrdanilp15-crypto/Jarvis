@@ -17,7 +17,10 @@
     homeNow: $("#home-now"), homeError: $("#home-error"), homeSetup: $("#home-setup"), homeFound: $("#home-found"),
     homeUrl: $("#home-url"), homeSearch: $("#home-search"), homeLogin: $("#home-login"), homeToken: $("#home-token"),
     homeTokenSave: $("#home-token-save"), homeConnected: $("#home-connected"), homeRooms: $("#home-rooms"),
-    homeRemove: $("#home-remove"), camChip: $("#cam-chip"), optPresence: $("#opt-presence"),
+    homeRemove: $("#home-remove"), roomChip: $("#room-chip"), devNow: $("#dev-now"), devError: $("#dev-error"),
+    devSetup: $("#dev-setup"), devName: $("#dev-name"), devRoom: $("#dev-room"), devRooms: $("#dev-rooms"),
+    devAdd: $("#dev-add"), devPair: $("#dev-pair"), devQr: $("#dev-qr"), devLink: $("#dev-link"), devCopy: $("#dev-copy"),
+    devLanOff: $("#dev-lan-off"), devList: $("#dev-list"), devEmpty: $("#dev-empty"), camChip: $("#cam-chip"), optPresence: $("#opt-presence"),
     optPresenceMin: $("#opt-presence-min"), homeRoutines: $("#home-routines"), homeRoutinesEmpty: $("#home-routines-empty"),
     heard: $("#heard"), heardText: $("#heard-text"), heardLearn: $("#heard-learn"),
     wakeTrain: $("#wake-train"), wakeForget: $("#wake-forget"), wakeTrainStatus: $("#wake-train-status"),
@@ -55,6 +58,7 @@
     const value = params.get("token");
     if (params.get("wake") === "1") store.set("wake", true);
     if (params.get("home")) homeReturn = params.get("home");  // Rückkehr von der Home-Assistant-Anmeldung
+    if (params.has("room")) store.set("room", params.get("room"));  // gekoppeltes Raumgerät (Tablet)
     if (!params.toString()) return null;
     history.replaceState(null, "", location.pathname + location.search);
     if (value) store.set("token", value);
@@ -2241,6 +2245,7 @@
     else clearTimeout(ai.timer);
     if (name === "home") home.load();
     else clearTimeout(home.timer);
+    if (name === "devices") devices.load();
   }
   els.tabs.forEach((tab, i) => {
     tab.addEventListener("click", () => selectTab(tab.id.slice(4)));
@@ -2575,6 +2580,99 @@
   els.homeRemove.addEventListener("click", () => home.remove());
   els.homeChip.addEventListener("click", () => openSettings("home"));
 
+  // ---------------------------------------------------------------- Geräte koppeln (Einstellungen)
+  const devices = {
+    data: null,
+    async load() {
+      try {
+        this.data = await api("GET", "/v1/settings/devices");
+      } catch (err) {
+        els.devNow.textContent = err.status === 403 ? "Geräte koppeln Sie am JARVIS-PC mit Ihrem eigenen Zugang."
+          : `Geräte sind gerade nicht erreichbar: ${err.message}`;
+        els.devSetup.hidden = true;
+        els.devLanOff.hidden = true;
+        return;
+      }
+      this.render();
+    },
+    render() {
+      const d = this.data;
+      els.devSetup.hidden = !d.lan.enabled;
+      els.devLanOff.hidden = d.lan.enabled;
+      els.devNow.textContent = !d.lan.enabled ? "Heimnetz-Zugang ist aus."
+        : d.lan.urls.length ? `Im Heimnetz erreichbar unter ${d.lan.urls.join(" · ")}`
+          : "Heimnetz-Zugang ist an, aber dieser Rechner hat gerade keine Adresse im Heimnetz (WLAN/LAN verbunden?).";
+      els.devRooms.replaceChildren(...d.rooms.map((room) => new Option(room.name)));
+      els.devEmpty.hidden = d.devices.length > 0;
+      els.devList.replaceChildren(...d.devices.map((device) => {
+        const li = el("li");
+        li.append(el("span", "name", device.name),
+          el("span", "note", `${device.area_name ? `Raum: ${device.area_name} · ` : ""}gekoppelt am ${new Date(device.created).toLocaleDateString("de-DE")}`));
+        const side = el("div", "side");
+        side.append(button("Entkoppeln", "btn danger small", () => this.run(async () => {
+          await api("DELETE", `/v1/settings/devices/${encodeURIComponent(device.id)}`);
+          els.devPair.hidden = true;
+          await this.load();
+        })));
+        li.append(side);
+        return li;
+      }));
+    },
+    async run(fn) {
+      els.devError.hidden = true;
+      try { await fn(); } catch (err) { els.devError.textContent = err.message; els.devError.hidden = false; }
+    },
+    add() {
+      return this.run(async () => {
+        const room = els.devRoom.value.trim();
+        const name = els.devName.value.trim() || (room ? `Tablet ${room}` : "");
+        if (!name) throw new Error("Bitte einen Namen oder Raum für das Gerät angeben.");
+        const match = this.data?.rooms.find((r) => r.name.toLowerCase() === room.toLowerCase());
+        const result = await api("POST", "/v1/settings/devices", { name, area: match ? match.id : room || null });
+        els.devQr.innerHTML = result.qr_svg || "";  // SVG vom eigenen Server (segno), ohne Skripte
+        els.devQr.hidden = !result.qr_svg;
+        els.devLink.textContent = result.url;
+        els.devLink.href = result.url;
+        els.devPair.hidden = false;
+        els.devName.value = "";
+        els.devRoom.value = "";
+        flash("found");
+        await this.load();
+      });
+    },
+  };
+  els.devAdd.addEventListener("click", () => devices.add());
+  els.devRoom.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); devices.add(); }
+  });
+  els.devCopy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(els.devLink.href);
+      els.devCopy.textContent = "Kopiert";
+    } catch { els.devCopy.textContent = "Bitte markieren und kopieren"; }
+    setTimeout(() => { els.devCopy.textContent = "Link kopieren"; }, 2000);
+  });
+
+  // Raum-Modus: gekoppeltes Tablet zeigt seinen Raum und hält den Bildschirm an (Wake Lock, solange sichtbar)
+  const roomMode = {
+    lock: null,
+    start() {
+      const room = store.get("room", "");
+      els.roomChip.hidden = !room;
+      els.roomChip.textContent = room;
+      document.body.classList.toggle("room-mode", Boolean(room));
+      if (room) this.keepAwake();
+    },
+    async keepAwake() {
+      if (!("wakeLock" in navigator) || document.visibilityState !== "visible" || this.lock) return;
+      try {
+        this.lock = await navigator.wakeLock.request("screen");
+        this.lock.addEventListener("release", () => { this.lock = null; });
+      } catch { /* Akku-Sparmodus oder unverschlüsselt – Bildschirm geht dann nach der Systemzeit aus */ }
+    },
+  };
+  document.addEventListener("visibilitychange", () => { if (store.get("room", "")) roomMode.keepAwake(); });
+
   // Modell-Anzeige in der Kopfzeile
   const CLAUDE_SHORT = { "claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-fable-5-1": "Fable 5.1" };
   function setModelChip(llm) {
@@ -2599,6 +2697,8 @@
   });
   els.logout.addEventListener("click", () => {
     store.remove("token");
+    store.remove("room");
+    roomMode.start();
     token = null;
     els.settings.close();
     const socket = ws;
@@ -2653,6 +2753,7 @@
   window.addEventListener("hashchange", () => {  // Link mit Token in einem bereits offenen Tab
     const value = tokenFromLink();
     setWake(store.get("wake", settings.wake));
+    roomMode.start();
     if (!value) return;
     token = value;
     if (els.login.open) els.login.close();
@@ -2663,6 +2764,7 @@
   });
 
   updateComposer();
+  roomMode.start();
   if (settings.presence && token) presence.start();
   if (homeReturn && token) {  // zurück von der Home-Assistant-Anmeldung: Ergebnis gleich zeigen
     openSettings("home");

@@ -409,6 +409,67 @@ paths:
       operationId: deleteClaudeKey
       responses:
         "200": { description: Entfernt }
+  /v1/settings/devices:
+    get:
+      tags: [Einstellungen]
+      summary: Gekoppelte Raumgeräte, Heimnetz-Adressen und Räume aus Home Assistant
+      operationId: listDevices
+      responses:
+        "200":
+          description: Geräte (ohne Token), Räume, Heimnetz-Zugang
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices: { type: array, items: { $ref: "#/components/schemas/RoomDevice" } }
+                  rooms:
+                    type: array
+                    items: { type: object, properties: { id: { type: string }, name: { type: string } } }
+                  lan:
+                    type: object
+                    properties:
+                      enabled: { type: boolean }
+                      urls: { type: array, items: { type: string } }
+        "403": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [Einstellungen]
+      summary: Tablet/Handy für einen Raum koppeln – liefert Link und QR-Code (nur einmal sichtbar)
+      description: Nur Erwachsene des Haushalts, nicht von einem gekoppelten Gerät aus. Erfordert `JARVIS_LAN=on`.
+      operationId: addDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 40 }
+                area: { type: [string, "null"], maxLength: 80, description: area_id aus Home Assistant oder Raumname }
+      responses:
+        "200":
+          description: Gekoppelt
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  device: { $ref: "#/components/schemas/RoomDevice" }
+                  url: { type: string, description: "https://<PC>:8443/#token=…&wake=1&room=…" }
+                  qr_svg: { type: [string, "null"] }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/settings/devices/{device_id}:
+    delete:
+      tags: [Einstellungen]
+      summary: Gerät entkoppeln (Zugang sofort ungültig)
+      operationId: removeDevice
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Entfernt }
+        "404": { $ref: "#/components/responses/Problem" }
   /v1/presence:
     post:
       tags: [Sehen]
@@ -634,6 +695,14 @@ components:
         application/problem+json:
           schema: { $ref: "../schemas/error.schema.json" }
   schemas:
+    RoomDevice:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        area: { type: [string, "null"] }
+        area_name: { type: [string, "null"] }
+        created: { type: string, format: date-time }
     LlmSettings:
       type: object
       properties:

@@ -14,6 +14,7 @@
 <body data-state="offline">
   <header class="topbar">
     <div class="brand">J.A.R.V.I.S<small>Just A Rather Very Intelligent System</small></div>
+    <div class="room-chip" id="room-chip" hidden title="Raum dieses Geräts – „Licht an“ meint diesen Raum"></div>
     <div class="clock" aria-hidden="true"><span id="clock-time">--:--</span><small id="clock-date"></small></div>
     <button class="weather-chip" id="weather-chip" type="button" hidden title="Letzte Wetterabfrage – anzeigen"></button>
     <div class="conn" id="conn" data-conn="connecting"><span class="dot"></span><span id="conn-text">Verbinde …</span></div>
@@ -131,6 +132,7 @@
         <button type="button" role="tab" id="tab-voice" aria-controls="panel-voice" aria-selected="false">Stimme &amp; Hören</button>
         <button type="button" role="tab" id="tab-ai" aria-controls="panel-ai" aria-selected="false">KI-Modell</button>
         <button type="button" role="tab" id="tab-home" aria-controls="panel-home" aria-selected="false">Smart Home</button>
+        <button type="button" role="tab" id="tab-devices" aria-controls="panel-devices" aria-selected="false">Geräte</button>
       </div>
 
       <section class="tab-panel" id="panel-general" role="tabpanel" aria-labelledby="tab-general">
@@ -281,6 +283,42 @@
             hier wiederkehrende Schaltungen vor (z. B. „Küchenlicht werktags gegen 6:45 an“). Die Uhrzeit folgt danach
             gleitend Ihren Gewohnheiten.</p>
         </div>
+      </section>
+
+      <section class="tab-panel" id="panel-devices" role="tabpanel" aria-labelledby="tab-devices" hidden>
+        <p class="ai-now" id="dev-now">Lade …</p>
+        <p class="form-error" id="dev-error" hidden></p>
+        <div id="dev-setup">
+          <h3>Tablet oder Handy koppeln <small>als Raum-Satellit: hört zu, spricht und kennt seinen Raum</small></h3>
+          <div class="row-field">
+            <input id="dev-name" type="text" maxlength="40" placeholder="Name, z. B. Küchen-Tablet" aria-label="Gerätename">
+            <input id="dev-room" type="text" maxlength="80" list="dev-rooms" placeholder="Raum, z. B. Küche" aria-label="Raum">
+            <datalist id="dev-rooms"></datalist>
+            <button class="btn primary" type="button" id="dev-add">Koppeln</button>
+          </div>
+          <div class="pair" id="dev-pair" hidden>
+            <div class="qr" id="dev-qr"></div>
+            <div>
+              <p class="hint">Mit der Kamera des Tablets scannen – oder diesen Link auf dem Tablet öffnen (nur hier einmal
+                sichtbar):</p>
+              <p class="pair-link"><a id="dev-link" href="#" target="_blank" rel="noopener"></a></p>
+              <button class="btn small" type="button" id="dev-copy">Link kopieren</button>
+              <ol class="hint steps">
+                <li>Das Tablet muss im selben WLAN sein wie der JARVIS-PC.</li>
+                <li>Der Browser warnt einmal vor dem Zertifikat („nicht sicher“): „Erweitert“ → „Weiter zu …“ –
+                  das Zertifikat hat JARVIS selbst ausgestellt.</li>
+                <li>Mikrofon erlauben. Danach reagiert das Tablet auf „Jarvis“, und „Licht an“ meint diesen Raum.</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+        <p class="hint warn" id="dev-lan-off" hidden>JARVIS ist im Heimnetz noch nicht erreichbar. Unter Windows starten Sie
+          JARVIS einmal neu (die aktuelle Version schaltet das Heimnetz von selbst ein); bei Docker setzen Sie
+          <code>JARVIS_LAN=on</code> in <code>deploy/.env</code>.</p>
+        <h3>Gekoppelte Geräte <small>jederzeit widerrufbar</small></h3>
+        <ul class="models" id="dev-list"></ul>
+        <p class="hint" id="dev-empty">Noch keine Geräte gekoppelt. Ein altes Tablet an der Wand oder in der Küche reicht –
+          Ladegerät dran, Bildschirm bleibt im Raum-Modus an.</p>
       </section>
 
       <div class="actions">

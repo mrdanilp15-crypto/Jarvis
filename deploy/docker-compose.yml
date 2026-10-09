@@ -26,6 +26,8 @@ services:
       JARVIS_CALDAV_PASSWORD: ${JARVIS_CALDAV_PASSWORD:-}
       JARVIS_SECRET_KV_JARVIS_MQTT_PASSWORD: ${JARVIS_SECRET_KV_JARVIS_MQTT_PASSWORD:-}
       JARVIS_DEV_TOKENS: ${JARVIS_DEV_TOKENS:-{}}
+      JARVIS_LAN: ${JARVIS_LAN:-off}                    # on = Tablets/Handys im Heimnetz koppeln (HTTPS, Port 8443)
+      JARVIS_LAN_ADDRESS: ${JARVIS_LAN_ADDRESS:-}       # IP dieses Rechners im Heimnetz (im Container nicht sichtbar)
       JARVIS_LLM_MODEL: ${JARVIS_LLM_MODEL:-}           # leer = Modell aus der Konfiguration
       JARVIS_HOME_LOCATION: ${JARVIS_HOME_LOCATION:-}   # Standardort fürs Wetter
       JARVIS_USER_NAME: ${JARVIS_USER_NAME:-}           # Vorname des Nutzers (Anzeige, „Wie heiße ich?“)
@@ -45,6 +47,7 @@ services:
       - jarvis-data:/app/data             # Timer, Erinnerungen, eigene Termine
     ports:
       - "127.0.0.1:8080:8080"          # extern nur über Reverse Proxy / VPN
+      - "8443:8443"                     # Heimnetz (HTTPS) für Tablets – nur aktiv mit JARVIS_LAN=on
     extra_hosts:
       - "host.docker.internal:host-gateway"   # Home Assistant auf demselben Rechner finden (auch unter Linux)
     depends_on:                         # Mosquitto ist optional (Bridge verbindet sich bei Bedarf neu)

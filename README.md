@@ -219,6 +219,7 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Börse | „Wie steht Apple?“, „Wie steht der DAX?“, „Was kostet Bitcoin?“, „Aktienkurs von SAP“ (Tagesschluss) | Internet |
 | Sehen | „Was siehst du?“, „Was halte ich in der Hand?“, „Lies mir das Etikett vor“ – ein Einzelbild, Kamera danach aus, Bild bleibt auf dem Rechner | Kamera, Bildmodell (lädt JARVIS selbst) |
 | Anwesenheit | Zahnrad → Allgemein → „Anwesenheit über die Kamera“: JARVIS merkt, wenn Sie nach einer Abwesenheit (10–60 min) zurückkommen, und begrüßt Sie („Willkommen zurück, Sir. Ihr nächster Termin: …“). Nur Bewegung, keine Gesichtserkennung, Bilder bleiben im Browser | Webcam |
+| Raum-Satelliten | Altes Tablet oder Handy als JARVIS in Küche, Bad, Flur: Zahnrad → Geräte → Raum wählen → „Koppeln“ → QR-Code mit dem Tablet scannen. Es hört auf „Jarvis“, bleibt an, und „Licht an“ meint seinen Raum | Tablet mit Chrome (Android) bzw. Safari (iPad), Ladegerät, selbes WLAN |
 | Radio & Medien | „Spiel Radio Bob im Wohnzimmer“, „Spiel den Sender 1Live in der Küche“ – auf Chromecast, Sonos, DLNA-Fernsehern | Home Assistant mit Mediaplayern |
 | Routinen | JARVIS bemerkt Gewohnheiten („Küchenlicht werktags gegen 6:45 an“) und übernimmt sie nach Ihrer Zustimmung | Home Assistant |
 | Haus | „Licht im Wohnzimmer aus“, „Alle Lichter aus“, „Dimm das Licht in der Küche auf 30 Prozent“, „Mach die Stehlampe an“, „Rollläden runter“, „Heizung im Bad auf 21 Grad“, „Starte Filmabend“, „Schließ die Haustür ab“ – Räume und Gerätenamen kommen aus Home Assistant | Home Assistant (Zahnrad → Smart Home) |
@@ -233,6 +234,7 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Spracherkennung lokal | Mikrofon; CPU mit 4+ Kernen (Whisper „small“, ~1–2 s je Satz); GPU optional (`JARVIS_STT_DEVICE=cuda`, `JARVIS_STT_MODEL=medium`) | Extra `voice-local` (faster-whisper, openWakeWord) – Windows-Installer nimmt es mit; Modell lädt beim ersten Start (~500 MB). Zahnrad → Stimme & Hören → Spracherkennung |
 | Stimme | Lautsprecher | Piper lokal (Programm: im Prozess, Docker: Container); optional Microsoft Conrad (Edge kostenlos, Azure F0) |
 | Sehen, Anwesenheit | Webcam | Bildmodell `qwen2.5vl:3b` (~3 GB, lädt JARVIS beim ersten „Was siehst du?“), anderes per `JARVIS_VISION_MODEL` |
+| Raum-Satelliten | Tablet/Handy (Android 8+ mit Chrome oder iPad mit iPadOS 16.4+), Netzteil | Windows-Programm: automatisch (Port 8443, einmal Windows-Freigabe bestätigen; das WLAN muss in Windows „Privat“ sein). Docker: `JARVIS_LAN=on`, `JARVIS_LAN_ADDRESS=<IP des Rechners>` in `deploy/.env` |
 | Smart Home, Radio, Routinen | Home Assistant (Raspberry Pi 4/5 oder Mini-PC); Zigbee/Z-Wave/Matter-Stick dort | Zahnrad → Smart Home (findet und verbindet selbst) |
 | Systemmonitor & -aktionen | Windows-PC | PC-Agent (läuft mit JARVIS); Temperaturen nur, wo Windows sie herausgibt |
 | Online-Kalender | – | `JARVIS_CALDAV_URL`, `JARVIS_CALDAV_USER`, `JARVIS_CALDAV_PASSWORD` (App-Passwort) in `jarvis.env` bzw. `deploy/.env` |

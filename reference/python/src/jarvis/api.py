@@ -24,6 +24,7 @@ from .llm.base import OnText
 from .llm.router import HeuristicClassifier, ModelRouter
 from .orchestrator import OnStatus, Orchestrator, TurnRequest, TurnResult
 from .pc import AgentHub
+from .devices import qr_svg
 from .vision import decode_image
 from .policy import Principal
 from .timers import Notifier
@@ -61,6 +62,7 @@ class Container:
     vision: Any = None  # Bildmodell (vision.VisionService) für „Was siehst du?“
     learner: Any = None  # gelernte Routinen (patterns.PatternLearner)
     calendar: Any = None  # Kalender (agenda.CalendarService) – für den nächsten Termin in der Begrüßung
+    devices: Any = None  # gekoppelte Raumgeräte (devices.DeviceRegistry)
 
     async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
                        location: str | None = None, on_status: OnStatus | None = None) -> TurnResult:
@@ -106,6 +108,11 @@ def turn_to_json(result: TurnResult) -> dict[str, Any]:
 
 class ClaudeKeyIn(BaseModel):
     api_key: str = Field(min_length=10, max_length=300, description="Anthropic-API-Schlüssel (sk-ant-…)")
+
+
+class DeviceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40, examples=["Küchen-Tablet"])
+    area: str | None = Field(default=None, max_length=80, description="Raum (area_id aus Home Assistant) oder frei")
 
 
 class PresenceIn(BaseModel):
@@ -320,6 +327,46 @@ def create_app(container: Container) -> FastAPI:
         if found is None:
             raise JarvisError("JRV-NFD-001", f"Vorschlag {suggestion_id} unbekannt")
         return {"suggestion": found.to_json()}
+
+    def rooms() -> list[dict[str, str]]:
+        index = getattr(container.smarthome, "index", None)
+        return [{"id": area_id, "name": name} for area_id, name in (index.areas.items() if index else [])]
+
+    def device_registry(who: Principal) -> Any:
+        if who.actor.startswith("device:"):  # ein Raumgerät koppelt keine weiteren Geräte
+            raise JarvisError("JRV-POL-002", "Geräte koppeln nur am JARVIS-PC bzw. mit dem eigenen Zugang")
+        if container.devices is None:
+            raise JarvisError("JRV-NFD-001", "Geräte koppeln ist in dieser Installation nicht eingerichtet")
+        return container.devices
+
+    @app.get("/v1/settings/devices", tags=["Einstellungen"])
+    async def list_devices(who: Principal = Depends(household_adult)) -> dict:
+        """Gekoppelte Raumgeräte, Adressen im Heimnetz und die Räume aus Home Assistant."""
+        registry = device_registry(who)
+        return {"devices": [registry.public(d) for d in registry.devices], "rooms": rooms(),
+                "lan": {"enabled": registry.lan_enabled, "urls": registry.lan_urls()}}
+
+    @app.post("/v1/settings/devices", tags=["Einstellungen"])
+    async def add_device(body: DeviceIn, who: Principal = Depends(household_adult)) -> dict:
+        """Gerät koppeln: liefert den Link (und QR-Code) fürs Tablet – nur hier einmal sichtbar."""
+        registry = device_registry(who)
+        if not registry.lan_enabled:
+            raise JarvisError("JRV-NFD-001", "LAN-Zugang aus",
+                              user_message="JARVIS ist im Heimnetz noch nicht erreichbar. Setzen Sie JARVIS_LAN=on in "
+                                           "jarvis.env bzw. deploy/.env und starten Sie JARVIS neu.")
+        names = {room["id"]: room["name"] for room in rooms()}
+        area = (body.area or "").strip() or None
+        if area and area not in names:  # frei eingetippt: „küche“ → Raum „Küche“ aus Home Assistant
+            area = next((rid for rid, name in names.items() if name.casefold() == area.casefold()), area)
+        device = registry.create(body.name, area, names.get(area or "", area), user_name=who.name)
+        link = registry.link(device)
+        return {"device": registry.public(device), "url": link, "qr_svg": qr_svg(link) if link else None}
+
+    @app.delete("/v1/settings/devices/{device_id}", tags=["Einstellungen"])
+    async def remove_device(device_id: str, who: Principal = Depends(household_adult)) -> dict:
+        if not device_registry(who).remove(device_id):
+            raise JarvisError("JRV-NFD-001", f"Gerät {device_id} unbekannt")
+        return {"removed": device_id}
 
     @app.post("/v1/presence", tags=["Sehen"])
     async def presence(body: PresenceIn, who: Principal = Depends(principal)) -> dict:
