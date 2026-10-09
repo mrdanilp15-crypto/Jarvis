@@ -207,11 +207,15 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
             words += list(smarthome.index.areas.values()) + [d.name for d in smarthome.index.devices[:40]]
         return ", ".join(w for w in words if w)
 
+    tts = _tts(cfg, data_dir)
+    for engine in (tts, getattr(tts, "fallback", None)):
+        if hasattr(engine, "warm_up"):
+            background.append(engine.warm_up())  # lokale Piper-Stimme laden (beim ersten Start: Download)
     speech = create_local_speech(stt_prompt)
     if speech is not None:
         background.append(speech.warm_up())  # Modell laden (beim ersten Start: Download)
     container = Container(orchestrator=orchestrator, bus=bus, router=router, tokens=tokens,
-                          webhook_secrets={}, situation=situation, agents=agents, tts=_tts(cfg), smarthome=smarthome,
+                          webhook_secrets={}, situation=situation, agents=agents, tts=tts, smarthome=smarthome,
                           speech=speech)
 
     pc_enabled = registry.get("pc.open_app") is not None
@@ -303,11 +307,22 @@ def _named(value: str | None, marker: str) -> dict[str, str]:
     return out
 
 
-def _tts(cfg: dict[str, Any]) -> Any:
-    """JARVIS-Stimme: Azure Speech (Conrad), wenn ein Schlüssel hinterlegt ist, sonst bzw. als Rückfall Piper."""
+def _tts(cfg: dict[str, Any], data_dir: Path | None = None) -> Any:
+    """JARVIS-Stimme: Azure Speech (Conrad), wenn ein Schlüssel hinterlegt ist, sonst bzw. als Rückfall Piper.
+    JARVIS_PIPER=local: Piper im eigenen Prozess (Programm ohne Docker), Stimme im Datenordner."""
     tts_cfg = (cfg.get("voice") or {}).get("tts") or {}
     piper = None
-    if tts_cfg.get("uri") and os.environ.get("JARVIS_PIPER", "").lower() not in ("off", "0", "false"):
+    mode = os.environ.get("JARVIS_PIPER", "").lower()
+    if mode == "local":
+        try:
+            import piper as _piper  # noqa: F401  – optionales Extra „voice-local“
+        except ImportError:
+            log.info("Lokale Piper-Stimme aus: Paket 'piper-tts' fehlt")
+        else:
+            from .voice.piper_local import LocalPiperTTS
+
+            piper = LocalPiperTTS((data_dir or Path("data")) / "voices")
+    elif tts_cfg.get("uri") and mode not in ("off", "0", "false"):
         try:
             import wyoming  # noqa: F401  – optionales Extra „voice“
         except ImportError:

@@ -119,7 +119,7 @@ function Start-Native {
     $env:JARVIS_DATA_DIR = Join-Path $jarvisHome 'data'
     $env:JARVIS_BUS = 'memory'                         # kein Redis nötig
     $env:JARVIS_OLLAMA_URL = 'http://127.0.0.1:11434'  # Ollama auf diesem PC
-    $env:JARVIS_PIPER = 'off'                          # Stimme: Edge („Conrad“), Azure oder Browser
+    $env:JARVIS_PIPER = 'local'                        # lokale Piper-Stimme im JARVIS-Prozess (Download beim 1. Start)
     $env:JARVIS_HOST = '127.0.0.1'
     $env:JARVIS_PORT = '8080'
     $env:PYTHONIOENCODING = 'utf-8'
