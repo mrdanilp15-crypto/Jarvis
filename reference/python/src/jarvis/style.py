@@ -709,6 +709,17 @@ class JarvisStyle(PlainStyle):
             return very_well, text
         if capability == "memory.remember":
             return very_well, "Ich habe es mir notiert."
+        if capability == "memory.list":
+            items = (result or {}).get("memories") if isinstance(result, dict) else None
+            if not items:
+                return "", "Bislang habe ich mir nichts über Sie gemerkt. Sagen Sie einfach „Merk dir, dass …“."
+            lines = "\n".join(f"- {verbatim(i['content'])}" for i in items)
+            return "", f"Folgendes habe ich mir gemerkt:\n{lines}"
+        if capability == "memory.forget":
+            gone = (result or {}).get("forgotten") if isinstance(result, dict) else None
+            if gone:
+                return very_well, f"Vergessen: „{verbatim(gone)}“."
+            return "", "Dazu habe ich nichts gespeichert – „Was weißt du über mich?“ zeigt alles, was ich mir gemerkt habe."
         if capability == "system.status":
             if slots.get("intro") == "how_are_you":
                 sir = f", {self.address}" if self.address else ""

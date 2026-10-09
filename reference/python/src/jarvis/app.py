@@ -37,7 +37,7 @@ from .llm.router import ModelRouter
 from .llm_settings import LLMSettings
 from .logging_setup import configure_logging
 from .mail import MailConfig, MailReader, register_mail_capabilities
-from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingWeights
+from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingWeights, SqliteMemoryStore
 from .orchestrator import ConfirmationStore, Orchestrator
 from .pc import AgentHub, register_pc_capabilities, resolve_recipient
 from .smarthome import SmartHome
@@ -96,7 +96,10 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
     emb_cfg = cfg["llm"]["embeddings"]
     mem_cfg = cfg["memory"]
     memory = MemoryService(
-        InMemoryMemoryStore(dedup_similarity=mem_cfg["dedup_similarity"]),  # Betrieb: PostgresMemoryStore
+        # Langzeitgedächtnis in data/memory.db (übersteht Neustarts); memory.backend: memory = nur im Arbeitsspeicher
+        SqliteMemoryStore(data_dir / "memory.db", dedup_similarity=mem_cfg["dedup_similarity"])
+        if mem_cfg.get("backend", "sqlite") == "sqlite"
+        else InMemoryMemoryStore(dedup_similarity=mem_cfg["dedup_similarity"]),
         OllamaEmbedder(ollama_url or emb_cfg["base_url"], emb_cfg["model"], keep_alive=emb_cfg.get("keep_alive", "24h")),
         RankingWeights(**mem_cfg["retrieval"]["weights"], half_life_days=mem_cfg["retrieval"]["half_life_days"]),
     )

@@ -128,6 +128,7 @@ context:
   session_idle_timeout_s: 300
 
 memory:
+  backend: sqlite               # sqlite = data/memory.db (dauerhaft) | memory = nur im Arbeitsspeicher
   retrieval:
     top_k: 8
     candidate_pool: 50

@@ -85,7 +85,9 @@ class ContextBuilder:
         parts = ["<situation>", situation.render(), "</situation>"]
         selected = self._fit(memories, self.budgets.memories)
         if selected:
-            parts += ["<memories>", *(f"- {m}" for m in selected), "</memories>"]
+            # gemerkte Sätze des Nutzers: „ich“ darin meint den Nutzer, nicht JARVIS
+            parts += ["<memories note=\"vom Nutzer gemerkt; ich = der Nutzer\">", *(f"- {m}" for m in selected),
+                      "</memories>"]
         if summary:
             parts += ["<earlier_conversation_summary>", self._truncate(summary, self.budgets.summary),
                       "</earlier_conversation_summary>"]

@@ -402,6 +402,13 @@ def canonical_command(text: str) -> str:
 
 # Status und Tagesplan (Skills mit Capability) sowie Gesprächs-Intents ohne Aktion. Verglichen wird die ganze,
 # normalisierte Äußerung – „Status?“ ja, „Wie ist der Status der Waschmaschine?“ nein (geht an das LLM).
+# Gedächtnis: „Merk dir, dass ich Kaffee schwarz trinke“, „Was weißt du über mich?“, „Vergiss, dass …“
+REMEMBER = re.compile(r"^(?:bitte\s+)?(?:merk|merke|notier|notiere|speicher|speichere)\s+(?:dir|dir bitte)\s*[,:]?\s*"
+                      r"(?:bitte\s+)?(?:(?P<dass>dass)\s+|folgendes\s*:?\s*)?(?P<what>.+?)[.!]?$", re.I)
+MEMORY_LIST = re.compile(r"^(?:was weißt du (?:alles )?über mich|was hast du dir (?:alles )?(?:über mich )?gemerkt|"
+                         r"was hast du (?:alles )?gespeichert|was merkst du dir (?:alles )?|woran erinnerst du dich)$")
+FORGET = re.compile(r"^(?:bitte\s+)?vergiss\s*,?\s*(?:bitte\s+)?(?:dass|das mit|das mit dem|das mit der)\s+(?P<what>.+?)[.!]?$",
+                    re.I)
 STATUS = re.compile(r"^(?:status|systemstatus|status ?bericht|wie ist der status|diagnose|systemdiagnose|"
                     r"systemcheck|system check|alle systeme)$")
 DAY_PLAN = re.compile(r"^(?:(?:was ist (?:der|mein) )?(?:tages)?plan für (?P<a>morgen|heute)|tagesplan|"
@@ -450,6 +457,27 @@ class FastPathMatch:
     confidence: float
     grammar: str
     slots: dict[str, Any] = field(default_factory=dict)
+
+
+def main_clause(clause: str) -> str:
+    """„ich meinen Kaffee schwarz trinke“ -> „ich trinke meinen Kaffee schwarz“ (Nebensatz nach „dass“ umstellen).
+    Nur mit „ich“/„wir“ vorn – sonst bleibt der Satz, wie er gesagt wurde."""
+    words = clause.split()
+    if len(words) < 3 or not re.fullmatch(r"[a-zäöüß]+", words[-1]):
+        return clause
+    first = words[0].lower()
+    if first in ("ich", "wir", "er", "sie", "es", "man"):
+        subject = 1
+    elif first in ("mein", "meine", "meinen", "unser", "unsere", "der", "die", "das", "dein", "deine") or \
+            re.fullmatch(r"[A-ZÄÖÜ]\w*s", words[0]):
+        subject = 2  # „mein Auto …“, „Mamas Geburtstag …“
+    elif words[0][:1].isupper():
+        subject = 1  # „Max Vegetarier ist“
+    else:
+        return clause
+    if len(words) <= subject + 1:
+        return clause
+    return " ".join([*words[:subject], words[-1], *words[subject:-1]])
 
 
 def parse_number(token: str) -> int | None:
@@ -573,6 +601,16 @@ class FastPath:
             if not self.area_lights:  # kein Haus verbunden: ehrlich antworten statt raten
                 return FastPathMatch("home.set_light", {"on": on}, 0.9, "light_unavailable")
         simple = normalize_utterance(text)
+        raw = re.sub(r"\s+", " ", _PREFIX.sub("", text.strip())).strip()
+        if (m := REMEMBER.match(raw)) and len(m["what"].split()) >= 2:
+            what = m["what"].strip(" ,")
+            if m["dass"]:
+                what = main_clause(what)
+            return FastPathMatch("memory.remember", {"content": what[0].upper() + what[1:]}, 0.95, "remember")
+        if MEMORY_LIST.match(simple):
+            return FastPathMatch("memory.list", {"limit": 10}, 0.95, "memory_list")
+        if (m := FORGET.match(raw)) and len(m["what"].split()) >= 2:
+            return FastPathMatch("memory.forget", {"query": m["what"].strip(" ,")}, 0.95, "forget")
         if STATUS.match(simple):
             return FastPathMatch("system.status", {}, 0.97, "status")
         if m := DAY_PLAN.match(simple):

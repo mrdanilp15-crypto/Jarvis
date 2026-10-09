@@ -37,6 +37,31 @@ def register_memory_capabilities(registry: ToolRegistry, memory: MemoryService) 
         }},
         handler=remember,
     ))
+    async def list_all(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        items = await memory.everything(user_id=_user_id(ctx), limit=args.get("limit", 10))
+        return {"memories": [{"id": i.id, "content": i.content, "kind": i.kind,
+                              "created": i.created_at.date().isoformat()} for i in items]}
+
+    async def forget(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        item = await memory.forget_matching(args["query"], user_id=_user_id(ctx))
+        return {"forgotten": item.content if item else None}
+
+    registry.register(Capability(
+        name="memory.list", domain="memory", risk_class="R0",
+        description="Listet, was JARVIS sich über den Nutzer und den Haushalt gemerkt hat (neueste zuerst).",
+        input_schema={"type": "object", "additionalProperties": False, "properties": {
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        }},
+        handler=list_all,
+    ))
+    registry.register(Capability(
+        name="memory.forget", domain="memory", risk_class="R1", side_effects="irreversible",
+        description="Löscht den gemerkten Eintrag, der am besten zur Beschreibung passt („Vergiss, dass …“).",
+        input_schema={"type": "object", "additionalProperties": False, "required": ["query"], "properties": {
+            "query": {"type": "string", "minLength": 3, "maxLength": 500},
+        }},
+        handler=forget,
+    ))
     registry.register(Capability(
         name="memory.search", domain="memory", risk_class="R0",
         description="Durchsucht das Langzeitgedächtnis nach Fakten, Präferenzen und früheren Ereignissen.",
