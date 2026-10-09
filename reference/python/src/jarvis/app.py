@@ -29,7 +29,7 @@ from .capabilities import register_memory_capabilities
 from .connectors.homeassistant import state_changed_to_event
 from .context import ContextBuilder, Situation
 from .errors import CircuitBreaker, JarvisError
-from .events import InMemoryEventBus, RedisStreamEventBus
+from .events import InMemoryEventBus, RedisStreamEventBus, new_id
 from .fastpath import FastPath
 from .info import InfoConfig, register_info_capabilities
 from .llm.ollama import OllamaProvider
@@ -41,12 +41,13 @@ from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingW
 from .orchestrator import ConfirmationStore, Orchestrator
 from .pc import AgentHub, register_pc_capabilities, resolve_recipient
 from .smarthome import SmartHome
+from .patterns import PatternLearner, action_call, describe, run_routines
 from .sysmon import register_sysmon_capabilities
 from .voice.local import create_local_speech
 from .skills import register_assistant_capabilities
 from .timers import Alarm, AlarmScheduler, Notifier, register_timer_capabilities
 from .persona import Persona
-from .policy import PolicyEngine, Principal
+from .policy import PolicyContext, PolicyEngine, Principal
 from .tools import ToolRegistry
 from .websearch import WebSearch, register_web_capabilities
 
@@ -87,7 +88,14 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
     # deploy/.env (JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN, Adresse JARVIS_HA_URL) gilt weiterhin.
     ha_cfg = cfg.get("homeassistant") or {}
 
+    # Lernende Routinen: jede Zustandsänderung steuerbarer Geräte wird protokolliert (data/patterns.db)
+    learner = PatternLearner(data_dir / "patterns.db", tz=tz)
+
     async def forward(data: dict[str, Any]) -> None:
+        try:
+            learner.observe(data)
+        except Exception:
+            log.warning("Nutzung nicht protokolliert", exc_info=True)
         await bus.publish(state_changed_to_event(data))
 
     smarthome = SmartHome(path=data_dir / "home.json", registry=registry,
@@ -307,6 +315,36 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
     container.vision = VisionService(ollama_url or local_cfg["base_url"],
                                      on_missing_model=container.llm_settings.start_pull)
     background.append(warm_up_local_model())
+
+    # Gelernte Routinen ausführen und neue Gewohnheiten einmal ankündigen
+    routine_principal = Principal(actor="automation:routine", role="service", trust="household")
+    adults = {p.actor for p in tokens.values() if p.role in ("admin", "adult")}
+
+    async def run_routine(suggestion: Any) -> None:
+        capability, arguments = action_call(suggestion)
+        if orchestrator.registry.get(capability) is None or not smarthome.connected:
+            return
+        target = {"on": ("on", "heat", "auto", "heat_cool", "cool"), "off": ("off",), "open": ("open",),
+                  "close": ("closed",)}[suggestion.action]
+        if (smarthome.state(suggestion.entity_id) or {}).get("state") in target:
+            return  # schon im Zielzustand
+        record = await orchestrator.request_action(
+            capability=capability, arguments=arguments, principal=routine_principal, correlation_id=new_id("cor"),
+            session_id=None, via="automation", ctx=PolicyContext(now=datetime.now(tz)))
+        log.info("Routine %s: %s", describe(suggestion), record.status)
+
+    async def learn() -> None:
+        names = {d.entity_id: d.name for d in smarthome.index.devices} if smarthome.index else {}
+        learner.prune()
+        for suggestion in learner.analyse(names):
+            text = (f"Mir ist aufgefallen: Sie {describe(suggestion).replace(' (', ' – ').rstrip(')')}. "
+                    "Soll ich das übernehmen? Zahnrad → Smart Home → Gelernte Routinen.")
+            for actor in adults:
+                await notifier.send(actor, {"type": "notification", "kind": "suggestion", "id": suggestion.id,
+                                            "text": text})
+
+    container.learner = learner
+    background.append(run_routines(learner, run_routine, learn))
     return container, background
 
 

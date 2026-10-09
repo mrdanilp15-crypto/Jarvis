@@ -17,7 +17,7 @@
     homeNow: $("#home-now"), homeError: $("#home-error"), homeSetup: $("#home-setup"), homeFound: $("#home-found"),
     homeUrl: $("#home-url"), homeSearch: $("#home-search"), homeLogin: $("#home-login"), homeToken: $("#home-token"),
     homeTokenSave: $("#home-token-save"), homeConnected: $("#home-connected"), homeRooms: $("#home-rooms"),
-    homeRemove: $("#home-remove"),
+    homeRemove: $("#home-remove"), homeRoutines: $("#home-routines"), homeRoutinesEmpty: $("#home-routines-empty"),
     heard: $("#heard"), heardText: $("#heard-text"), heardLearn: $("#heard-learn"),
     wakeTrain: $("#wake-train"), wakeForget: $("#wake-forget"), wakeTrainStatus: $("#wake-train-status"),
     clockTime: $("#clock-time"), clockDate: $("#clock-date"), weatherChip: $("#weather-chip"),
@@ -2038,7 +2038,7 @@
       try { new Notification("JARVIS", { body: text, icon: "favicon.svg" }); } catch { /* ohne Desktop-Hinweis */ }
     }
   }
-  const NOTICE_LABELS = { timer: "Timer", reminder: "Erinnerung", event: "Termin" };
+  const NOTICE_LABELS = { timer: "Timer", reminder: "Erinnerung", event: "Termin", suggestion: "Vorschlag" };
 
   function onServerError(problem) {
     const text = problem.user_message || problem.detail || problem.title || "Unbekannter Fehler";
@@ -2349,6 +2349,7 @@
         return;
       }
       this.render();
+      this.loadRoutines();
       const d = this.data;
       const waiting = d.scanning || (d.configured && (!d.connected || !d.devices));
       if (els.settings.open && currentTab === "home") this.timer = setTimeout(() => this.load(), waiting ? 1500 : 10000);
@@ -2384,6 +2385,24 @@
         return li;
       }));
       setHomeChip(d.configured ? (d.connected ? "connected" : "disconnected") : d.found.length ? "found" : "off");
+    },
+    async loadRoutines() {
+      let list = [];
+      try { ({ suggestions: list } = await api("GET", "/v1/automations/suggestions")); } catch { return; }
+      els.homeRoutinesEmpty.hidden = list.length > 0;
+      els.homeRoutines.replaceChildren(...list.map((s) => {
+        const li = el("li", s.status === "accepted" ? "active" : "");
+        li.append(el("span", "name", s.status === "accepted" ? "Aktiv" : "Vorschlag"), el("span", "note", s.text));
+        const side = el("div", "side");
+        const decide = (accept) => this.run(async () => {
+          await api("POST", `/v1/automations/suggestions/${encodeURIComponent(s.id)}`, { accept });
+          await this.loadRoutines();
+        });
+        if (s.status === "accepted") side.append(button("Beenden", "btn small", () => decide(false)));
+        else side.append(button("Übernehmen", "btn primary small", () => decide(true)), button("Nein", "btn small", () => decide(false)));
+        li.append(side);
+        return li;
+      }));
     },
     fail(err) {
       els.homeError.textContent = err.message;

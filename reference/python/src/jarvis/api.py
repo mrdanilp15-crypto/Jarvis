@@ -59,6 +59,7 @@ class Container:
     smarthome: Any = None  # Home Assistant: finden, verbinden, Räume und Geräte (smarthome.SmartHome)
     speech: Any = None  # lokale Spracherkennung (voice.local.LocalSpeech) – None: nur Browser-Erkennung
     vision: Any = None  # Bildmodell (vision.VisionService) für „Was siehst du?“
+    learner: Any = None  # gelernte Routinen (patterns.PatternLearner)
 
     async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
                        location: str | None = None, on_status: OnStatus | None = None) -> TurnResult:
@@ -109,6 +110,10 @@ class ClaudeKeyIn(BaseModel):
 class VisionIn(BaseModel):
     image: str = Field(min_length=100, max_length=6_000_000, description="Kamerabild als Data-URL (JPEG/PNG)")
     question: str = Field(default="Was siehst du?", max_length=500)
+
+
+class RoutineDecisionIn(BaseModel):
+    accept: bool
 
 
 class HomeTokenIn(BaseModel):
@@ -291,6 +296,24 @@ def create_app(container: Container) -> FastAPI:
     async def delete_home(who: Principal = Depends(household_adult)) -> dict:
         smarthome().disconnect()
         return smarthome().status()
+
+    @app.get("/v1/automations/suggestions", tags=["Einstellungen"])
+    async def routine_suggestions(who: Principal = Depends(household_adult)) -> dict:
+        """Gelernte Gewohnheiten (Vorschläge und angenommene Routinen)."""
+        if container.learner is None:
+            return {"suggestions": []}
+        from .patterns import describe
+
+        return {"suggestions": [{**s.to_json(), "text": describe(s)} for s in container.learner.suggestions()
+                                if s.status != "rejected"]}
+
+    @app.post("/v1/automations/suggestions/{suggestion_id}", tags=["Einstellungen"])
+    async def decide_routine(suggestion_id: str, body: RoutineDecisionIn,
+                             who: Principal = Depends(household_adult)) -> dict:
+        found = container.learner.decide(suggestion_id, body.accept) if container.learner is not None else None
+        if found is None:
+            raise JarvisError("JRV-NFD-001", f"Vorschlag {suggestion_id} unbekannt")
+        return {"suggestion": found.to_json()}
 
     @app.post("/v1/vision", tags=["Sehen"])
     async def vision(body: VisionIn, who: Principal = Depends(principal)) -> dict:
