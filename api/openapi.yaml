@@ -409,6 +409,80 @@ paths:
       operationId: deleteClaudeKey
       responses:
         "200": { description: Entfernt }
+  /v1/vision:
+    post:
+      tags: [Sehen]
+      summary: Ein Kamerabild beschreiben (lokales Bildmodell, Bild wird nicht gespeichert)
+      description: Gäste ausgeschlossen. Fehlt das Bildmodell, lädt JARVIS es nach und meldet das.
+      operationId: describeImage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image: { type: string, description: "Data-URL (JPEG/PNG/WebP), höchstens 4 MB" }
+                question: { type: string, maxLength: 500, default: "Was siehst du?" }
+      responses:
+        "200":
+          description: Beschreibung
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text: { type: string }
+                  model: { type: string }
+        "403": { $ref: "#/components/responses/Problem" }
+  /v1/automations/suggestions:
+    get:
+      tags: [Einstellungen]
+      summary: Gelernte Gewohnheiten – Vorschläge und angenommene Routinen
+      operationId: listRoutineSuggestions
+      responses:
+        "200":
+          description: Liste
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        entity_id: { type: string }
+                        name: { type: string }
+                        action: { enum: ["on", "off", "open", "close"] }
+                        daytype: { enum: [weekday, weekend] }
+                        clock: { type: string, examples: ["6:45"] }
+                        days: { type: integer }
+                        of_days: { type: integer }
+                        status: { enum: [new, accepted, rejected] }
+                        text: { type: string }
+  /v1/automations/suggestions/{suggestion_id}:
+    post:
+      tags: [Einstellungen]
+      summary: Vorschlag übernehmen (accept=true) oder ablehnen bzw. Routine beenden (accept=false)
+      operationId: decideRoutineSuggestion
+      parameters:
+        - { name: suggestion_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accept]
+              properties:
+                accept: { type: boolean }
+      responses:
+        "200": { description: Entschieden }
+        "404": { $ref: "#/components/responses/Problem" }
   /v1/settings/home:
     get:
       tags: [Einstellungen]

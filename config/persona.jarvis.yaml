@@ -2,7 +2,7 @@
 # Validiert gegen schemas/persona.schema.json. Aktivieren über config/jarvis.example.yaml -> persona.active
 id: jarvis
 name: J.A.R.V.I.S.
-version: 2.7.0              # Stil-Engine 2 – Änderungen: CHANGELOG.md
+version: 2.8.0              # Stil-Engine 2 – Änderungen: CHANGELOG.md
 enabled: true
 language: de
 

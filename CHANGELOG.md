@@ -1,5 +1,47 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.8.0 – 2026-10-09
+
+Alle offenen Module der Roadmap – lokal zuerst: Gedächtnis, Spracherkennung, Stimme, Sehen, Systemmonitor, Börse,
+Online-Kalender, Radio auf Lautsprechern und lernende Routinen.
+
+### Neu
+- **Gedächtnis dauerhaft** (`SqliteMemoryStore`, `data/memory.db`):
+  - Übersteht Neustarts. Konflikte und Duplikate werden wie bisher aufgelöst.
+  - Ohne Embedding-Modell oder nach einem Modellwechsel sucht JARVIS über Wörter.
+  - Sofortbefehle: „Merk dir, dass …“ (der Nebensatz wird zum Hauptsatz), „Was weißt du über mich?“, „Vergiss, dass …“.
+- **Systemmonitor** (`system.monitor`):
+  - Prozessor, Arbeitsspeicher, Laufwerke, Netz, Temperaturen, Grafikkarte und Akku – vom PC-Agenten (WMI,
+    nvidia-smi) oder per psutil.
+  - Antwortet passend zur Frage und zeigt eine Karte mit Balken.
+- **Sichere Systemaktionen** (`pc.system_action`, feste Freigabeliste statt freier Befehle):
+  - sperren, Energiesparen, Papierkorb, temporäre Dateien, Updates, Task-Manager;
+  - Neustart und Herunterfahren nur nach Bestätigung in der App, mit einer Minute Vorlauf zum Abbrechen.
+- **Lokale Spracherkennung** (`voice/local.py`, `WS /v1/audio`):
+  - Whisper (faster-whisper) mit Wörterbuch aus Name, Räumen und Geräten. „Jarvis“ wird unscharf erkannt,
+    optional schon „Hey Jarvis“ per openWakeWord.
+  - Das Mikrofon sendet nur, solange JARVIS zuhört oder auf „Jarvis“ wartet. Kein Audio verlässt den Rechner.
+  - Standard, sobald installiert (Windows-Installer); umschaltbar unter Zahnrad → Stimme & Hören.
+- **Lokale Piper-Stimme ohne Docker:** im JARVIS-Prozess, die Stimme lädt beim ersten Start.
+- **Sehen** („Was siehst du?“, „Was halte ich in der Hand?“, „Lies mir das Etikett vor“):
+  - ein Einzelbild der Kamera, danach geht sie sofort aus;
+  - lokales Bildmodell (`qwen2.5vl:3b`, lädt sich selbst nach);
+  - keine Gesichtserkennung, Bilder werden nicht gespeichert, Gäste ausgeschlossen.
+- **Börse** (`info.stock`): Aktien, Indizes, Bitcoin, Gold und Devisen (Tagesschluss, ohne Schlüssel) – „Wie steht
+  Apple?“.
+- **Online-Kalender** über CalDAV (Nextcloud, iCloud, mailbox.org …):
+  - eintragen, löschen und lesen; eigene Termine erscheinen nicht doppelt;
+  - ohne Verbindung bleibt der Termin lokal, und JARVIS sagt es.
+- **Radio und Medien auf Lautsprechern** über Home Assistant (Chromecast, Sonos, DLNA): `home.play_media`,
+  `home.play_radio` (radio-browser.info) – „Spiel Radio Bob im Wohnzimmer“.
+- **Lernende Routinen** (`patterns.py`):
+  - JARVIS erkennt wiederkehrende Schaltungen (mindestens fünf Tage in drei Wochen, ±20 Minuten) und kündigt sie
+    einmal an.
+  - Erst nach Zustimmung im Reiter Smart Home werden sie zur Routine. Die Uhrzeit folgt danach gleitend den
+    Gewohnheiten.
+  - Ausgeführt wird über die Policy; ist das Gerät schon im gewünschten Zustand, passiert nichts.
+- README: Übersicht der Module mit Hardware- und Software-Voraussetzungen.
+
 ## Jarvis-Modul 2.7.0 – 2026-10-09
 
 Smart Home ohne Handarbeit und JARVIS als normales Windows-Programm – ohne Docker.

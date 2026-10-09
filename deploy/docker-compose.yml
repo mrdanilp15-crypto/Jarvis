@@ -21,6 +21,9 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN: ${JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN:-}
       JARVIS_HA_URL: ${JARVIS_HA_URL:-}                 # optional; sonst Zahnrad → Smart Home (Suche + Anmeldung)
+      JARVIS_CALDAV_URL: ${JARVIS_CALDAV_URL:-}         # optional: Online-Kalender (Nextcloud, iCloud …)
+      JARVIS_CALDAV_USER: ${JARVIS_CALDAV_USER:-}
+      JARVIS_CALDAV_PASSWORD: ${JARVIS_CALDAV_PASSWORD:-}
       JARVIS_SECRET_KV_JARVIS_MQTT_PASSWORD: ${JARVIS_SECRET_KV_JARVIS_MQTT_PASSWORD:-}
       JARVIS_DEV_TOKENS: ${JARVIS_DEV_TOKENS:-{}}
       JARVIS_LLM_MODEL: ${JARVIS_LLM_MODEL:-}           # leer = Modell aus der Konfiguration
