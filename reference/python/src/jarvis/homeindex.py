@@ -205,6 +205,13 @@ CLIMATE_SET = re.compile(rf"^(?:(?:stell|stelle|mach|mache|dreh|drehe|setz|setze
                          rf"\s*(?:grad|°c?)?$")
 CLIMATE_ON_OFF = re.compile(rf"^(?:{_SWITCH_VERB}\s+)?(?:die\s+)?(?:heizung|klimaanlage)(?:\s+(?P<prep>{_PREP})\s+"
                             rf"(?P<area>.+?))?\s+(?P<state>an|aus|ein|ab)$")
+_TARGET = rf"(?:\s+(?:(?P<prep>{_PREP})|auf (?:dem|der|den))\s+(?P<where>.+?))?"
+RADIO = [
+    re.compile(rf"^(?:spiel|spiele|mach|mache|starte|start)\s+(?:das\s+)?radio\s+(?P<station>.+?){_TARGET}"
+               rf"(?:\s+(?:an|ab))?$"),
+    re.compile(rf"^(?:spiel|spiele)\s+(?:den\s+)?sender\s+(?P<station>.+?){_TARGET}$"),
+    re.compile(rf"^radio\s+(?P<station>.+?)\s+(?P<prep>{_PREP})\s+(?P<where>.+)$"),
+]
 SCENE = [
     re.compile(r"^(?:aktiviere|aktivier|starte|start|spiel|spiele|mach|mache)\s+(?:die\s+)?szene\s+(?P<name>.+)$"),
     re.compile(r"^szene\s+(?P<name>.+?)(?:\s+(?:an|starten|aktivieren))?$"),
@@ -346,6 +353,26 @@ def match_home(text: str, index: HomeIndex | None, default_area: str | None = No
             mode = "off" if m["state"] in ("aus", "ab") else "heat"
             return HomeMatch("home.set_climate", {"entity_id": pool[0].entity_id, "hvac_mode": mode}, "climate_mode",
                              {"location": location})
+    # -- Radio auf Lautsprecher (Chromecast, Sonos, DLNA über Home Assistant) -----------------------------------
+    for pattern in RADIO:
+        if (m := pattern.match(t)) and m["station"] not in ("an", "aus", "ab"):
+            if not connected:
+                return HomeMatch("home.play_radio", {}, "home_unavailable")
+            players, location = [], ""
+            if where := (m.groupdict().get("where") or "").strip():
+                if area := index.area_of(where):
+                    players, location = index.in_area(area, "media_player"), _location(m["prep"] or "auf", area, index)
+                else:
+                    players = index.named(where, "media_player")
+                    location = f"auf {players[0].name}" if players else ""
+            elif default_area:
+                players = index.in_area(default_area, "media_player")
+            if not players and not where and len(index.of("media_player")) == 1:
+                players = index.of("media_player")
+            if not players:
+                return None  # kein eindeutiger Lautsprecher: das Sprachmodell fragt nach
+            return HomeMatch("home.play_radio", {"station": m["station"].strip(), "entity_id": players[0].entity_id},
+                             "radio", {"location": location or f"auf {players[0].name}"})
     # -- Szenen ------------------------------------------------------------------------------------------------------
     for pattern in SCENE:
         if m := pattern.match(t):

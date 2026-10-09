@@ -123,6 +123,10 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         web = WebSearch(searxng_url=os.environ.get("JARVIS_SEARXNG_URL") or web_cfg.get("searxng_url") or None,
                         region=web_cfg.get("region", "de-de"))
         register_web_capabilities(registry, web)
+    if info_cfg.get("enabled", True):
+        from .stocks import register_stock_capabilities
+
+        register_stock_capabilities(registry)  # Börsenkurse (Stooq, ohne Schlüssel)
 
     assistant_cfg = cfg.get("assistant") or {}
     contacts = {**(assistant_cfg.get("contacts") or {}), **_named(os.environ.get("JARVIS_CONTACTS"), "@")}
@@ -245,9 +249,19 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
     register_timer_capabilities(registry, scheduler, tz)
     background.append(scheduler.run())
     cal_cfg = assistant_cfg.get("calendar") or {}
+    remote_calendar = None
+    if os.environ.get("JARVIS_CALDAV_URL") and os.environ.get("JARVIS_CALDAV_USER"):
+        from .caldav import CalDav
+
+        try:  # Nextcloud, iCloud, mailbox.org …: Termine dort eintragen und lesen (App-Passwort)
+            remote_calendar = CalDav(os.environ["JARVIS_CALDAV_URL"], os.environ["JARVIS_CALDAV_USER"],
+                                     os.environ.get("JARVIS_CALDAV_PASSWORD", ""), tz=tz,
+                                     name=os.environ.get("JARVIS_CALDAV_NAME") or "Online-Kalender")
+        except ValueError as exc:
+            log.warning("CalDAV nicht aktiviert: %s", exc)
     calendar = CalendarService(tz=tz, path=data_dir / "calendar.json", scheduler=scheduler,
                                ics={**(cal_cfg.get("ics") or {}), **_named(os.environ.get("JARVIS_CALENDAR_ICS"), "://")},
-                               remind_minutes=int(cal_cfg.get("remind_minutes", 15)))
+                               remind_minutes=int(cal_cfg.get("remind_minutes", 15)), remote=remote_calendar)
     register_calendar_capabilities(registry, calendar)
     mail_host = os.environ.get("JARVIS_MAIL_IMAP_HOST") or (assistant_cfg.get("mail") or {}).get("imap_host")
     if mail_host and os.environ.get("JARVIS_MAIL_USER") and os.environ.get("JARVIS_MAIL_PASSWORD"):

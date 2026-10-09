@@ -409,6 +409,14 @@ MEMORY_LIST = re.compile(r"^(?:was weißt du (?:alles )?über mich|was hast du d
                          r"was hast du (?:alles )?gespeichert|was merkst du dir (?:alles )?|woran erinnerst du dich)$")
 FORGET = re.compile(r"^(?:bitte\s+)?vergiss\s*,?\s*(?:bitte\s+)?(?:dass|das mit|das mit dem|das mit der)\s+(?P<what>.+?)[.!]?$",
                     re.I)
+# Börse: „Wie steht Apple?“, „Wie steht der DAX?“, „Was kostet Bitcoin?“, „Aktienkurs von SAP“
+STOCK = [
+    re.compile(r"^wie steht (?:es um )?(?:die |der |das )?(?:aktie (?:von |der )?)?(?P<name>.+?)(?:[- ]aktie| heute| gerade|"
+               r" an der börse)?$"),
+    re.compile(r"^(?:wie ist |was ist |zeig mir )?(?:der |den )?(?:aktien)?kurs (?:von |der |vom |des )?(?P<name>.+)$"),
+    re.compile(r"^was macht (?:die |der )?(?P<name>.+?)[- ]aktie$"),
+    re.compile(r"^was (?:kostet|ist) (?:ein |eine )?(?P<name>bitcoin|ethereum|gold|silber)(?: gerade| heute| wert)?$"),
+]
 # Systemmonitor und feste Systemaktionen (normalisierte Äußerung)
 SYSMON = [
     ("cpu", re.compile(r"^(?:wie (?:hoch|stark|sehr) ist (?:die |der )?(?:cpu|prozessor)(?:[- ]?auslastung| ausgelastet)?|"
@@ -641,6 +649,13 @@ class FastPath:
             return FastPathMatch("memory.list", {"limit": 10}, 0.95, "memory_list")
         if (m := FORGET.match(raw)) and len(m["what"].split()) >= 2:
             return FastPathMatch("memory.forget", {"query": m["what"].strip(" ,")}, 0.95, "forget")
+        for pattern in STOCK:
+            if m := pattern.match(simple):
+                from .stocks import SYMBOLS
+
+                name = re.sub(r"[- ]?aktie$", "", m["name"]).strip()
+                if name in SYMBOLS or "aktie" in simple:  # sonst wäre „Wie steht der Timer?“ eine Aktie
+                    return FastPathMatch("info.stock", {"name": name}, 0.93, "stock", {"name": name})
         for focus, pattern in SYSMON:
             if pattern.match(simple):
                 return FastPathMatch("system.monitor", {"focus": focus}, 0.95, "sysmon", {"focus": focus})

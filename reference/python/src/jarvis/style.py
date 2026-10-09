@@ -234,6 +234,22 @@ def sysmon_text(data: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def stock_text(data: dict[str, Any]) -> str:
+    unit = {"USD": "Dollar", "EUR": "Euro", "Punkte": "Punkte"}.get(data.get("currency", ""), data.get("currency", ""))
+    price = f"{data['close']:,.2f}".replace(",", " ").replace(".", ",").replace(" ", ".")
+    change = data.get("change_pct", 0.0)
+    trend = "unverändert" if abs(change) < 0.05 else \
+        f"{format_number(abs(round(change, 1)))} Prozent {'höher' if change > 0 else 'tiefer'} als am Vortag"
+    try:
+        day = datetime.fromisoformat(data["date"])
+        when = f"am {day.day}. {MONTHS[day.month - 1]}"
+    except (KeyError, ValueError):
+        when = ""
+    low, high = (f"{data[k]:,.2f}".replace(",", " ").replace(".", ",").replace(" ", ".") for k in ("low_4w", "high_4w"))
+    return (f"{data['name']} schloss {when} bei {price} {unit} – {trend}. "
+            f"Spanne der letzten vier Wochen: {low} bis {high}.").replace("  ", " ")
+
+
 SYSTEM_ACTION_REPLIES = {
     "lock_screen": "Der Bildschirm ist gesperrt.", "sleep": "Der PC geht in den Energiesparmodus.",
     "open_task_manager": "Der Task-Manager ist geöffnet.", "check_updates": "Die Suche nach Windows-Updates ist geöffnet.",
@@ -637,6 +653,10 @@ class JarvisStyle(PlainStyle):
         if capability == "home.set_climate" and args.get("hvac_mode"):
             state = "ausgeschaltet" if args["hvac_mode"] == "off" else "eingeschaltet"
             return very_well, f"Die Heizung{where} ist {state}."
+        if capability in ("home.play_radio", "home.play_media"):
+            station = (result or {}).get("station") if isinstance(result, dict) else None
+            what = verbatim(station) if station else "Die Wiedergabe"
+            return very_well, f"{what} läuft{where}."
         if capability == "home.activate_scene":
             return very_well, f"Die Szene „{name}“ ist aktiviert." if name else "Die Szene ist aktiviert."
         if capability == "timer.start":
@@ -679,10 +699,14 @@ class JarvisStyle(PlainStyle):
             moment = _parse_moment(f"{event.get('date')}T{event.get('time') or '00:00'}")
             when = spoken_when(moment, _reference(result), all_day=not event.get("time")) if moment else ""
             text = f"Eingetragen: {verbatim(event.get('title') or args.get('title'))} {when}"
+            synced = (result or {}).get("synced") if isinstance(result, dict) else None
+            note = " Im Online-Kalender konnte ich ihn nicht eintragen – er steht vorerst nur bei mir." \
+                if synced is False else ""
             if not event.get("time"):
-                return very_well, f"{text}, ganztägig."
+                return very_well, f"{text}, ganztägig.{note}"
             minutes = (result or {}).get("reminder_minutes")
-            return very_well, f"{text}. Ich erinnere Sie {minutes} Minuten vorher." if minutes else f"{text}."
+            text = f"{text}. Ich erinnere Sie {minutes} Minuten vorher." if minutes else f"{text}."
+            return very_well, text + note
         if capability == "calendar.list":
             return "", calendar_text(args, result)
         if capability == "calendar.delete":
@@ -767,6 +791,8 @@ class JarvisStyle(PlainStyle):
             if items:
                 text += f" Der neueste Treffer: „{items[0].get('name')}“ in {folder_label(items[0].get('folder'))}."
             return very_well, text
+        if capability == "info.stock" and isinstance(result, dict):
+            return "", stock_text(result)
         if capability == "system.monitor":
             return "", sysmon_text(result if isinstance(result, dict) else {})
         if capability == "pc.system_action":

@@ -214,8 +214,9 @@ def expand(events: list[dict[str, Any]], window_start: datetime, window_end: dat
 class CalendarService:
     def __init__(self, *, tz: tzinfo, path: Path | None = None, ics: dict[str, str] | None = None,
                  scheduler: AlarmScheduler | None = None, remind_minutes: int = 15, client: Any = None,
-                 cache_s: float = 600.0, clock: Callable[[], datetime] | None = None) -> None:
+                 cache_s: float = 600.0, clock: Callable[[], datetime] | None = None, remote: Any = None) -> None:
         self.tz = tz
+        self.remote = remote  # CalDAV (caldav.CalDav): Nextcloud/iCloud … – Termine dort eintragen und lesen
         self.path = path
         self.ics = {name: url for name, url in (ics or {}).items() if url}
         self.scheduler = scheduler
@@ -233,6 +234,14 @@ class CalendarService:
                 found += expand(await self._fetch(url), start, end, name)
             except JarvisError as exc:
                 log.warning("Kalender nicht erreichbar", extra={"calendar": name, "error": exc.detail})
+        if self.remote is not None:
+            try:
+                raw = await self.remote.between(start, end)
+                local = {e.id for e in self.events}  # von JARVIS eingetragene Termine stehen schon lokal
+                raw = [r for r in raw if str(r.get("uid", "")).removesuffix("@jarvis") not in local]
+                found += expand(raw, start, end, self.remote.name)
+            except JarvisError as exc:
+                log.warning("Online-Kalender nicht erreichbar", extra={"error": exc.detail})
         return sorted(found, key=lambda e: (not e.all_day, e.start, e.title))
 
     async def day(self, day: date) -> list[Event]:
@@ -341,12 +350,27 @@ def register_calendar_capabilities(registry: ToolRegistry, calendar: CalendarSer
         end = datetime.fromisoformat(args["end"]).replace(tzinfo=tz) if args.get("end") else None
         event = calendar.add(args["title"], start, end=end, all_day=all_day, location=args.get("location", ""),
                              actor=ctx.actor, remind_minutes=args.get("remind_minutes"))
-        return {"event": describe(event, tz), "now": calendar.clock().astimezone(tz).isoformat(timespec="minutes"),
+        synced = None
+        if calendar.remote is not None:  # zusätzlich in Nextcloud/iCloud …, lokal bleibt er für die Erinnerung
+            try:
+                await calendar.remote.put(event)
+                synced = True
+            except JarvisError as exc:
+                log.warning("Termin nicht im Online-Kalender eingetragen", extra={"error": exc.detail})
+                synced = False
+        return {"event": describe(event, tz), "synced": synced,
+                "now": calendar.clock().astimezone(tz).isoformat(timespec="minutes"),
                 "reminder_minutes": None if all_day else
                 (calendar.remind_minutes if args.get("remind_minutes") is None else args["remind_minutes"])}
 
     async def delete(args: dict[str, Any], ctx: InvocationContext) -> Any:
         gone = calendar.delete(args["title"], date.fromisoformat(args["date"]) if args.get("date") else None)
+        if calendar.remote is not None:
+            for event in gone:
+                try:
+                    await calendar.remote.delete(event)
+                except JarvisError as exc:
+                    log.warning("Termin im Online-Kalender nicht gelöscht", extra={"error": exc.detail})
         return {"deleted": [describe(e, tz) for e in gone]}
 
     registry.register(Capability(

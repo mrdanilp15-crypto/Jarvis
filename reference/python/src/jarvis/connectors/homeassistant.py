@@ -349,6 +349,45 @@ def register_home_capabilities(registry: ToolRegistry, ha: HomeApi) -> None:
         handler=media_control,
     ))
 
+    # -- Medien auf Lautsprecher/Fernseher (Chromecast, Sonos, DLNA … sind Home-Assistant-Integrationen) --------
+    async def play_media(args: dict[str, Any], _: InvocationContext) -> Any:
+        snapshot([args["entity_id"]])
+        if "volume" in args:
+            await ha.call_service("media_player", "volume_set", target={"entity_id": args["entity_id"]},
+                                  data={"volume_level": args["volume"]})
+        await ha.call_service("media_player", "play_media", target={"entity_id": args["entity_id"]},
+                              data={"media_content_id": args["url"], "media_content_type": args.get("type", "music")})
+        return {"entity_id": args["entity_id"], "url": args["url"]}
+
+    registry.register(Capability(
+        name="home.play_media", domain="home", risk_class="R1", side_effects="reversible",
+        description="Spielt eine Medienadresse (Radio-Stream, MP3, Video-URL) auf einem Mediaplayer ab "
+                    "(Chromecast, Sonos, DLNA-Fernseher …); optional Lautstärke 0.0–1.0.",
+        input_schema=_obj({"entity_id": _entity("media_player"),
+                           "url": {"type": "string", "pattern": "^https?://", "maxLength": 2000},
+                           "type": {"enum": ["music", "video", "url", "audio/mpeg"]},
+                           "volume": {"type": "number", "minimum": 0, "maximum": 1}}, ["entity_id", "url"]),
+        handler=play_media,
+    ))
+
+    async def play_radio(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        from ..radio import find_station
+
+        station = await find_station(args["station"])
+        result = await play_media({"entity_id": args["entity_id"], "url": station["url"], "type": "music",
+                                   **({"volume": args["volume"]} if "volume" in args else {})}, ctx)
+        return {**result, "station": station["name"]}
+
+    registry.register(Capability(
+        name="home.play_radio", domain="home", risk_class="R1", side_effects="reversible",
+        description="Sucht einen Radiosender (Name, z. B. „Radio Bob“, „1Live“, „Deutschlandfunk“) und spielt ihn auf "
+                    "einem Mediaplayer ab.",
+        input_schema=_obj({"entity_id": _entity("media_player"),
+                           "station": {"type": "string", "minLength": 2, "maxLength": 80},
+                           "volume": {"type": "number", "minimum": 0, "maximum": 1}}, ["entity_id", "station"]),
+        handler=play_radio, timeout_s=20.0,
+    ))
+
     # -- Heizung/Klima (R2) --------------------------------------------------
     async def set_climate(args: dict[str, Any], _: InvocationContext) -> Any:
         if "temperature" not in args and "hvac_mode" not in args:
