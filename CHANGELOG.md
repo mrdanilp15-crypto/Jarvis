@@ -3,6 +3,9 @@
 ## Jarvis-Modul 2.9.1 – 2026-10-09
 
 ### Behoben
+- **Dateisuche:** „Such im Explorer ein Bild namens Heizung“ sucht jetzt nach „Heizung“ statt nach „ein Bild namens
+  Heizung“. Ebenso „ein Foto, das Urlaub heißt“ und „mein Foto mit dem Namen Urlaub“. Ein nachgeschobenes
+  „suche Heizung“ sucht nach „Heizung“ statt nach „suche Heizung“.
 - **Windows-Programm startete nicht** („No time zone found with key Europe/Berlin“): Python bringt unter Windows
   keine Zeitzonen-Datenbank mit. Das Paket `tzdata` wird jetzt mitinstalliert.
 - **Geöffnete Fenster landen vorne** (PC-Agent 2.9.1):

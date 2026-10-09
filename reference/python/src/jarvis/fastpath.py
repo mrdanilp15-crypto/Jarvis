@@ -55,12 +55,31 @@ PC_OPEN = re.compile(r"^(?P<verb>öffne|starte|start|ruf|rufe|mach|zeig|zeige|sp
                      r"(?P<auf>\s+auf)?$", re.I)
 _ON_PC = r"(?:auf (?:dem|meinem) (?:pc|computer|rechner|laptop)|am (?:pc|computer|rechner)|in (?:meinen|den) " \
          r"(?:dateien|ordnern)|auf der festplatte|im (?:datei[- ]?|detail[- ]?|windows[- ]?)?explorer|im dateimanager)"
+# „ein Bild namens Heizung“, „die Datei mit dem Namen Steuer“, „ein Foto, das Urlaub heißt“ -> nur der Name
+_FILE_NOUNS = r"(?:datei|dateien|ordner|dokument|dokumente|bild|bilder|foto|fotos|video|videos|pdf|präsentation|tabelle|" \
+              r"lied|song|musik)"
+_FILE_DESCRIBED = re.compile(r"^(?:nach\s+)?(?:(?:einem|einer|einen|eine|ein|der|die|das|den|dem|meine|meinen|meiner|"
+                             rf"mein|meinem)\s+)?{_FILE_NOUNS}\s+(?:namens\s+|mit (?:dem )?namen\s+|genannt\s+|"
+                             r"(?:das|die|der)\s+(?=.+\s(?:heißt|heisst)$))?(?P<name>.+?)(?:\s+(?:heißt|heisst))?$", re.I)
+
+
+def file_query(query: str) -> str:
+    """Suchbegriff für Dateien ohne Beschreibung drumherum: „ein Bild namens Heizung“ -> „Heizung“."""
+    query = query.strip(" ,.")
+    if (m := _FILE_DESCRIBED.match(query)) and m["name"].strip():
+        return m["name"].strip(" ,.")
+    return query
+
+
 PC_SEARCH_FILES = [
     re.compile(rf"^(?:such|suche|finde|find)\s+{_ON_PC}\s+(?:nach\s+)?(?P<query>.+)$", re.I),
     re.compile(rf"^(?:such|suche|finde|find)\s+(?:nach\s+)?(?:der|die|meine|meiner|meinen|eine|einer|den|dem|das)?\s*"
                rf"(?:datei|dateien|ordner|dokument|dokumente)\s+(?:namens\s+|mit dem namen\s+)?(?P<query>.+?)"
                rf"(?:\s+{_ON_PC})?$", re.I),
     re.compile(rf"^(?:such|suche|finde|find)\s+(?:nach\s+)?(?P<query>.+?)\s+{_ON_PC}$", re.I),
+    # „Such ein Bild namens Heizung“, „Finde mein Foto mit dem Namen Urlaub“ – ausdrücklich ein Name: eigene Dateien
+    re.compile(rf"^(?:such|suche|finde|find)\s+(?P<query>(?:nach\s+)?(?:\S+\s+)?{_FILE_NOUNS}\s+"
+               r"(?:namens|mit (?:dem )?namen|genannt)\s+.+)$", re.I),
 ]
 # Dienste für „… auf Spotify“, „bei Amazon“: gesprochene Form -> Kennung (Such-Adressen: pc.SEARCH_SITES).
 # Nur bekannte Dienste – „Urlaub auf Mallorca“ bleibt ein Suchbegriff.
@@ -724,7 +743,7 @@ class FastPath:
             return _open_site(m["query"])
         for pattern in PC_SEARCH_FILES:
             if m := pattern.match(text):
-                query = m["query"].strip()
+                query = file_query(m["query"])
                 return FastPathMatch("pc.search_files", {"query": query}, 0.92, "pc_search_files", {"query": query})
         for pattern in PC_FIND_FILES:
             if m := pattern.match(text):
@@ -909,6 +928,7 @@ def correction_term(text: str, *, explicit: bool = False) -> tuple[str, str | No
     if not term:
         return None
     term, _ = clean_query(term)
+    term = re.sub(r"^(?:such|suche|finde|find)(?:\s+nach)?\s+", "", term, flags=re.I)  # „suche Heizung“ -> „Heizung“
     site = None
     if s := re.match(rf"^(?P<q>.+?)\s+{_AT}\s+(?P<site>{_SERVICE})$", term, re.I):
         term, site = s["q"], SEARCH_SERVICES[re.sub(r"\s+", " ", s["site"].lower())]

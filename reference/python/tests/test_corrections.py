@@ -55,6 +55,7 @@ def test_query_cleanup():
     ("Es schreibt sich Arteriion", ("Arteriion", None)),
     ("Ich meinte Arteriion auf YouTube", ("Arteriion", "youtube")),
     ("Arteriion Live", ("Arteriion Live", None)),
+    ("suche Heizung", ("Heizung", None)),  # Suchwort gehört nicht in den Begriff
     ("Gab es.", None), ("Gut", None), ("Danke", None), ("Was macht er so?", None),
     ("Peppe, was macht er so?", None), ("Die Ärzte", None),  # Artikel: nur mit „ich meinte …“
 ])
