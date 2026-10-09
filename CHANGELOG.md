@@ -1,5 +1,16 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.9.1 – 2026-10-09
+
+### Behoben
+- **Geöffnete Fenster landen vorne** (PC-Agent 2.9.1):
+  - Bisher öffneten sich Ordner, Programme, Dateien und Webseiten oft hinter anderen Fenstern oder nur in der
+    Taskleiste. Besonders betroffen: ein zweiter Ordner bei schon offenem Explorer. Ursache war die Fokus-Sperre
+    von Windows für Hintergrundprozesse.
+  - Der Agent hebt die Sperre jetzt auf und holt das Fenster nach vorne; ein minimiertes Fenster wird
+    wiederhergestellt.
+  - Ist ein Ordner schon offen, holt er dieses Fenster nach vorne, statt ein weiteres zu öffnen.
+
 ## Jarvis-Modul 2.9.0 – 2026-10-09
 
 ### Neu

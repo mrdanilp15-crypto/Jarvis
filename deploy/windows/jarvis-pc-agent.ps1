@@ -16,7 +16,7 @@ $jarvisHome = Join-Path $env:LOCALAPPDATA 'JARVIS'
 $logFile = Join-Path $jarvisHome 'pc-agent.log'
 $config = Get-Content -Raw -Encoding UTF8 (Join-Path $jarvisHome 'config.json') | ConvertFrom-Json
 
-$agentVersion = '2.8.0'
+$agentVersion = '2.9.1'
 $mutex = New-Object System.Threading.Mutex($false, 'Local\JarvisPcAgent')
 try { $owned = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }   # Vorgänger beendet
 if (-not $owned) { exit 0 }   # läuft bereits
@@ -257,14 +257,16 @@ function Open-FoundItem($item, [bool]$show) {
     $program = (-not $isFolder) -and ($noLaunch -contains [IO.Path]::GetExtension($path).ToLower())
     if ($show -or $program) {
         # Programme, Skripte und Verknüpfungen nie starten – nur im Explorer zeigen
+        [JarvisNative]::Unlock()
         Start-Process explorer.exe -ArgumentList ('/select,"' + $path + '"') -ErrorAction Stop
         $result.shown = $true
         $result.blocked = [bool]$program -and -not $show
         return $result
     }
     if ($isFolder) {
-        Start-Process explorer.exe -ArgumentList ('"' + $path + '"') -ErrorAction Stop
+        Open-Folder $path
     } else {
+        [JarvisNative]::Unlock()
         Invoke-Item -LiteralPath $path -ErrorAction Stop   # Standardprogramm (PDF-Anzeige, Word, Fotos …)
     }
     return $result
@@ -299,6 +301,28 @@ public static class JarvisNative {
         mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
     }
     public static string Title(IntPtr hWnd) { var text = new StringBuilder(512); GetWindowText(hWnd, text, 512); return text.ToString(); }
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int processId);
+    // Windows lässt Fenster aus einem unsichtbaren Hintergrundprozess nicht nach vorne („Fokus-Sperre“). Eine eigene
+    // Eingabe (Maus um 0 Pixel bewegen) hebt die Sperre auf – so landet das geöffnete Fenster vorne statt dahinter.
+    public static void Unlock() {
+        mouse_event(0x0001, 0, 0, 0, UIntPtr.Zero);
+        AllowSetForegroundWindow(-1);
+    }
+    public static bool Focus(IntPtr hWnd) {
+        if (hWnd == IntPtr.Zero) return false;
+        Unlock();
+        if (IsIconic(hWnd)) ShowWindow(hWnd, 9);   // minimiert -> wiederherstellen
+        BringWindowToTop(hWnd);
+        if (SetForegroundWindow(hWnd)) return true;
+        // Notlösung: Alt zweimal tippen (zweimal, damit kein Menü des aktiven Fensters offen bleibt)
+        for (int i = 0; i < 2; i++) { keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero); }
+        return SetForegroundWindow(hWnd);
+    }
 }
 '@
 
@@ -326,6 +350,61 @@ function Get-Foreground {
     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
     return [pscustomobject]@{ Handle = $hwnd; Title = [JarvisNative]::Title($hwnd)
                               Process = $(if ($process) { $process.ProcessName.ToLower() } else { '' }) }
+}
+
+function Get-ExplorerWindows {
+    $shell = New-Object -ComObject Shell.Application
+    return @($shell.Windows() | Where-Object { $_.FullName -like '*explorer.exe' } | ForEach-Object {
+        $path = ''
+        try { $path = [string]$_.Document.Folder.Self.Path } catch { }
+        [pscustomobject]@{ Handle = [IntPtr][long]$_.HWND; Path = $path }
+    })
+}
+
+function Open-Folder([string]$path) {
+    # Ordner im Explorer öffnen und nach vorne holen – auch wenn schon Explorer-Fenster offen sind
+    $wanted = $path.TrimEnd('\')
+    $open = @(Get-ExplorerWindows | Where-Object { $_.Path.TrimEnd('\') -eq $wanted })
+    if ($open.Count -gt 0) {   # schon offen: nur nach vorne holen
+        [void][JarvisNative]::Focus($open[0].Handle)
+        return
+    }
+    [JarvisNative]::Unlock()
+    Start-Process explorer.exe -ArgumentList ('"' + $path + '"') -ErrorAction Stop
+    for ($i = 0; $i -lt 30; $i++) {   # höchstens 3 s auf das neue Fenster warten
+        Start-Sleep -Milliseconds 100
+        $window = @(Get-ExplorerWindows | Where-Object { $_.Path.TrimEnd('\') -eq $wanted } | Select-Object -First 1)
+        if ($window.Count -gt 0) {
+            [void][JarvisNative]::Focus($window[0].Handle)
+            return
+        }
+    }
+}
+
+function Show-Started([datetime]$since, [string[]]$names) {
+    # Nach dem Start eines Programms dessen Fenster nach vorne holen: neu gestartet oder – bei Programmen, die nur
+    # einmal laufen (Spotify, Discord …) – das schon offene Fenster mit passendem Namen
+    for ($i = 0; $i -lt 25; $i++) {   # höchstens 2,5 s
+        Start-Sleep -Milliseconds 100
+        $candidates = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.MainWindowHandle -ne 0 -and $_.Id -ne $PID -and $noClose -notcontains $_.ProcessName.ToLower() -and
+                $_.MainWindowTitle -notmatch 'J\.A\.R\.V\.I\.S' -and
+                ((($names -contains $_.ProcessName.ToLower())) -or ($(try { $_.StartTime -ge $since } catch { $false })))
+        } | Sort-Object { try { $_.StartTime } catch { [datetime]::MinValue } } -Descending)
+        if ($candidates.Count -gt 0) {
+            [void][JarvisNative]::Focus($candidates[0].MainWindowHandle)
+            return
+        }
+    }
+}
+
+function Get-ProcessNames([string]$name, [string]$target) {
+    $key = ConvertTo-AppKey $name
+    $names = @()
+    if ($processAliases.ContainsKey($key)) { $names += $processAliases[$key] }
+    if ($target -match '([^\\/]+)\.exe$') { $names += $Matches[1].ToLower() }
+    $names += $key.Replace(' ', '')
+    return $names
 }
 
 function Assert-TypingAllowed {
@@ -554,15 +633,19 @@ function Invoke-Action([string]$action, $arguments) {
             $uri = $null
             $valid = [Uri]::TryCreate([string]$arguments.url, [UriKind]::Absolute, [ref]$uri)
             if (-not $valid -or @('http', 'https') -notcontains $uri.Scheme) { throw 'Ich öffne nur http- und https-Adressen.' }
+            [JarvisNative]::Unlock()
             Start-Process $uri.AbsoluteUri -ErrorAction Stop
             return @{ opened = $uri.AbsoluteUri }
         }
         'open_app' {
             $name = ([string]$arguments.app).Trim()
             $key = $name.ToLower()
+            $since = Get-Date
             if ($apps.Contains($key)) {
                 try {
+                    [JarvisNative]::Unlock()
                     Start-Process $apps[$key] -ErrorAction Stop
+                    Show-Started $since (Get-ProcessNames $name ([string]$apps[$key]))
                     return @{ opened = $key }
                 } catch {
                     Write-Log "open_app $key über die Liste fehlgeschlagen – versuche das Startmenü"
@@ -577,10 +660,12 @@ function Invoke-Action([string]$action, $arguments) {
             # Strings mit „…“ nur in einfachen Anführungszeichen: PowerShell liest „ und “ sonst als Stringende
             if ($null -eq $entry) { throw ('Ein Programm namens „' + $name + '“ finde ich auf diesem PC nicht.') }
             try {
+                [JarvisNative]::Unlock()
                 Start-StartApp $entry
             } catch {
                 throw ('„' + $entry.Name + '“ ließ sich nicht starten.')
             }
+            Show-Started $since (Get-ProcessNames $name ([string]$entry.AppID))
             return @{ opened = [string]$entry.Name }
         }
         'search_files' {
@@ -618,7 +703,7 @@ function Invoke-Action([string]$action, $arguments) {
         'open_folder' {
             $key = [string]$arguments.folder
             if (-not $folders.ContainsKey($key)) { throw "Unbekannter Ordner '$key'." }
-            Start-Process explorer.exe -ArgumentList ('"' + $folders[$key] + '"') -ErrorAction Stop
+            Open-Folder $folders[$key]
             return @{ opened = $key }
         }
         'app_search' {
