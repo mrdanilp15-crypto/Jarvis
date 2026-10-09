@@ -56,6 +56,7 @@ class Container:
     notifier: Notifier | None = None  # Meldungen an offene Oberflächen (Timer, Erinnerungen)
     llm_settings: Any = None  # KI-Modell zur Laufzeit wählen (LLMSettings): lokales Modell, Claude-Schlüssel, Modus
     smarthome: Any = None  # Home Assistant: finden, verbinden, Räume und Geräte (smarthome.SmartHome)
+    speech: Any = None  # lokale Spracherkennung (voice.local.LocalSpeech) – None: nur Browser-Erkennung
 
     async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
                        location: str | None = None, on_status: OnStatus | None = None) -> TurnResult:
@@ -346,6 +347,7 @@ def create_app(container: Container) -> FastAPI:
             "local_llm": container.llm_status,
             "pc_agent": "connected" if container.agents and container.agents.connected else "disconnected",
             "smart_home": _home_health(container.smarthome),
+            "stt": f"local:{container.speech.state}" if container.speech is not None else "browser",
             "tts": getattr(container.tts, "label", "configured") if container.tts is not None else "off",
             "style": f"{style.name} {style.version}",
             "llm": {"local_model": getattr(container.router.local, "model", None),
@@ -416,6 +418,39 @@ def create_app(container: Container) -> FastAPI:
         finally:
             if notifier is not None:
                 notifier.detach(who.actor, send)
+
+    @app.websocket("/v1/audio")
+    async def audio(ws: WebSocket) -> None:
+        """Lokale Spracherkennung: Binär-Nachrichten = PCM 16 kHz mono 16 Bit, Text = {"type": "mode", "mode": …}."""
+        who = container.tokens.get(ws.query_params.get("token", ""))
+        await ws.accept()
+        if who is None:
+            await ws.close(code=4401)
+            return
+        if container.speech is None:
+            await ws.send_json({"type": "error", "message": "Lokale Spracherkennung ist nicht installiert."})
+            await ws.close(code=4404)
+            return
+        session = container.speech.session()
+        await ws.send_json({"type": "ready", "state": container.speech.state, "wake": session.wake is not None})
+        try:
+            while True:
+                message = await ws.receive()
+                if message.get("type") == "websocket.disconnect":
+                    return
+                if message.get("bytes"):
+                    if len(message["bytes"]) > 64000:  # höchstens ~2 s je Nachricht
+                        continue
+                    for event in await session.feed(message["bytes"]):
+                        await ws.send_json(event)
+                elif message.get("text"):
+                    try:
+                        control = json.loads(message["text"])
+                        session.set_mode(str(control.get("mode", "idle")))
+                    except (ValueError, TypeError) as exc:
+                        await ws.send_json({"type": "error", "message": f"Ungültige Steuernachricht: {exc}"})
+        except WebSocketDisconnect:
+            return
 
     @app.websocket("/v1/agent")
     async def agent(ws: WebSocket) -> None:

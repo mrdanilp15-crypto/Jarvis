@@ -29,6 +29,7 @@ def test_without_api_key_cloud_is_disabled(config_path, monkeypatch):
     from jarvis.app import build
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("JARVIS_STT", "off")  # lokale Spracherkennung (falls installiert) hier nicht laden
     container, background = build(config_path)
     assert container.router.cloud is None
     assert container.router.local.name == "ollama"
@@ -86,6 +87,7 @@ def test_warm_up_retries_until_model_is_ready(config_path, monkeypatch):
         return None
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("JARVIS_STT", "off")
     monkeypatch.setattr(OllamaProvider, "warm_up", fake_warm_up)
     container, [smart_home, scheduler, warm_up] = app_module.build(config_path)
     smart_home.close()

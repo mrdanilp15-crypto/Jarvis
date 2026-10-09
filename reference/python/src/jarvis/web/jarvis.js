@@ -11,7 +11,8 @@
     login: $("#login"), loginForm: $("#login-form"), loginToken: $("#login-token"), loginError: $("#login-error"),
     settings: $("#settings"), settingsBtn: $("#settings-btn"), voice: $("#voice"), voiceTest: $("#voice-test"),
     optSpeak: $("#opt-speak"), optConvo: $("#opt-convo"), optLocation: $("#opt-location"), logout: $("#logout"),
-    wakeToggle: $("#wake-toggle"), wakeText: $("#wake-text"), optEffect: $("#opt-effect"),
+    wakeToggle: $("#wake-toggle"), wakeText: $("#wake-text"), optEffect: $("#opt-effect"), optStt: $("#opt-stt"),
+    sttState: $("#stt-state"),
     pc: $("#pc-status"), pcText: $("#pc-text"), homeChip: $("#home-chip"), homeChipText: $("#home-chip-text"),
     homeNow: $("#home-now"), homeError: $("#home-error"), homeSetup: $("#home-setup"), homeFound: $("#home-found"),
     homeUrl: $("#home-url"), homeSearch: $("#home-search"), homeLogin: $("#home-login"), homeToken: $("#home-token"),
@@ -66,12 +67,13 @@
   const settings = {
     speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice.v2", ""),
     wake: store.get("wake", false), location: store.get("location", ""), effect: store.get("effect", "dezent"),
-    fx: store.get("fx", "voll"),
+    fx: store.get("fx", "voll"), stt: store.get("stt", "auto"),
   };
   document.body.dataset.fx = settings.fx;
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const canListen = Boolean(SpeechRecognition);
+  let canListen = Boolean(SpeechRecognition);  // wird true, sobald die lokale Erkennung bereit ist
+  let sttLocal = "none";  // Zustand der lokalen Spracherkennung (Health: stt = local:ready | local:loading | …)
   const canSpeak = "speechSynthesis" in window;
   if (canSpeak) speechSynthesis.getVoices();  // Stimmenliste laden lassen (Chrome liefert sie verzögert)
 
@@ -1209,7 +1211,7 @@
   function onSpeechDone() {
     if (turn) { setState("thinking"); return; }        // Antwort läuft noch, nächster Satz kommt
     if (!ws || ws.readyState !== WebSocket.OPEN) { setState("offline"); return; }
-    if (((lastTurnSpoken && settings.convo) || expectReply) && canListen && state !== "listening") {
+    if (((lastTurnSpoken && settings.convo) || expectReply) && (canListen || localVoice.enabled) && state !== "listening") {
       lastTurnSpoken = false;
       expectReply = false;
       setTimeout(() => { if (state !== "listening" && !turn) startListening(); }, 300);
@@ -1269,6 +1271,15 @@
   };
 
   function startListening() {
+    if (localVoice.enabled) {
+      if (turn) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) { addSystem("Noch keine Verbindung zum Server.", true); return; }
+      tts.stop();
+      setState("listening", listenHint ?? "Ich höre … (lokal)");
+      listenHint = undefined;
+      localVoice.setMode("listen");
+      return;
+    }
     if (!canListen) {
       addSystem("Spracheingabe funktioniert in Chrome und Edge. Hier bitte unten tippen.");
       els.input.focus();
@@ -1326,7 +1337,13 @@
     }
   }
 
-  function stopListening() { recognition?.stop(); }
+  function stopListening() {
+    if (localVoice.mode === "listen") {
+      localVoice.setMode("idle");
+      setState("idle");
+    }
+    recognition?.stop();
+  }
 
   // Sprechpausen: Chrome meldet schon nach kurzem Zögern ein „fertiges“ Teilstück. Abgeschickt wird erst nach dieser
   // Stille – länger, wenn der Satz hörbar weitergeht („Such mir nach …“, „… auf“).
@@ -1337,7 +1354,7 @@
   let listenHint;
 
   function onHudActivate() {
-    if (recognition) { stopListening(); return; }
+    if (recognition || localVoice.mode === "listen") { stopListening(); return; }
     if (turn) {  // Antwort läuft: Stimme stummschalten, Text läuft weiter ins Protokoll
       turn.muted = true;
       tts.stop();
@@ -1444,7 +1461,7 @@
   const wake = {
     rec: null, timer: 0, settle: 0, failures: 0, collecting: false, buffer: "", interim: null, interimTimer: 0,
     wanted() {
-      return settings.wake && canListen && state === "idle" && !turn && !recognition && !tts.busy
+      return settings.wake && (canListen || localVoice.enabled) && state === "idle" && !turn && !recognition && !tts.busy
         && !trainer.running && ws?.readyState === WebSocket.OPEN;
     },
     schedule(delay = 300) {
@@ -1452,6 +1469,10 @@
       if (settings.wake) this.timer = setTimeout(() => this.start(), delay);
     },
     start() {
+      if (localVoice.enabled) {  // lokal: der Server hört auf „Jarvis“ (Whisper/openWakeWord)
+        if (this.wanted()) localVoice.setMode("wake");
+        return;
+      }
       if (this.rec || !this.wanted()) return;
       const rec = new SpeechRecognition();
       rec.lang = "de-DE";
@@ -1582,6 +1603,7 @@
     stop() {
       clearTimeout(this.timer);
       this.reset();
+      if (localVoice.mode === "wake") localVoice.setMode("idle");
       const rec = this.rec;
       this.rec = null;
       if (rec) {
@@ -1591,6 +1613,153 @@
       }
     },
   };
+
+  // ---------------------------------------------------------------- Lokale Spracherkennung
+  // Mikrofon -> 16 kHz/16 Bit -> WS /v1/audio. Der Server schneidet Äußerungen, erkennt „Jarvis“ und transkribiert
+  // mit Whisper. Gesendet wird nur, solange JARVIS zuhört oder auf „Jarvis“ wartet – nie, während er spricht.
+  const STT_STATE = {
+    "local:ready": "Lokal bereit – Audio verlässt den JARVIS-Rechner nicht.",
+    "local:loading": "Das Whisper-Modell wird geladen (beim ersten Mal ein Download von einigen hundert MB) …",
+    "local:idle": "Das Whisper-Modell wird beim ersten Zuhören geladen.",
+    "local:error": "Das Whisper-Modell ließ sich nicht laden – JARVIS nutzt die Browser-Erkennung. Details im Server-Protokoll.",
+    browser: "Lokale Erkennung ist nicht installiert (Windows: „JARVIS installieren.cmd“ erneut ausführen).",
+  };
+  const localVoice = {
+    socket: null, context: null, stream: null, node: null, mode: "idle", opening: null, retry: 0,
+    get enabled() {
+      // „auto“ (Standard): lokal, sobald der Server Whisper bereit hat – sonst die Browser-Erkennung
+      return settings.stt !== "browser" && sttLocal === "local:ready";
+    },
+    update(status) {
+      const before = this.enabled;
+      sttLocal = status || "browser";
+      canListen = Boolean(SpeechRecognition) || this.enabled;
+      els.sttState.textContent = settings.stt !== "browser" ? (STT_STATE[sttLocal] ?? "") : "";
+      if (before && !this.enabled) this.close();
+      if (!before && this.enabled && settings.wake && state === "idle") wake.schedule(200);
+    },
+    async ensure() {
+      if (this.socket && this.socket.readyState <= WebSocket.OPEN && this.context) return;
+      if (this.opening) return this.opening;
+      this.opening = (async () => {
+        try {
+          if (!this.stream) {
+            this.stream = await navigator.mediaDevices.getUserMedia({
+              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+          }
+          if (!this.context) {
+            this.context = new AudioContext();
+            const source = this.context.createMediaStreamSource(this.stream);
+            this.node = this.context.createScriptProcessor(4096, 1, 1);
+            this.node.onaudioprocess = (event) => this.pump(event.inputBuffer);
+            source.connect(this.node);
+            this.node.connect(this.context.destination);  // ohne Ausgang ruft Chrome onaudioprocess nicht auf
+          }
+          if (!this.socket || this.socket.readyState > WebSocket.OPEN) this.connect();
+        } catch (err) {
+          addSystem(`Mikrofon nicht verfügbar: ${err.message}`, true);
+          setWake(false);
+        } finally {
+          this.opening = null;
+        }
+      })();
+      return this.opening;
+    },
+    connect() {
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      const socket = new WebSocket(`${scheme}://${location.host}/v1/audio?token=${encodeURIComponent(token)}`);
+      socket.binaryType = "arraybuffer";
+      socket.onopen = () => { this.retry = 0; socket.send(JSON.stringify({ type: "mode", mode: this.mode })); };
+      socket.onmessage = (event) => { try { this.handle(JSON.parse(event.data)); } catch { /* ungültig */ } };
+      socket.onclose = () => {
+        if (this.socket !== socket) return;
+        this.socket = null;
+        if (this.mode !== "idle" && this.enabled) {  // Server neu gestartet: wieder verbinden
+          this.retry += 1;
+          setTimeout(() => { if (this.mode !== "idle") this.connect(); }, Math.min(10000, 500 * 2 ** this.retry));
+        }
+      };
+      this.socket = socket;
+    },
+    pump(buffer) {
+      if (this.mode === "idle" || this.socket?.readyState !== WebSocket.OPEN) return;
+      const input = buffer.getChannelData(0);
+      const ratio = buffer.sampleRate / 16000;
+      const out = new Int16Array(Math.floor(input.length / ratio));
+      let sum = 0;
+      for (let i = 0; i < out.length; i += 1) {  // Mittelwert über das Fenster = einfacher Tiefpass
+        const from = Math.floor(i * ratio), to = Math.min(input.length, Math.floor((i + 1) * ratio));
+        let acc = 0;
+        for (let k = from; k < to; k += 1) acc += input[k];
+        const value = Math.max(-1, Math.min(1, acc / Math.max(1, to - from)));
+        sum += value * value;
+        out[i] = value * 32767;
+      }
+      if (this.mode === "listen") setLevel(Math.min(1, Math.sqrt(sum / out.length) * 6));
+      this.socket.send(out.buffer);
+    },
+    setMode(mode) {
+      this.mode = mode;
+      if (mode !== "idle") this.ensure();
+      if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: "mode", mode }));
+      if (mode !== "listen") setLevel(0);
+    },
+    handle(event) {
+      switch (event.type) {
+        case "wake":
+          this.setMode("idle");  // „Ja, Sir?“ nicht selbst hören
+          acknowledgement.say(() => {
+            if (turn) return;
+            setState("listening", "Ja? Ich höre …");
+            this.setMode("listen");
+          });
+          break;
+        case "speech":
+          if (state !== "listening") setState("listening");
+          break;
+        case "transcript":
+          this.setMode("idle");
+          els.caption.textContent = "";
+          sendText(event.text, true);
+          break;
+        case "heard":
+          heard.show(event.text);
+          break;
+        case "nothing":
+          this.mode = "idle";
+          setLevel(0);
+          if (state === "listening") setState("idle");
+          els.status.textContent = "Ich habe nichts gehört.";
+          break;
+        case "error":
+          addSystem(event.message, true);
+          break;
+        default:
+          break;
+      }
+    },
+    close() {
+      this.mode = "idle";
+      const socket = this.socket;
+      this.socket = null;
+      socket?.close();
+      this.node?.disconnect();
+      this.node = null;
+      this.context?.close().catch(() => {});
+      this.context = null;
+      this.stream?.getTracks().forEach((t) => t.stop());
+      this.stream = null;
+    },
+  };
+  window.jarvisLocalVoice = localVoice;  // für Tests
+  els.optStt.addEventListener("change", () => {
+    settings.stt = els.optStt.value;
+    store.set("stt", settings.stt);
+    wake.stop();
+    localVoice.close();
+    localVoice.update(sttLocal);
+    if (settings.wake && state === "idle") wake.schedule(200);
+  });
 
   // „Jarvis“ einlernen: viermal sagen, JARVIS merkt sich die Schreibweisen der Spracherkennung
   function listenOnce() {
@@ -1693,6 +1862,7 @@
       ttsConfigured = ttsProvider !== "off";
       setPcStatus(health.pc_agent === "connected");
       setHomeChip(health.smart_home);
+      localVoice.update(health.stt);
       setModelChip(health.llm);
       acknowledgement.prepare();
     } catch {
@@ -1868,6 +2038,8 @@
     els.optConvo.disabled = !canListen;
     els.optLocation.value = settings.location;
     els.optFx.value = settings.fx;
+    els.optStt.value = settings.stt === "browser" ? "browser" : "local";
+    localVoice.update(sttLocal);
     els.wakeTrainStatus.textContent = "";
     showLearned();
     fillVoices();

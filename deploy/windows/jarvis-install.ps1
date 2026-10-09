@@ -152,7 +152,8 @@ if (Test-Path $hashFile) { $installed = (Get-Content $hashFile -Raw).Trim() }
 if ($installed -ne $hash) {
     Say 'Installiere JARVIS und seine Bausteine (einmalig, 1–3 Minuten) …'
     & $venvPython -m pip install --disable-pip-version-check --quiet --upgrade pip | Out-Host
-    & $venvPython -m pip install --disable-pip-version-check --quiet -e "$project[all]" | Out-Host
+    # voice-local: Spracherkennung (Whisper, openWakeWord) und Stimme (Piper) direkt auf diesem PC
+    & $venvPython -m pip install --disable-pip-version-check --quiet -e "$project[all,voice-local]" | Out-Host
     if ($LASTEXITCODE -ne 0) { Fail 'Installation fehlgeschlagen (Internetverbindung?). Details stehen oben.' }
     Set-Content -Path $hashFile -Value $hash -Encoding ASCII
 }

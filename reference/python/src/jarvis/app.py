@@ -42,6 +42,7 @@ from .orchestrator import ConfirmationStore, Orchestrator
 from .pc import AgentHub, register_pc_capabilities, resolve_recipient
 from .smarthome import SmartHome
 from .sysmon import register_sysmon_capabilities
+from .voice.local import create_local_speech
 from .skills import register_assistant_capabilities
 from .timers import Alarm, AlarmScheduler, Notifier, register_timer_capabilities
 from .persona import Persona
@@ -198,8 +199,20 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
                          location=home_location, home_state=smarthome.situation_lines())
 
     smarthome.fast_path = orchestrator.fast_path
+
+    def stt_prompt() -> str:
+        """Wörterbuch für Whisper: Aktivierungswort, Name, Räume und Geräte – so schreibt es sie richtig."""
+        words = ["Jarvis", default_name or ""]
+        if smarthome.index is not None:
+            words += list(smarthome.index.areas.values()) + [d.name for d in smarthome.index.devices[:40]]
+        return ", ".join(w for w in words if w)
+
+    speech = create_local_speech(stt_prompt)
+    if speech is not None:
+        background.append(speech.warm_up())  # Modell laden (beim ersten Start: Download)
     container = Container(orchestrator=orchestrator, bus=bus, router=router, tokens=tokens,
-                          webhook_secrets={}, situation=situation, agents=agents, tts=_tts(cfg), smarthome=smarthome)
+                          webhook_secrets={}, situation=situation, agents=agents, tts=_tts(cfg), smarthome=smarthome,
+                          speech=speech)
 
     pc_enabled = registry.get("pc.open_app") is not None
 

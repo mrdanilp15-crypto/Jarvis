@@ -149,6 +149,13 @@
       </section>
 
       <section class="tab-panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
+      <label class="field">Spracherkennung
+        <select id="opt-stt">
+          <option value="browser">Browser (Chrome/Edge – über Google bzw. Microsoft)</option>
+          <option value="local">Lokal auf dem JARVIS-Rechner (Whisper – privat)</option>
+        </select>
+      </label>
+      <p class="hint" id="stt-state"></p>
       <label class="field">Stimme <select id="voice"></select></label>
       <label class="field">KI-Effekt der JARVIS-Stimme
         <select id="opt-effect">
