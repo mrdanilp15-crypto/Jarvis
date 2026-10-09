@@ -1,0 +1,130 @@
+# Home-Assistant-Package: JARVIS-Anbindung
+# Einbinden in configuration.yaml:
+#   homeassistant:
+#     packages: !include_dir_named packages
+# Benötigte Einträge in secrets.yaml:
+#   jarvis_ha_bearer: "Bearer <JARVIS-Token mit Rolle service / Trust system>"
+#   jarvis_webhook_id: "<zufällige, lange ID>"
+#
+# Richtung HA -> JARVIS: rest_command (Events, Nachrichten) und MQTT-Status
+# Richtung JARVIS -> HA: WebSocket-API (Hauptweg, siehe jarvis/connectors/homeassistant.py)
+#                        und Webhook-Trigger für freigegebene Skripte/Szenen
+
+rest_command:
+  jarvis_event:
+    url: "http://jarvis-core:8080/v1/events"
+    method: POST
+    headers:
+      authorization: !secret jarvis_ha_bearer
+    content_type: "application/json"
+    payload: >-
+      {"specversion": "1.0", "source": "/homeassistant/automation", "type": "{{ type }}",
+       "subject": "{{ subject | default('') }}", "data": {{ data | default({}) | tojson }}}
+    timeout: 5
+  jarvis_say:
+    url: "http://jarvis-core:8080/v1/conversations/{{ conversation_id | default('homeassistant') }}/messages"
+    method: POST
+    headers:
+      authorization: !secret jarvis_ha_bearer
+    content_type: "application/json"
+    payload: '{"text": {{ text | tojson }}, "channel": "api"}'
+    timeout: 60
+
+input_select:
+  jarvis_mode:
+    name: JARVIS-Modus
+    options: [normal, night, away, guest, party, vacation]
+    initial: normal
+    icon: mdi:robot
+
+input_boolean:
+  jarvis_proactive_voice:
+    name: JARVIS proaktive Sprachhinweise
+    icon: mdi:account-voice
+
+rest:
+  - resource: "http://jarvis-core:8080/v1/system/health"
+    scan_interval: 60
+    sensor:
+      - name: "JARVIS Status"
+        unique_id: jarvis_status
+        value_template: "{{ value_json.status }}"
+        json_attributes: [cloud_llm]
+
+mqtt:
+  binary_sensor:
+    - name: "JARVIS online"
+      unique_id: jarvis_online
+      state_topic: "jarvis/v1/status"
+      value_template: "{{ value_json.state }}"
+      payload_on: "online"
+      payload_off: "offline"
+      device_class: connectivity
+  sensor:
+    - name: "JARVIS letzte Aktion"
+      unique_id: jarvis_last_action
+      state_topic: "jarvis/v1/event/action.completed"
+      value_template: "{{ value_json.data.capability }}"
+      json_attributes_topic: "jarvis/v1/event/action.completed"
+      json_attributes_template: "{{ value_json.data | tojson }}"
+
+automation:
+  - id: jarvis_forward_doorbell
+    alias: "JARVIS: Türklingel melden"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.tuerklingel
+        to: "on"
+    actions:
+      - action: rest_command.jarvis_event
+        data:
+          type: jarvis.home.doorbell
+          subject: binary_sensor.tuerklingel
+          data:
+            camera: camera.haustuer
+
+  - id: jarvis_mode_sync
+    alias: "JARVIS: Modus melden"
+    triggers:
+      - trigger: state
+        entity_id: input_select.jarvis_mode
+    actions:
+      - action: rest_command.jarvis_event
+        data:
+          type: jarvis.home.mode_changed
+          subject: input_select.jarvis_mode
+          data:
+            mode: "{{ trigger.to_state.state }}"
+
+  - id: jarvis_webhook_scene
+    alias: "JARVIS -> HA: freigegebene Szene per Webhook"
+    triggers:
+      - trigger: webhook
+        webhook_id: !secret jarvis_webhook_id
+        allowed_methods: [POST]
+        local_only: true
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.json.scene_id in ['scene.filmabend', 'scene.guten_morgen', 'scene.gute_nacht'] }}"
+    actions:
+      - action: scene.turn_on
+        target:
+          entity_id: "{{ trigger.json.scene_id }}"
+
+script:
+  jarvis_frage:
+    alias: "JARVIS fragen"
+    description: "Stellt JARVIS eine Frage aus einem Dashboard oder einer Automation."
+    fields:
+      text:
+        description: Frage oder Auftrag
+        example: "Fasse die Ereignisse der letzten Nacht zusammen"
+    sequence:
+      - action: rest_command.jarvis_say
+        data:
+          text: "{{ text }}"
+        response_variable: antwort
+      - action: persistent_notification.create
+        data:
+          title: JARVIS
+          message: "{{ antwort.content.text }}"

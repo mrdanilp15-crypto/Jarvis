@@ -1,0 +1,26 @@
+{
+  "id": "aut_rain_window",
+  "name": "Regenwarnung bei offenem Fenster",
+  "enabled": true,
+  "mode": "single",
+  "origin": "user",
+  "owner": "user:alex",
+  "approval": { "status": "not_required" },
+  "triggers": [
+    { "type": "event", "event_type": "jarvis.info.weather_alert", "match": { "kind": "rain_soon" } }
+  ],
+  "conditions": [
+    { "type": "state", "entity_id": "binary_sensor.fenster_bad", "state": "on" }
+  ],
+  "actions": [
+    { "type": "choose",
+      "choices": [
+        { "conditions": [ { "type": "presence", "person": "anyone", "state": "home" } ],
+          "actions": [ { "type": "notify", "message": "Das Fenster im Bad ist offen und es beginnt bald zu regnen.", "channels": ["voice"], "target": "household", "priority": "high" } ] }
+      ],
+      "default": [
+        { "type": "notify", "message": "Fenster Bad offen, Regen in Kürze. Niemand ist zu Hause.", "channels": ["push"], "target": "household", "priority": "high" }
+      ]
+    }
+  ]
+}

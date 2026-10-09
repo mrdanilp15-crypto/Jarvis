@@ -1,0 +1,733 @@
+"""REST- und WebSocket-API (FastAPI) gemäß api/openapi.yaml. Benötigt das Extra ``server``."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import html
+import json
+import logging
+import secrets
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal
+
+from fastapi import Body, Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from .context import Situation
+from .errors import JarvisError
+from .events import CloudEvent, EventBus
+from .llm.base import OnText
+from .llm.router import HeuristicClassifier, ModelRouter
+from .orchestrator import OnStatus, Orchestrator, TurnRequest, TurnResult
+from .pc import AgentHub
+from .devices import qr_svg
+from .vision import decode_image
+from .policy import Principal
+from .timers import Notifier
+from .webhooks import ReplayCache, verify
+
+log = logging.getLogger(__name__)
+
+WEB_DIR = Path(__file__).with_name("web")  # Browser-Oberfläche (HUD, Sprache, Chat) unter „/“
+
+
+class _WebFiles(StaticFiles):
+    async def get_response(self, path: str, scope: Any) -> Any:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"  # nach einem Update sofort die neue Oberfläche laden
+        return response
+
+
+@dataclass
+class Container:
+    orchestrator: Orchestrator
+    bus: EventBus
+    router: ModelRouter
+    tokens: dict[str, Principal]  # Referenz: statische Tokens. Betrieb: OIDC-JWT-Prüfung + Geräte-Binding
+    webhook_secrets: dict[str, bytes]
+    situation: Callable[[Principal, str], Situation]
+    classifier: HeuristicClassifier = field(default_factory=HeuristicClassifier)
+    replay_cache: ReplayCache = field(default_factory=ReplayCache)
+    llm_status: str = "unknown"  # lokales Modell: unknown | loading | ready | missing_model | unavailable
+    agents: AgentHub | None = None  # PC-Agent (Programme/Ordner/Webseiten auf dem PC öffnen)
+    tts: Any = None  # Sprachausgabe mit synthesize_wav(text) -> bytes (Piper über Wyoming)
+    notifier: Notifier | None = None  # Meldungen an offene Oberflächen (Timer, Erinnerungen)
+    llm_settings: Any = None  # KI-Modell zur Laufzeit wählen (LLMSettings): lokales Modell, Claude-Schlüssel, Modus
+    smarthome: Any = None  # Home Assistant: finden, verbinden, Räume und Geräte (smarthome.SmartHome)
+    speech: Any = None  # lokale Spracherkennung (voice.local.LocalSpeech) – None: nur Browser-Erkennung
+    vision: Any = None  # Bildmodell (vision.VisionService) für „Was siehst du?“
+    learner: Any = None  # gelernte Routinen (patterns.PatternLearner)
+    protocols: Any = None  # Protokolle („Protokoll Gute Nacht“, protocols.ProtocolStore)
+    calendar: Any = None  # Kalender (agenda.CalendarService) – für den nächsten Termin in der Begrüßung
+    devices: Any = None  # gekoppelte Raumgeräte (devices.DeviceRegistry)
+    wake: Any = None  # rooms.WakeArbiter: bei mehreren Geräten antwortet nur das nächste
+
+    async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
+                       location: str | None = None, on_status: OnStatus | None = None) -> TurnResult:
+        classification = self.classifier.classify(req.text)
+        decision = self.router.decide(classification, user_override=self.router.override)
+        provider = self.router.provider_for(decision)
+        effort = "high" if classification.complexity == "complex" else "medium"
+        situation = self.situation(req.principal, channel)
+        if location:
+            situation.location = location
+        try:
+            result = await self.orchestrator.handle_turn(req, provider=provider, situation=situation,
+                                                         on_text=on_text, effort=effort, on_status=on_status)
+        except JarvisError as exc:
+            if provider is not self.router.cloud or not exc.retryable:
+                raise
+            self.router.cloud_breaker.record_failure()
+            # Degradierter Modus: gleiche Anfrage lokal beantworten
+            return await self.orchestrator.handle_turn(req, provider=self.router.local, situation=situation,
+                                                       on_text=on_text, on_status=on_status)
+        if provider is self.router.cloud:
+            self.router.cloud_breaker.record_success()
+        return result
+
+
+def turn_to_json(result: TurnResult) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "text": result.text,
+        "route": result.route,
+        "stop_reason": result.stop_reason,
+        "tainted": result.tainted,
+        "actions": [a.to_result_dict() for a in result.actions],
+        "awaiting_reply": result.awaiting_reply,
+    }
+    if result.pending_confirmation is not None:
+        p = result.pending_confirmation
+        out["pending_confirmation"] = {"confirmation_id": p.id, "method": p.method, "prompt": p.prompt,
+                                       "expires_at": p.expires_at.isoformat()}
+    if result.card is not None:
+        out["card"] = result.card  # z. B. der E-Mail-Entwurf im Entstehen
+    if result.retracted:
+        out["retracted"] = True  # gestreamten Text verwerfen (nicht weitersprechen)
+    return out
+
+
+class ClaudeKeyIn(BaseModel):
+    api_key: str = Field(min_length=10, max_length=300, description="Anthropic-API-Schlüssel (sk-ant-…)")
+
+
+class ProtocolIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40, examples=["Gute Nacht"])
+    triggers: list[str] = Field(default_factory=list, max_length=5, description="Eigene Auslöser („Ich gehe schlafen“)")
+    steps: list[str] = Field(min_length=1, max_length=12, description="Je Schritt ein Sofortbefehl, wie gesprochen")
+
+
+class DeviceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40, examples=["Küchen-Tablet"])
+    area: str | None = Field(default=None, max_length=80, description="Raum (area_id aus Home Assistant) oder frei")
+
+
+class PresenceIn(BaseModel):
+    state: Literal["arrived", "left"]
+    away_minutes: int = Field(default=0, ge=0, le=60 * 24 * 60)
+
+
+class VisionIn(BaseModel):
+    image: str = Field(min_length=100, max_length=6_000_000, description="Kamerabild als Data-URL (JPEG/PNG)")
+    question: str = Field(default="Was siehst du?", max_length=500)
+
+
+class RoutineDecisionIn(BaseModel):
+    accept: bool
+
+
+class HomeTokenIn(BaseModel):
+    url: str = Field(min_length=3, max_length=200, examples=["http://homeassistant.local:8123"])
+    token: str = Field(min_length=20, max_length=600, description="Langlebiges Zugriffstoken aus Home Assistant")
+
+
+class HomeOAuthIn(BaseModel):
+    url: str = Field(min_length=3, max_length=200, examples=["http://homeassistant.local:8123"])
+
+
+class LLMSettingsIn(BaseModel):
+    local_model: str | None = Field(default=None, max_length=120, examples=["qwen2.5:7b-instruct"])
+    claude_model: str | None = Field(default=None, max_length=60, examples=["claude-opus-5-5"])
+    mode: Literal["auto", "cloud", "local"] | None = None
+
+
+class ModelPullIn(BaseModel):
+    model: str = Field(min_length=2, max_length=120, examples=["qwen2.5:7b-instruct"])
+    activate: bool = True
+
+
+class MessageIn(BaseModel):
+    text: str = Field(min_length=1, max_length=32000, examples=["Hallo Jarvis, was kannst du?"])
+    mode: Literal["normal", "night", "away", "guest", "party", "vacation"] = "normal"
+    channel: Literal["app", "desktop", "web", "api"] = "app"
+    location: str | None = Field(default=None, max_length=100)
+
+
+class SpeechIn(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class ConfirmationIn(BaseModel):
+    decision: Literal["approve", "reject"]
+    # Im Betrieb belegt die App die Methode mit einer signierten Challenge (Geräteschlüssel + Biometrie).
+    method: Literal["app", "app_biometric", "pin"]
+
+
+_OAUTH_PAGE = """<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="2;url={target}"><title>JARVIS · Smart Home</title></head>
+<body style="background:#03121a;color:#d8f6ff;font:18px system-ui;display:grid;place-items:center;height:100vh;margin:0">
+<div style="text-align:center"><div style="font-size:42px;color:{color}">&#9679;</div><p>{message}</p>
+<p><a style="color:#4fd8ff" href="{target}">Zurück zu JARVIS</a></p></div></body></html>"""
+
+
+def _home_health(home: Any) -> str:
+    """Kopfzeile: verbunden | getrennt | gefunden (noch nicht verbunden) | off."""
+    if home is None:
+        return "off"
+    if home.credentials():
+        return "connected" if home.connected else "disconnected"
+    return "found" if home.found else "off"
+
+
+def create_app(container: Container) -> FastAPI:
+    # Hinweis: FastAPI löst Annotationen per get_type_hints auf – daher Modul-Imports statt lokaler Imports.
+    app = FastAPI(title="JARVIS API", version="1.0.0")
+
+    style = container.orchestrator.style
+
+    def styled(problem: dict[str, Any]) -> dict[str, Any]:
+        """Auch Fehlermeldungen für Menschen laufen durch den Formatter (Jarvis-Ton)."""
+        if problem.get("user_message"):
+            problem["user_message"] = style.error_message(problem["user_message"])
+        return problem
+
+    @app.exception_handler(JarvisError)
+    async def problem_handler(request: Request, exc: JarvisError) -> JSONResponse:
+        return JSONResponse(styled(exc.to_problem(instance=request.url.path)), status_code=exc.status,
+                            media_type="application/problem+json")
+
+    @app.exception_handler(Exception)
+    async def unexpected_handler(request: Request, exc: Exception) -> JSONResponse:
+        log.exception("unhandled error", extra={"path": request.url.path})
+        problem = JarvisError("JRV-SYS-001", type(exc).__name__,
+                              user_message=style.system_text("generic_error")).to_problem(instance=request.url.path)
+        return JSONResponse(styled(problem), status_code=500, media_type="application/problem+json")
+
+    # Als Security-Schema deklariert: nur so zeigt /docs den „Authorize“-Knopf und sendet das Token mit
+    # (Swagger UI verschickt Header-Parameter namens „Authorization“ grundsätzlich nicht).
+    bearer = HTTPBearer(auto_error=False, description="API-Token aus deploy/.env (JARVIS_DEV_TOKENS), ohne „Bearer “")
+
+    def principal(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> Principal:
+        who = container.tokens.get(credentials.credentials) if credentials else None
+        if who is None:
+            raise JarvisError("JRV-AUTH-001", "Bearer-Token fehlt oder ist ungültig")
+        return who
+
+    def household_adult(who: Principal = Depends(principal)) -> Principal:
+        """KI-Modell und API-Schlüssel ändern nur Erwachsene des Haushalts – keine Gäste, Kinder oder Dienste."""
+        if who.role not in ("admin", "adult") or who.trust in ("guest", "external_untrusted"):
+            raise JarvisError("JRV-POL-002", "Nur Erwachsene im Haushalt dürfen das KI-Modell ändern")
+        return who
+
+    def llm_settings() -> Any:
+        if container.llm_settings is None:
+            raise JarvisError("JRV-NFD-001", "Modellwahl ist in dieser Installation nicht eingerichtet")
+        return container.llm_settings
+
+    @app.get("/v1/settings/llm", tags=["Einstellungen"])
+    async def get_llm_settings(who: Principal = Depends(household_adult)) -> dict:
+        """Lokales Modell (installiert, Vorschläge, Download), Claude (Schlüssel nur als „…abcd“) und Modus."""
+        return await llm_settings().snapshot()
+
+    @app.put("/v1/settings/llm", tags=["Einstellungen"])
+    async def put_llm_settings(body: LLMSettingsIn, who: Principal = Depends(household_adult)) -> dict:
+        settings = llm_settings()
+        if body.mode:
+            settings.set_mode(body.mode)
+        if body.claude_model:
+            await settings.set_claude_model(body.claude_model)
+        if body.local_model:
+            await settings.use_local(body.local_model)
+        return await settings.snapshot()
+
+    @app.post("/v1/settings/llm/pull", status_code=202, tags=["Einstellungen"])
+    async def pull_model(body: ModelPullIn, who: Principal = Depends(household_adult)) -> dict:
+        """Lokales Modell herunterladen (Fortschritt über GET /v1/settings/llm, Feld local.pull)."""
+        settings = llm_settings()
+        settings.start_pull(body.model, activate=body.activate)
+        return await settings.snapshot()
+
+    @app.put("/v1/settings/llm/claude-key", tags=["Einstellungen"])
+    async def put_claude_key(body: ClaudeKeyIn, who: Principal = Depends(household_adult)) -> dict:
+        """Schlüssel prüfen (Models-API, kostenlos) und nur bei Erfolg speichern. Er wird nie zurückgegeben."""
+        settings = llm_settings()
+        checked = await settings.set_claude_key(body.api_key)
+        return {**await settings.snapshot(), "checked": checked}
+
+    @app.delete("/v1/settings/llm/claude-key", tags=["Einstellungen"])
+    async def delete_claude_key(who: Principal = Depends(household_adult)) -> dict:
+        settings = llm_settings()
+        settings.remove_claude_key()
+        return await settings.snapshot()
+
+    def smarthome() -> Any:
+        if container.smarthome is None:
+            raise JarvisError("JRV-NFD-001", "Smart Home ist in dieser Installation nicht eingerichtet")
+        return container.smarthome
+
+    @app.get("/v1/settings/home", tags=["Einstellungen"])
+    async def get_home(who: Principal = Depends(household_adult)) -> dict:
+        """Home Assistant: verbunden?, gefundene Adressen, Räume und Geräte. Das Token wird nie zurückgegeben."""
+        return smarthome().status()
+
+    @app.post("/v1/settings/home/discover", tags=["Einstellungen"])
+    async def discover_home(who: Principal = Depends(household_adult)) -> dict:
+        """Home Assistant im Heimnetz suchen (bekannte Adressen und /24-Netz, Port 8123)."""
+        await smarthome().discover()
+        return smarthome().status()
+
+    @app.post("/v1/settings/home/oauth", tags=["Einstellungen"])
+    async def start_home_oauth(body: HomeOAuthIn, request: Request,
+                               who: Principal = Depends(household_adult)) -> dict:
+        """Anmeldung bei Home Assistant starten: die Oberfläche öffnet ``authorize_url``; HA leitet danach zurück."""
+        return {"authorize_url": smarthome().oauth_start(body.url, str(request.base_url))}
+
+    @app.get("/v1/settings/home/oauth", response_class=HTMLResponse, include_in_schema=False)
+    async def finish_home_oauth(state: str = "", code: str = "", error: str = "") -> HTMLResponse:
+        """Rücksprung von Home Assistant (ohne Bearer-Token – geschützt durch den einmaligen ``state``)."""
+        try:
+            if error or not code:
+                raise JarvisError("JRV-AUTH-001", error or "kein Code",
+                                  user_message="Die Anmeldung bei Home Assistant wurde abgebrochen.")
+            info = await smarthome().oauth_finish(state, code)
+            message, ok = f"Verbunden mit {html.escape(info.get('location_name') or 'Home Assistant')}.", True
+        except JarvisError as exc:
+            message, ok = html.escape(style.error_message(exc.user_message or exc.detail or "Fehler")), False
+        return HTMLResponse(_OAUTH_PAGE.format(message=message, target="/#home=" + ("ok" if ok else "error"),
+                                               color="#4fe3a4" if ok else "#ff5c72"))
+
+    @app.put("/v1/settings/home/token", tags=["Einstellungen"])
+    async def put_home_token(body: HomeTokenIn, who: Principal = Depends(household_adult)) -> dict:
+        """Mit Adresse und langlebigem Token verbinden – geprüft wird vor dem Speichern."""
+        await smarthome().connect_with_token(body.url, body.token)
+        return smarthome().status()
+
+    @app.delete("/v1/settings/home", tags=["Einstellungen"])
+    async def delete_home(who: Principal = Depends(household_adult)) -> dict:
+        smarthome().disconnect()
+        return smarthome().status()
+
+    @app.get("/v1/automations/suggestions", tags=["Einstellungen"])
+    async def routine_suggestions(who: Principal = Depends(household_adult)) -> dict:
+        """Gelernte Gewohnheiten (Vorschläge und angenommene Routinen)."""
+        if container.learner is None:
+            return {"suggestions": []}
+        from .patterns import describe
+
+        return {"suggestions": [{**s.to_json(), "text": describe(s)} for s in container.learner.suggestions()
+                                if s.status != "rejected"]}
+
+    @app.post("/v1/automations/suggestions/{suggestion_id}", tags=["Einstellungen"])
+    async def decide_routine(suggestion_id: str, body: RoutineDecisionIn,
+                             who: Principal = Depends(household_adult)) -> dict:
+        found = container.learner.decide(suggestion_id, body.accept) if container.learner is not None else None
+        if found is None:
+            raise JarvisError("JRV-NFD-001", f"Vorschlag {suggestion_id} unbekannt")
+        return {"suggestion": found.to_json()}
+
+    def protocol_store() -> Any:
+        if container.protocols is None:
+            raise JarvisError("JRV-NFD-001", "Protokolle sind in dieser Installation nicht eingerichtet")
+        return container.protocols
+
+    @app.get("/v1/settings/protocols", tags=["Einstellungen"])
+    async def list_protocols(who: Principal = Depends(household_adult)) -> dict:
+        """Protokolle („Protokoll Gute Nacht“): Name, eigene Auslöser, Schritte (je ein Sofortbefehl)."""
+        return {"protocols": protocol_store().public()}
+
+    @app.post("/v1/settings/protocols", tags=["Einstellungen"])
+    async def add_protocol(body: ProtocolIn, who: Principal = Depends(household_adult)) -> dict:
+        from dataclasses import asdict
+
+        return {"protocol": asdict(protocol_store().save(None, body.name, body.triggers, body.steps))}
+
+    @app.put("/v1/settings/protocols/{protocol_id}", tags=["Einstellungen"])
+    async def update_protocol(protocol_id: str, body: ProtocolIn, who: Principal = Depends(household_adult)) -> dict:
+        from dataclasses import asdict
+
+        store = protocol_store()
+        if store.get(protocol_id) is None:
+            raise JarvisError("JRV-NFD-001", f"Protokoll {protocol_id} unbekannt")
+        return {"protocol": asdict(store.save(protocol_id, body.name, body.triggers, body.steps))}
+
+    @app.delete("/v1/settings/protocols/{protocol_id}", tags=["Einstellungen"])
+    async def remove_protocol(protocol_id: str, who: Principal = Depends(household_adult)) -> dict:
+        if not protocol_store().remove(protocol_id):
+            raise JarvisError("JRV-NFD-001", f"Protokoll {protocol_id} unbekannt")
+        return {"removed": protocol_id}
+
+    def rooms() -> list[dict[str, str]]:
+        index = getattr(container.smarthome, "index", None)
+        return [{"id": area_id, "name": name} for area_id, name in (index.areas.items() if index else [])]
+
+    def device_registry(who: Principal) -> Any:
+        if who.actor.startswith("device:"):  # ein Raumgerät koppelt keine weiteren Geräte
+            raise JarvisError("JRV-POL-002", "Geräte koppeln nur am JARVIS-PC bzw. mit dem eigenen Zugang")
+        if container.devices is None:
+            raise JarvisError("JRV-NFD-001", "Geräte koppeln ist in dieser Installation nicht eingerichtet")
+        return container.devices
+
+    @app.get("/v1/settings/devices", tags=["Einstellungen"])
+    async def list_devices(who: Principal = Depends(household_adult)) -> dict:
+        """Gekoppelte Raumgeräte, Adressen im Heimnetz und die Räume aus Home Assistant."""
+        registry = device_registry(who)
+        return {"devices": [registry.public(d) for d in registry.devices], "rooms": rooms(),
+                "lan": {"enabled": registry.lan_enabled, "urls": registry.lan_urls()}}
+
+    @app.post("/v1/settings/devices", tags=["Einstellungen"])
+    async def add_device(body: DeviceIn, who: Principal = Depends(household_adult)) -> dict:
+        """Gerät koppeln: liefert den Link (und QR-Code) fürs Tablet – nur hier einmal sichtbar."""
+        registry = device_registry(who)
+        if not registry.lan_enabled:
+            raise JarvisError("JRV-NFD-001", "LAN-Zugang aus",
+                              user_message="JARVIS ist im Heimnetz noch nicht erreichbar. Setzen Sie JARVIS_LAN=on in "
+                                           "jarvis.env bzw. deploy/.env und starten Sie JARVIS neu.")
+        names = {room["id"]: room["name"] for room in rooms()}
+        area = (body.area or "").strip() or None
+        if area and area not in names:  # frei eingetippt: „küche“ → Raum „Küche“ aus Home Assistant
+            area = next((rid for rid, name in names.items() if name.casefold() == area.casefold()), area)
+        device = registry.create(body.name, area, names.get(area or "", area), user_name=who.name)
+        link = registry.link(device)
+        return {"device": registry.public(device), "url": link, "qr_svg": qr_svg(link) if link else None}
+
+    @app.delete("/v1/settings/devices/{device_id}", tags=["Einstellungen"])
+    async def remove_device(device_id: str, who: Principal = Depends(household_adult)) -> dict:
+        if not device_registry(who).remove(device_id):
+            raise JarvisError("JRV-NFD-001", f"Gerät {device_id} unbekannt")
+        return {"removed": device_id}
+
+    @app.post("/v1/presence", tags=["Sehen"])
+    async def presence(body: PresenceIn, who: Principal = Depends(principal)) -> dict:
+        """Anwesenheit aus der Kamera der Oberfläche (nur der Zustand, nie ein Bild): Bus-Ereignis
+        ``jarvis.presence.changed`` und bei „arrived“ eine Begrüßung."""
+        if who.role == "guest" or who.trust in ("guest", "external_untrusted"):
+            raise JarvisError("JRV-POL-002", "Gäste dürfen die Anwesenheit nicht melden")
+        await container.bus.publish(CloudEvent(
+            type="jarvis.presence.changed", source="/ui/camera", subject=who.actor, actor=who.actor, trust=who.trust,
+            data={"state": body.state, "away_minutes": body.away_minutes, "area": who.area}))
+        if body.state != "arrived":
+            return {"text": None}
+        situation = container.situation(who, "voice")
+        next_event = None
+        if container.calendar is not None:
+            from datetime import timedelta
+
+            from .agenda import describe
+
+            try:
+                upcoming = await container.calendar.between(situation.now, situation.now + timedelta(hours=3))
+                timed = [e for e in upcoming if not e.all_day]
+                if timed:
+                    next_event = describe(timed[0], container.calendar.tz)
+            except JarvisError:
+                log.warning("Kalender für die Begrüßung nicht lesbar", exc_info=True)
+        return {"text": style.finalize(style.presence_text(body.away_minutes, situation.now, next_event))}
+
+    @app.post("/v1/vision", tags=["Sehen"])
+    async def vision(body: VisionIn, who: Principal = Depends(principal)) -> dict:
+        """Ein Kamerabild beschreiben (lokales Bildmodell). Das Bild wird nicht gespeichert."""
+        if who.role == "guest" or who.trust in ("guest", "external_untrusted"):
+            raise JarvisError("JRV-POL-002", "Gäste dürfen die Kamera nicht nutzen")
+        if container.vision is None:
+            raise JarvisError("JRV-NFD-001", "Sehen ist nicht eingerichtet",
+                              user_message="Sehen ist in dieser Installation nicht eingerichtet.")
+        image = decode_image(body.image)
+        text = await container.vision.describe(image, body.question)
+        return {"text": style.finalize(text), "model": container.vision.model}
+
+    @app.post("/v1/conversations/{conversation_id}/messages")
+    async def post_message(conversation_id: str, body: MessageIn, who: Principal = Depends(principal)) -> dict:
+        result = await container.run_turn(
+            TurnRequest(text=body.text, session_id=conversation_id, principal=who, mode=body.mode),
+            channel=body.channel, location=body.location,
+        )
+        return turn_to_json(result)
+
+    @app.post("/v1/tts", response_class=Response, responses={200: {"content": {"audio/wav": {}}}})
+    async def tts(body: SpeechIn, who: Principal = Depends(principal)) -> Response:
+        """JARVIS-Stimme (Piper, lokal): ein Satz -> WAV. Die Weboberfläche legt den KI-Klangeffekt darüber."""
+        if container.tts is None:
+            raise JarvisError("JRV-INT-001", "Sprachausgabe nicht eingerichtet")
+        try:
+            audio = await asyncio.wait_for(container.tts.synthesize_wav(body.text), 30)
+        except JarvisError:
+            raise
+        except (OSError, asyncio.TimeoutError) as exc:
+            raise JarvisError("JRV-INT-001", f"Piper nicht erreichbar: {exc}",
+                              user_message="Die JARVIS-Stimme ist gerade nicht erreichbar.") from exc
+        return Response(content=audio, media_type="audio/wav")
+
+    @app.post("/v1/confirmations/{confirmation_id}")
+    async def resolve(confirmation_id: str, body: ConfirmationIn, who: Principal = Depends(principal)) -> dict:
+        record = await container.orchestrator.resolve_confirmation(
+            confirmation_id, approve=body.decision == "approve", resolver=who, method_used=body.method)
+        return record.to_result_dict()
+
+    @app.post("/v1/events", status_code=202)
+    async def ingest(event: dict[str, Any] = Body(...), who: Principal = Depends(principal)) -> dict:
+        # Trust und Actor bestimmt der Server aus dem Token – nie aus dem Payload.
+        ce = CloudEvent.model_validate({**event, "trust": who.trust, "actor": who.actor})
+        await container.bus.publish(ce)
+        return {"accepted": ce.id}
+
+    @app.post("/v1/webhooks/{hook_id}", status_code=202)
+    async def webhook(hook_id: str, request: Request) -> dict:
+        secret = container.webhook_secrets.get(hook_id)
+        if secret is None:
+            raise JarvisError("JRV-NFD-001", f"Webhook {hook_id} unbekannt")
+        body = await request.body()
+        verify(secret, body=body, timestamp_header=request.headers.get("x-jarvis-timestamp"),
+               signature_header=request.headers.get("x-jarvis-signature"),
+               delivery_id=request.headers.get("x-jarvis-delivery"), replay_cache=container.replay_cache)
+        try:
+            payload = json.loads(body) if body else {}
+        except json.JSONDecodeError as exc:
+            raise JarvisError("JRV-VAL-001", "Body ist kein JSON") from exc
+        event = CloudEvent(type="jarvis.webhook.received", source=f"/webhooks/{hook_id}",
+                           actor=f"service:{hook_id}", trust="external_untrusted",
+                           data={"webhook_id": hook_id, "payload": payload})
+        await container.bus.publish(event)
+        return {"accepted": event.id}
+
+    @app.get("/v1/system/health")
+    async def health() -> dict:
+        return {
+            "status": "ok",
+            "cloud_llm": container.router.cloud_breaker.state,
+            "local_llm": container.llm_status,
+            "pc_agent": "connected" if container.agents and container.agents.connected else "disconnected",
+            "smart_home": _home_health(container.smarthome),
+            "stt": f"local:{container.speech.state}" if container.speech is not None else "browser",
+            "tts": getattr(container.tts, "label", "configured") if container.tts is not None else "off",
+            "style": f"{style.name} {style.version}",
+            "llm": {"local_model": getattr(container.router.local, "model", None),
+                    "cloud_model": getattr(container.router.cloud, "model", None),
+                    "mode": getattr(container.router, "mode", "auto")},
+        }
+
+    @app.get("/v1/startup", tags=["System"])
+    async def startup(location: str | None = None, who: Principal = Depends(principal)) -> dict:
+        """Start-Sequenz der Oberfläche: Systemcheck, Begrüßung mit Wetter und nächstem Termin."""
+        situation = container.situation(who, "voice")
+        state = await health()
+        llm = {"ready": "ok"}.get(state["local_llm"], "warn")
+        home = {"connected": "ok", "disconnected": "warn"}.get(state["smart_home"], "off")
+        checks = [
+            {"id": "llm", "label": "Sprachmodell", "state": llm,
+             "detail": state["llm"]["local_model"] or "", "problem": "das Sprachmodell"},
+            {"id": "voice", "label": "Stimme", "state": "ok",
+             "detail": "Browserstimme" if state["tts"] == "off" else state["tts"], "problem": ""},
+            {"id": "pc", "label": "PC-Steuerung", "state": "ok" if state["pc_agent"] == "connected" else "warn",
+             "detail": "", "problem": "die PC-Steuerung"},
+            {"id": "home", "label": "Smart Home", "state": home, "detail": "", "problem": "das Smart Home"},
+        ]
+        if container.devices is not None:
+            count = len(container.devices.devices)
+            checks.append({"id": "devices", "label": "Raum-Geräte", "state": "ok" if count else "off",
+                           "detail": f"{count} gekoppelt" if count else "keine", "problem": ""})
+        weather = None
+        registry = getattr(container.orchestrator, "registry", None)
+        cap = registry.get("info.weather") if registry is not None else None
+        place = location or getattr(situation, "location", None)
+        if cap is not None:
+            from .tools import InvocationContext
+
+            try:
+                weather = await asyncio.wait_for(cap.handler(
+                    {"location": place} if place else {}, InvocationContext(correlation_id="startup", actor=who.actor)),
+                    timeout=5)
+                weather = weather if isinstance(weather, dict) and weather.get("current") else None
+            except Exception:  # Wetter ist nur Beiwerk – die Start-Sequenz läuft trotzdem
+                weather = None
+            checks.append({"id": "net", "label": "Wetterdienst", "state": "ok" if weather else "warn",
+                           "detail": (weather or {}).get("location", ""), "problem": ""})
+        next_event, events_today = None, None
+        if container.calendar is not None:
+            from datetime import timedelta
+
+            from .agenda import describe
+
+            try:
+                now = situation.now
+                end = now.replace(hour=23, minute=59, second=0, microsecond=0)
+                upcoming = [e for e in await container.calendar.between(now, end) if not e.all_day]
+                events_today = len(upcoming)
+                if not upcoming:
+                    later = [e for e in await container.calendar.between(now, now + timedelta(hours=12)) if not e.all_day]
+                    upcoming = later
+                if upcoming:
+                    next_event = describe(upcoming[0], container.calendar.tz)
+                checks.append({"id": "calendar", "label": "Kalender", "state": "ok",
+                               "detail": f"{events_today} heute" if events_today else "frei", "problem": ""})
+            except JarvisError:
+                checks.append({"id": "calendar", "label": "Kalender", "state": "warn", "detail": "", "problem": ""})
+        problems = [c["problem"] for c in checks if c["state"] == "warn" and c["problem"]]
+        text = style.startup_text(situation.now, problems, weather, next_event, events_today)
+        return {"checks": [{k: v for k, v in c.items() if k != "problem"} for c in checks],
+                "text": style.finalize(text), "weather": weather}
+
+    @app.websocket("/v1/stream")
+    async def stream(ws: WebSocket) -> None:
+        # Browser können beim WebSocket-Handshake keine Header setzen -> kurzlebiges Token als Query-Parameter
+        who = container.tokens.get(ws.query_params.get("token", ""))
+        await ws.accept()  # erst annehmen: vor accept() würde das Schließen zu HTTP 403, der Client sähe nur 1006
+        if who is None:
+            await ws.close(code=4401)  # Authentifizierung fehlgeschlagen – Client verbindet nicht neu
+            return
+        lock = asyncio.Lock()
+
+        async def send(message: dict[str, Any]) -> None:
+            async with lock:  # Antworten und Meldungen (Timer) können gleichzeitig entstehen
+                await ws.send_json(message)
+
+        async def handle(msg: dict[str, Any]) -> None:
+            kind = msg.get("type")
+            if kind == "input.text":
+                async def on_text(delta: str) -> None:
+                    await send({"type": "output.text_delta", "delta": delta})
+
+                async def on_status(data: dict[str, Any]) -> None:  # „schlägt nach“, „ruft Werkzeug auf“
+                    await send({"type": "status", **data})
+
+                location = msg.get("location")
+                result = await container.run_turn(
+                    TurnRequest(text=msg["text"], session_id=msg["session_id"], principal=who),
+                    channel=msg.get("channel", "app"), on_text=on_text, on_status=on_status,
+                    location=location[:100] if isinstance(location, str) and location.strip() else None)
+                await send({"type": "output.final", **turn_to_json(result)})
+            elif kind == "confirmation.resolve":
+                record = await container.orchestrator.resolve_confirmation(
+                    msg["confirmation_id"], approve=msg["decision"] == "approve", resolver=who,
+                    method_used=msg.get("method", "app"))
+                await send({"type": "action.update", "action": record.to_result_dict()})
+            elif kind == "ping":
+                await send({"type": "pong"})
+            elif kind == "wake.listen":  # dieses Fenster hört (nicht mehr) auf „Jarvis“
+                if container.wake is not None:
+                    container.wake.listen(client, bool(msg.get("on")))
+            elif kind == "wake.claim":  # „Jarvis“ gehört – darf dieses Gerät antworten?
+                score = msg.get("score")
+                score = float(score) if isinstance(score, int | float) and not isinstance(score, bool) else None
+
+                async def decide(ref: Any = msg.get("ref")) -> None:
+                    granted = True if container.wake is None else await container.wake.claim(client, score)
+                    with contextlib.suppress(Exception):  # Fenster inzwischen geschlossen
+                        await send({"type": "wake.result", "ref": ref, "granted": granted})
+
+                claims.add(task := asyncio.create_task(decide()))  # nicht blockieren: Abstimmung dauert bis 0,6 s
+                task.add_done_callback(claims.discard)
+            else:
+                raise JarvisError("JRV-VAL-001", f"Unbekannter Nachrichtentyp {kind}")
+
+        client = f"{who.actor}#{secrets.token_hex(4)}"
+        claims: set[asyncio.Task[None]] = set()
+        notifier = container.notifier
+        if notifier is not None:
+            notifier.attach(who.actor, send, area=who.area)
+            for message in notifier.drain(who.actor):  # verpasste Meldungen (kein Fenster offen)
+                await send(message)
+        try:
+            while True:
+                msg = await ws.receive_json()
+                try:
+                    await handle(msg)
+                except JarvisError as exc:
+                    await send({"type": "error", "error": styled(exc.to_problem())})
+                except WebSocketDisconnect:
+                    raise
+                except Exception as exc:  # Verbindung offen halten, der nächste Turn soll funktionieren
+                    log.exception("unhandled error in stream")
+                    problem = JarvisError("JRV-SYS-001", type(exc).__name__,
+                                          user_message=style.system_text("generic_error")).to_problem()
+                    await send({"type": "error", "error": styled(problem)})
+        except WebSocketDisconnect:
+            return
+        finally:
+            if container.wake is not None:
+                container.wake.listen(client, False)
+            if notifier is not None:
+                notifier.detach(who.actor, send)
+
+    @app.websocket("/v1/audio")
+    async def audio(ws: WebSocket) -> None:
+        """Lokale Spracherkennung: Binär-Nachrichten = PCM 16 kHz mono 16 Bit, Text = {"type": "mode", "mode": …}."""
+        who = container.tokens.get(ws.query_params.get("token", ""))
+        await ws.accept()
+        if who is None:
+            await ws.close(code=4401)
+            return
+        if container.speech is None:
+            await ws.send_json({"type": "error", "message": "Lokale Spracherkennung ist nicht installiert."})
+            await ws.close(code=4404)
+            return
+        if container.speech.state == "idle":  # erst jetzt laden: nur wer lokal erkennen will, braucht das Modell
+            asyncio.create_task(container.speech.warm_up())
+        session = container.speech.session()
+        await ws.send_json({"type": "ready", "state": container.speech.state, "wake": session.wake is not None})
+        try:
+            while True:
+                message = await ws.receive()
+                if message.get("type") == "websocket.disconnect":
+                    return
+                if message.get("bytes"):
+                    if len(message["bytes"]) > 64000:  # höchstens ~2 s je Nachricht
+                        continue
+                    for event in await session.feed(message["bytes"]):
+                        await ws.send_json(event)
+                elif message.get("text"):
+                    try:
+                        control = json.loads(message["text"])
+                        session.set_mode(str(control.get("mode", "idle")))
+                    except (ValueError, TypeError) as exc:
+                        await ws.send_json({"type": "error", "message": f"Ungültige Steuernachricht: {exc}"})
+        except WebSocketDisconnect:
+            return
+
+    @app.websocket("/v1/agent")
+    async def agent(ws: WebSocket) -> None:
+        # Der PC-Agent verbindet sich von sich aus (kein offener Port auf dem PC) und meldet, was er kann.
+        who = container.tokens.get(ws.query_params.get("token", ""))
+        await ws.accept()
+        if who is None or container.agents is None:
+            await ws.close(code=4401)
+            return
+        hub = container.agents
+        handle = None
+        try:
+            hello = await ws.receive_json()
+            if hello.get("type") != "agent.hello":
+                await ws.close(code=4400)
+                return
+            handle = hub.attach(ws.send_json, {k: hello[k] for k in ("name", "version", "apps", "start_apps", "folders",
+                                                                     "actions") if k in hello})
+            log.info("PC-Agent verbunden", extra={"agent": hello.get("name"), "actor": who.actor})
+            while True:
+                message = await ws.receive_json()
+                if message.get("type") == "agent.result":
+                    hub.resolve(message)
+                elif message.get("type") == "agent.apps":  # Programmliste geändert (Installation, Deinstallation)
+                    hub.update(message)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            if handle is not None:
+                hub.detach(handle)
+
+    # Zuletzt: alles, was keine API-Route ist, liefert die Browser-Oberfläche aus
+    app.mount("/", _WebFiles(directory=WEB_DIR, html=True), name="web")
+    return app

@@ -1,0 +1,18 @@
+{
+  "specversion": "1.0",
+  "id": "evt_01J8Z3P7Q8R9S0T1U2V3W4X5Y6",
+  "source": "/worker/proactive",
+  "type": "jarvis.proactive.suggestion",
+  "time": "2026-09-26T19:41:00Z",
+  "trust": "system",
+  "actor": "system:proactive",
+  "priority": "high",
+  "data": {
+    "suggestion_id": "sug_91c2",
+    "kind": "warning",
+    "message": "Das Fenster im Bad ist offen, und in etwa 20 Minuten setzt Regen ein.",
+    "score": 0.82,
+    "channels": ["voice", "push"],
+    "target_user": "household"
+  }
+}
