@@ -117,6 +117,19 @@ def parse_feed(xml_text: str, limit: int) -> list[dict[str, str | None]]:
     return out
 
 
+def _next_hours(hourly: dict[str, Any], now: str | None, count: int) -> list[dict[str, Any]]:
+    """Die nächsten Stunden ab jetzt (Temperatur, Regenwahrscheinlichkeit, Wettercode) – für die Stundenkurve."""
+    times = hourly.get("time") or []
+    start = next((i for i, t in enumerate(times) if now and t >= now[:13]), 0)
+    temps, rain, codes = (hourly.get(k) or [] for k in ("temperature_2m", "precipitation_probability", "weather_code"))
+
+    def pick(values: list[Any], i: int) -> Any:
+        return values[i] if i < len(values) else None
+
+    return [{"time": times[i][11:16], "temp_c": pick(temps, i), "rain_pct": pick(rain, i), "code": pick(codes, i)}
+            for i in range(start, min(len(times), start + count))]
+
+
 def register_info_capabilities(registry: ToolRegistry, config: InfoConfig | None = None, *,
                                client: Any = None) -> None:
     config = config or InfoConfig()
@@ -141,16 +154,19 @@ def register_info_capabilities(registry: ToolRegistry, config: InfoConfig | None
         if found is None:
             return {"error": f"Ort „{place}“ nicht gefunden. Frage nach einer genaueren Ortsangabe."}
         latitude, longitude, label = found
+        days = int(args.get("days", 1))
         data = await fetch.get("https://api.open-meteo.com/v1/forecast", {
             "latitude": latitude, "longitude": longitude, "timezone": "auto",
-            "forecast_days": args.get("days", 1),
+            "forecast_days": max(days, 7),  # Wochenvorschau für die Anzeige, gesprochen wird nur das Gefragte
             "current": "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,"
-                       "wind_speed_10m,is_day",
+                       "wind_speed_10m,wind_direction_10m,is_day",
+            "hourly": "temperature_2m,precipitation_probability,weather_code",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
-                     "precipitation_sum",
+                     "precipitation_sum,sunrise,sunset",
         })
         current = data.get("current") or {}
         daily = data.get("daily") or {}
+        hourly = data.get("hourly") or {}
 
         def day_value(key: str, i: int) -> Any:
             values = daily.get(key) or []
@@ -168,7 +184,10 @@ def register_info_capabilities(registry: ToolRegistry, config: InfoConfig | None
                 "humidity_pct": current.get("relative_humidity_2m"),
                 "precipitation_mm": current.get("precipitation"),
                 "wind_kmh": current.get("wind_speed_10m"),
+                "wind_dir_deg": current.get("wind_direction_10m"),
             },
+            "sun": {"rise": day_value("sunrise", 0), "set": day_value("sunset", 0)},
+            "hourly": _next_hours(hourly, current.get("time"), 24),
             "forecast": [
                 {
                     "date": date,
@@ -179,7 +198,13 @@ def register_info_capabilities(registry: ToolRegistry, config: InfoConfig | None
                     "precipitation_probability_pct": day_value("precipitation_probability_max", i),
                     "precipitation_mm": day_value("precipitation_sum", i),
                 }
-                for i, date in enumerate(daily.get("time") or [])
+                for i, date in enumerate((daily.get("time") or [])[:days])
+            ],
+            "week": [
+                {"date": date, "code": day_value("weather_code", i), "temp_max_c": day_value("temperature_2m_max", i),
+                 "temp_min_c": day_value("temperature_2m_min", i),
+                 "precipitation_probability_pct": day_value("precipitation_probability_max", i)}
+                for i, date in enumerate((daily.get("time") or [])[:7])
             ],
             "source": "Open-Meteo",
         }

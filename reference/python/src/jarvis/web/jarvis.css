@@ -796,3 +796,107 @@ dialog input[type="password"] {
 .pair-link { overflow-wrap: anywhere; font-size: 12px; }
 .pair .steps { padding-left: 18px; margin: 8px 0 0; }
 .row-field input[list] { flex: 0 1 160px; }
+
+/* ---------- Digitale Shows: große, animierte Anzeigen (Wetter, Suche, Nachrichten, Börse, Termine) ---------- */
+body.has-show .stage { --hud-size: min(30vmin, 260px); }
+body.has-show .cards { width: min(100%, 860px); max-height: 62vh; }
+.card.show { padding: 18px 20px; }
+/* Holo-Auftritt: Lichtkante läuft einmal über die Karte */
+.card.show > .kicker::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 40%; pointer-events: none;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--accent) 22%, transparent), transparent);
+  animation: holo-scan 1.1s ease-out 0.1s both;
+}
+@keyframes holo-scan { from { transform: translateY(-100%); opacity: 1; } to { transform: translateY(260%); opacity: 0; } }
+.draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.4s cubic-bezier(0.4, 0, 0.2, 1) 0.15s forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes rise-in { from { opacity: 0; transform: translateY(10px); } }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.4); } }
+@keyframes grow-up { from { transform: scaleY(0); } }
+body[data-fx="aus"] .card.show *, body[data-fx="aus"] .card.show > .kicker::after { animation: none !important; }
+body[data-fx="aus"] .draw { stroke-dashoffset: 0; }
+
+/* Wetter-Show */
+.weather.show .now { grid-template-columns: 110px 1fr auto; }
+.weather.show .now .wx { width: 110px; height: 110px; }
+.weather.show .temp { font-size: 58px; }
+.instruments { display: flex; gap: 14px; align-items: center; }
+.sunarc { width: 130px; height: 80px; overflow: visible; }
+.sunarc .track { fill: none; stroke: var(--line); stroke-width: 2; stroke-dasharray: 3 4; }
+.sunarc .done { fill: none; stroke: #ffc857; stroke-width: 2.5; }
+.sunarc .horizon { stroke: color-mix(in srgb, var(--accent) 40%, transparent); stroke-width: 1; }
+.sunarc .sundot { fill: #ffd76a; filter: drop-shadow(0 0 6px #ffc857); animation: pop-in 0.6s ease 1.2s both; }
+.sunarc text, .windrose text, .hourcurve text, .spark text { fill: var(--muted); font-size: 8px; font-family: var(--font-hud); }
+.wind { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.windrose { width: 70px; height: 70px; }
+.windrose .ring { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.windrose .needle { fill: var(--accent); transform: rotate(var(--to, 0deg)); animation: needle 1.6s cubic-bezier(0.3, 1.4, 0.4, 1) 0.2s both; }
+@keyframes needle { from { transform: rotate(calc(var(--to, 0deg) - 200deg)); } }
+.windlabel { font-size: 12px; color: var(--text); font-family: var(--font-hud); }
+.windlabel small { color: var(--muted); font-size: 11px; }
+.hours { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.hours .label, .card.show .facts { margin: 0 0 4px; font-size: 11px; color: var(--muted); letter-spacing: 0.08em; }
+.hourcurve, .spark { width: 100%; height: auto; aspect-ratio: 600 / 120; display: block; overflow: visible; }
+.hourcurve text { font-size: 10px; }
+.hourcurve .tval { fill: var(--text); font-size: 11px; animation: rise-in 0.5s ease 0.9s both; }
+.temp-line, .stock-line { fill: none; stroke: var(--accent); stroke-width: 2.5; vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 70%, transparent)); }
+.temp-area, .stock-area { fill: color-mix(in srgb, var(--accent) 14%, transparent); animation: rise-in 1.2s ease 0.6s both; }
+.tdot { fill: var(--bg); stroke: var(--accent); stroke-width: 2; animation: pop-in 0.4s ease both; }
+.rainbar { fill: #4d9dff; opacity: 0.75; transform-box: fill-box; transform-origin: bottom; animation: grow-up 0.5s ease both; }
+.weather.show .day { animation: rise-in 0.5s ease both; }
+.weather.show .day:nth-child(2) { animation-delay: 0.08s; } .weather.show .day:nth-child(3) { animation-delay: 0.16s; }
+.weather.show .day:nth-child(4) { animation-delay: 0.24s; } .weather.show .day:nth-child(5) { animation-delay: 0.32s; }
+.weather.show .day:nth-child(6) { animation-delay: 0.4s; } .weather.show .day:nth-child(7) { animation-delay: 0.48s; }
+
+/* Suchergebnisse */
+.card.search { --accent: var(--c-research); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.tile {
+  display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 10px; text-decoration: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); background: rgba(0, 0, 0, 0.25);
+  color: var(--text); animation: rise-in 0.45s ease both; transition: border-color 0.2s, transform 0.2s;
+}
+.tile:hover { border-color: var(--accent); transform: translateY(-2px); }
+.tile .host { font-size: 11px; color: var(--accent); font-family: var(--font-hud); letter-spacing: 0.08em; }
+.tile b { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.tile .snip { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Nachrichten */
+.card.news { --accent: #ff9f6b; }
+.headlines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.headlines li { display: grid; grid-template-columns: 48px 1fr; gap: 10px; animation: rise-in 0.45s ease both; }
+.headlines .when { font-family: var(--font-hud); color: var(--accent); font-size: 13px; padding-top: 1px; }
+.headlines a, .headlines b { color: var(--text); font-weight: 600; text-decoration: none; }
+.headlines a:hover { color: var(--accent); }
+.headlines p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+
+/* Börse */
+.card.stock { --accent: var(--ok); }
+.card.stock.down { --accent: var(--danger); }
+.quote { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.quote .name { font-family: var(--font-hud); font-size: 18px; letter-spacing: 0.06em; }
+.quote .price { font-family: var(--font-hud); font-size: 44px; color: var(--text); }
+.quote .price small { font-size: 16px; color: var(--muted); }
+.quote .delta { font-family: var(--font-hud); color: var(--accent); font-size: 18px; animation: pop-in 0.5s ease 0.8s both; }
+.spark { aspect-ratio: 600 / 110; margin: 8px 0 4px; }
+
+/* Termine */
+.card.agenda { --accent: var(--c-think); }
+.timeline { list-style: none; margin: 0 0 0 6px; padding: 0 0 0 18px; border-left: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); }
+.timeline li { position: relative; display: grid; grid-template-columns: 96px 1fr; gap: 10px; padding: 6px 0; animation: rise-in 0.45s ease both; }
+.timeline li::before { content: ""; position: absolute; left: -25px; top: 12px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--bg); border: 2px solid var(--accent); }
+.timeline .time { font-family: var(--font-hud); color: var(--accent); font-size: 14px; }
+.timeline b { color: var(--text); font-weight: 600; display: block; }
+.timeline small { color: var(--muted); font-size: 12px; }
+.card.agenda .empty { color: var(--muted); margin: 4px 0; }
+
+@media (max-width: 900px) {
+  .weather.show .now { grid-template-columns: 84px 1fr; }
+  .weather.show .now .wx { width: 84px; height: 84px; }
+  .weather.show .temp { font-size: 44px; }
+  .instruments { grid-column: 1 / -1; justify-content: space-around; }
+  body.has-show .cards { max-height: none; }
+  .hourcurve text { font-size: 17px; } .hourcurve .tval { font-size: 19px; }  /* Kurve wird schmal skaliert */
+}

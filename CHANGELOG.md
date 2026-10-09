@@ -1,5 +1,31 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.10.0 – 2026-10-09
+
+### Neu
+- **Digitale Shows:** Große, animierte Anzeigen; der Kreis rückt dafür zur Seite.
+  - **Wetter:**
+    - Temperatur zählt hoch.
+    - Sonnenbogen von Aufgang bis Untergang, die Sonne steht an der aktuellen Stelle.
+    - Windrose mit Richtung und Stärke.
+    - Temperaturkurve der nächsten 24 Stunden mit Regenwahrscheinlichkeit als Balken.
+    - Wochenvorschau.
+  - **Websuche:** Ergebnis-Kacheln zum Anklicken.
+  - **Nachrichten:** Schlagzeilen mit Uhrzeit.
+  - **Börse:** Kurs zählt hoch, Verlauf der letzten 30 Handelstage.
+  - **Termine und Tagesplan:** als Zeitleiste.
+  - Mit „Visuelle Effekte: aus“ erscheinen die Anzeigen ohne Animation.
+
+### Geändert
+- **Spracherkennung:** „Automatisch“ nutzt wieder die Erkennung von Chrome bzw. Edge, die schneller und
+  treffsicherer ist. Die lokale Erkennung (Whisper) gibt es nur noch auf Wunsch. Ihr Modell lädt erst, wenn sie
+  jemand nutzt; es belegt also nicht mehr beim Start den Rechner.
+- **Nichts Erfundenes:**
+  - Antworten des Sprachmodells mit Links, die aus keinem echten Suchergebnis stammen, werden verworfen.
+  - „Arteriion suchen im Web“, „Suche X im Internet“ und „Such X online“ sind jetzt echte Websuchen.
+  - „Was geht ab?“ beantwortet JARVIS ohne Sprachmodell; dabei kamen vorher erfundene Termine heraus.
+  - Das Modell bietet nur noch an, wofür es ein Werkzeug gibt (kein Staubsauger ohne Staubsauger).
+
 ## Jarvis-Modul 2.9.1 – 2026-10-09
 
 ### Behoben

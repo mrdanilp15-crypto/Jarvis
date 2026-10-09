@@ -54,6 +54,7 @@ def test_stock_quote_and_text():
     data = run(registry, "info.stock", {"name": "Apple"})
     assert "s=aapl.us" in seen[0]
     assert (data["close"], data["change_pct"], data["low_4w"], data["high_4w"]) == (227.48, 1.19, 219.0, 229.0)
+    assert data["history"][-1] == {"date": data["date"], "close": 227.48}  # Kursverlauf für die Anzeige
     assert stock_text(data) == ("Apple schloss am 8. Oktober bei 227,48 Dollar – 1,2 Prozent höher als am Vortag. "
                                 "Spanne der letzten vier Wochen: 219,00 bis 229,00.")
 

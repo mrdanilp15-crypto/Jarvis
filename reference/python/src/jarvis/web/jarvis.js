@@ -273,6 +273,7 @@
       const timer = lifetimeMs ? setTimeout(() => this.remove(key), lifetimeMs) : 0;
       this.items.set(key, { card, timer });
       document.body.classList.add("has-cards");
+      document.body.classList.toggle("has-show", [...this.items.values()].some((i) => i.card.classList.contains("show")));
       return card;
     },
     remove(key, instant = false) {
@@ -284,6 +285,7 @@
       const done = () => {
         item.card.remove();
         if (!this.items.size) document.body.classList.remove("has-cards");
+        document.body.classList.toggle("has-show", [...this.items.values()].some((i) => i.card.classList.contains("show")));
       };
       if (instant) { done(); return; }
       item.card.classList.add("leaving");
@@ -369,6 +371,7 @@
     now.insertAdjacentHTML("afterbegin", weatherIcon(sky));
     const info = el("div");
     const temp = el("div", "temp", `${round(current.temperature_c)}°`);
+    if (typeof current.temperature_c === "number") countUp(temp, current.temperature_c, "°");
     if (typeof current.feels_like_c === "number") temp.append(el("small", "", `gefühlt ${round(current.feels_like_c)}°`));
     info.append(temp, el("div", "cond", current.conditions ?? ""));
     const facts = el("div", "facts");
@@ -379,9 +382,12 @@
     fact("Regen", today && typeof today.precipitation_probability_pct === "number" ? `${today.precipitation_probability_pct} %` : null);
     info.append(facts);
     now.append(info);
+    now.append(instruments(data));
     card.append(now);
+    const hours = (data.hourly ?? []).filter((h) => typeof h.temp_c === "number");
+    if (hours.length > 3) card.append(hourCurve(hours));
 
-    const forecast = data.forecast ?? [];
+    const forecast = (data.week?.length ?? 0) > (data.forecast?.length ?? 0) ? data.week : (data.forecast ?? []);
     if (forecast.length > 1) {
       const lows = forecast.map((d) => d.temp_min_c).filter((v) => typeof v === "number");
       const highs = forecast.map((d) => d.temp_max_c).filter((v) => typeof v === "number");
@@ -406,6 +412,7 @@
       });
       card.append(days);
     }
+    card.classList.add("show");
     cards.show("weather", card, 120000);
     ambient.start(sky);
     weatherChip.set(data, sky);
@@ -755,6 +762,223 @@
     store.set("presence.minutes", settings.presenceMinutes);
   });
 
+  // -- Digitale Shows: animierte Zahlen, Kurven, Instrumente ---------------------------------------------------------
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const calm = () => document.body.dataset.fx === "aus" || matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function svg(tag, attrs = {}, text) {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+  // Zahl zählt hoch (der erste Textknoten des Elements), z. B. 0° -> 14°
+  function countUp(node, target, suffix = "", decimals = 0, ms = 900) {
+    const textNode = node.firstChild;
+    if (!textNode || calm()) return;
+    const format = (v) => `${v.toLocaleString("de-DE", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}${suffix}`;
+    const started = performance.now();
+    const from = target > 0 ? 0 : target * 0.2;
+    const step = (now) => {
+      const t = Math.min(1, (now - started) / ms), eased = 1 - (1 - t) ** 3;
+      textNode.textContent = format(from + (target - from) * eased);
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  // Glatte Kurve durch Punkte (Catmull-Rom als Bézier)
+  function smoothPath(points) {
+    if (points.length < 2) return "";
+    let d = `M${points[0][0].toFixed(1)},${points[0][1].toFixed(1)}`;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const [p0, p1, p2, p3] = [points[i - 1] ?? points[i], points[i], points[i + 1], points[i + 2] ?? points[i + 1]];
+      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+      const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+      d += ` C${c1[0].toFixed(1)},${c1[1].toFixed(1)} ${c2[0].toFixed(1)},${c2[1].toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+    }
+    return d;
+  }
+  // Linie + Fläche, die sich beim Erscheinen selbst zeichnet
+  function drawnCurve(parent, points, height, className) {
+    const line = smoothPath(points);
+    const area = `${line} L${points[points.length - 1][0]},${height} L${points[0][0]},${height} Z`;
+    parent.append(svg("path", { d: area, class: `${className}-area` }));
+    parent.append(svg("path", { d: line, class: `${className}-line draw`, pathLength: 1 }));
+  }
+
+  // Wetter: Sonnenbogen (Aufgang -> Untergang, Sonne an der aktuellen Stelle) und Windrose
+  const minutesOf = (iso) => { const m = /T(\d{2}):(\d{2})/.exec(iso ?? ""); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+  const COMPASS = ["N", "NO", "O", "SO", "S", "SW", "W", "NW"];
+  function instruments(data) {
+    const box = el("div", "instruments");
+    const rise = minutesOf(data.sun?.rise), set = minutesOf(data.sun?.set), now = minutesOf(data.current?.time);
+    if (rise !== null && set !== null) {
+      const t = now === null ? 0.5 : Math.max(0, Math.min(1, (now - rise) / Math.max(1, set - rise)));
+      const angle = Math.PI * (1 - t), x = 50 + 40 * Math.cos(angle), y = 50 - 40 * Math.sin(angle);
+      const arc = svg("svg", { viewBox: "0 0 100 62", class: "sunarc", "aria-hidden": "true" });
+      arc.append(svg("path", { d: "M10,50 A40,40 0 0 1 90,50", class: "track" }));
+      arc.append(svg("path", { d: `M10,50 A40,40 0 0 1 ${x.toFixed(1)},${y.toFixed(1)}`, class: "done draw", pathLength: 1 }));
+      arc.append(svg("line", { x1: 4, y1: 50, x2: 96, y2: 50, class: "horizon" }));
+      if (now === null || (now >= rise && now <= set)) arc.append(svg("circle", { cx: x.toFixed(1), cy: y.toFixed(1), r: 4.5, class: "sundot" }));
+      const time = (iso) => (iso ?? "").slice(11, 16);
+      arc.append(svg("text", { x: 10, y: 60, "text-anchor": "middle" }, `↑ ${time(data.sun.rise)}`));
+      arc.append(svg("text", { x: 90, y: 60, "text-anchor": "middle" }, `↓ ${time(data.sun.set)}`));
+      box.append(arc);
+    }
+    const dir = data.current?.wind_dir_deg;
+    if (typeof dir === "number") {
+      const rose = svg("svg", { viewBox: "-30 -30 60 60", class: "windrose", "aria-hidden": "true" });
+      rose.append(svg("circle", { r: 24, class: "ring" }));
+      ["N", "O", "S", "W"].forEach((label, i) => {
+        const a = (i * 90 - 90) * Math.PI / 180;
+        rose.append(svg("text", { x: (19 * Math.cos(a)).toFixed(1), y: (19 * Math.sin(a) + 2.5).toFixed(1), "text-anchor": "middle" }, label));
+      });
+      const needle = svg("g", { class: "needle" });
+      needle.style.setProperty("--to", `${(dir + 180) % 360}deg`);  // Pfeil zeigt, wohin der Wind weht
+      needle.append(svg("path", { d: "M0,-15 L4,4 L0,1 L-4,4 Z" }));
+      rose.append(needle);
+      const label = el("div", "windlabel", `${round(data.current.wind_kmh)} km/h`);
+      label.append(el("small", "", ` aus ${COMPASS[Math.round(dir / 45) % 8]}`));
+      const wrap = el("div", "wind");
+      wrap.append(rose, label);
+      box.append(wrap);
+    }
+    return box;
+  }
+
+  // Wetter: Temperaturkurve der nächsten 24 Stunden, darunter Regenwahrscheinlichkeit als Balken
+  function hourCurve(hours) {
+    const W = 600, H = 120, top = 22, bottom = 84;
+    const temps = hours.map((h) => h.temp_c);
+    const lo = Math.min(...temps), hi = Math.max(...temps), span = Math.max(1, hi - lo);
+    const x = (i) => 14 + (i / (hours.length - 1)) * (W - 28);
+    const y = (t) => bottom - ((t - lo) / span) * (bottom - top);
+    const chart = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "hourcurve", role: "img",
+      "aria-label": `Temperatur der nächsten ${hours.length} Stunden: ${round(lo)} bis ${round(hi)} Grad` });
+    hours.forEach((h, i) => {
+      if (typeof h.rain_pct === "number" && h.rain_pct > 0) {
+        const bar = svg("rect", { x: (x(i) - 5).toFixed(1), y: (H - 14 - h.rain_pct * 0.2).toFixed(1), width: 10,
+          height: (h.rain_pct * 0.2).toFixed(1), rx: 2, class: "rainbar" });
+        bar.style.animationDelay = `${0.4 + i * 0.03}s`;
+        chart.append(bar);
+      }
+    });
+    drawnCurve(chart, hours.map((h, i) => [x(i), y(h.temp_c)]), H - 14, "temp");
+    hours.forEach((h, i) => {
+      if (i % 3) return;
+      const dot = svg("circle", { cx: x(i).toFixed(1), cy: y(h.temp_c).toFixed(1), r: 3, class: "tdot" });
+      dot.style.animationDelay = `${0.2 + i * 0.04}s`;
+      chart.append(dot, svg("text", { x: x(i).toFixed(1), y: (y(h.temp_c) - 8).toFixed(1), class: "tval", "text-anchor": "middle" }, `${round(h.temp_c)}°`));
+      chart.append(svg("text", { x: x(i).toFixed(1), y: H - 1, class: "hour", "text-anchor": "middle" }, i === 0 ? "Jetzt" : h.time));
+    });
+    const box = el("div", "hours");
+    box.append(el("p", "label", "Nächste 24 Stunden"), chart);
+    return box;
+  }
+
+  // Suchergebnisse als Kacheln, die nacheinander einfliegen
+  function showSearch(data) {
+    const results = (data.results ?? []).filter((r) => /^https?:\/\//.test(r.url ?? "")).slice(0, 6);
+    if (!results.length) return;
+    const card = el("section", "card show search");
+    card.append(el("p", "kicker", `Websuche · ${data.query ?? ""}`));
+    const grid = el("div", "tiles");
+    results.forEach((hit, i) => {
+      const tile = el("a", "tile");
+      tile.href = hit.url;
+      tile.target = "_blank";
+      tile.rel = "noopener noreferrer";
+      tile.style.animationDelay = `${0.08 * i}s`;
+      tile.append(el("span", "host", hostOf(hit.url) ?? ""), el("b", "", hit.title ?? hit.url));
+      if (hit.snippet) tile.append(el("span", "snip", hit.snippet));
+      grid.append(tile);
+    });
+    card.append(grid);
+    cards.show("search", card, 180000);
+  }
+
+  // Nachrichten: Schlagzeilen untereinander, mit Quelle und Uhrzeit
+  function showNews(data) {
+    const items = (data.headlines ?? []).slice(0, 6);
+    if (!items.length) return;
+    const card = el("section", "card show news");
+    card.append(el("p", "kicker", `Nachrichten · ${data.source ?? ""}`));
+    const list = el("ol", "headlines");
+    items.forEach((item, i) => {
+      const li = el("li");
+      li.style.animationDelay = `${0.09 * i}s`;
+      const when = item.published ? new Date(item.published) : null;
+      li.append(el("span", "when", when && !Number.isNaN(when.getTime())
+        ? when.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "•"));
+      const body = el("div");
+      const title = el(item.link ? "a" : "b", "", item.title ?? "");
+      if (item.link && /^https?:\/\//.test(item.link)) { title.href = item.link; title.target = "_blank"; title.rel = "noopener noreferrer"; }
+      body.append(title);
+      if (item.summary) body.append(el("p", "", item.summary));
+      li.append(body);
+      list.append(li);
+    });
+    card.append(list);
+    cards.show("news", card, 180000);
+  }
+
+  // Börse: Kurs zählt hoch, Verlauf der letzten Wochen zeichnet sich
+  function showStock(data) {
+    if (typeof data.close !== "number") return;
+    const up = (data.change_pct ?? 0) >= 0;
+    const card = el("section", `card show stock ${up ? "up" : "down"}`);
+    card.append(el("p", "kicker", `Börse · ${data.symbol ?? ""}`));
+    const head = el("div", "quote");
+    const digits = data.close >= 1000 ? 0 : 2;
+    const price = el("div", "price", data.close.toLocaleString("de-DE", { minimumFractionDigits: digits, maximumFractionDigits: digits }));
+    price.append(el("small", "", ` ${data.currency ?? ""}`));
+    countUp(price, data.close, "", digits, 1100);
+    head.append(el("div", "name", data.name ?? data.symbol ?? ""), price,
+      el("div", "delta", `${up ? "▲" : "▼"} ${Math.abs(data.change_pct ?? 0).toLocaleString("de-DE", { maximumFractionDigits: 2 })} %`));
+    card.append(head);
+    const history = (data.history ?? []).filter((h) => typeof h.close === "number");
+    if (history.length > 2) {
+      const W = 600, H = 110, closes = history.map((h) => h.close);
+      const lo = Math.min(...closes), hi = Math.max(...closes), span = Math.max(1e-9, hi - lo);
+      const chart = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "spark", role: "img",
+        "aria-label": `Kursverlauf ${history[0].date} bis ${history[history.length - 1].date}` });
+      drawnCurve(chart, history.map((h, i) => [8 + (i / (history.length - 1)) * (W - 16), 10 + (1 - (h.close - lo) / span) * (H - 24)]), H, "stock");
+      chart.append(svg("text", { x: 8, y: H - 2, class: "hour" }, history[0].date.slice(5).split("-").reverse().join(".")));
+      chart.append(svg("text", { x: W - 8, y: H - 2, class: "hour", "text-anchor": "end" }, "heute"));
+      card.append(chart);
+    }
+    const facts = [];
+    if (typeof data.low_4w === "number") facts.push(`4 Wochen: ${data.low_4w.toLocaleString("de-DE")} – ${data.high_4w.toLocaleString("de-DE")}`);
+    if (data.date) facts.push(`Stand ${data.date.split("-").reverse().join(".")}`);
+    card.append(el("p", "facts", facts.join(" · ")));
+    cards.show("stock", card, 150000);
+  }
+
+  // Termine als Zeitleiste (heute/morgen bzw. die abgefragten Tage)
+  function showAgenda(events, title) {
+    const card = el("section", "card show agenda");
+    card.append(el("p", "kicker", title));
+    if (!events.length) {
+      card.append(el("p", "empty", "Keine Termine – freie Bahn."));
+    } else {
+      const list = el("ol", "timeline");
+      const today = new Date().toISOString().slice(0, 10);
+      events.slice(0, 8).forEach((event, i) => {
+        const li = el("li");
+        li.style.animationDelay = `${0.08 * i}s`;
+        const day = event.date && event.date !== today ? new Date(`${event.date}T12:00:00`).toLocaleDateString("de-DE", { weekday: "short", day: "numeric", month: "numeric" }) : "";
+        li.append(el("span", "time", event.time ? `${event.time}${event.end ? `–${event.end}` : ""}` : "ganztägig"));
+        const body = el("div");
+        body.append(el("b", "", event.title ?? ""));
+        const meta = [day, event.location].filter(Boolean).join(" · ");
+        if (meta) body.append(el("small", "", meta));
+        li.append(body);
+        list.append(li);
+      });
+      card.append(list);
+    }
+    cards.show("agenda", card, 150000);
+  }
+
   // -- Systemmonitor: Balken für Prozessor, Speicher, Laufwerke, Grafikkarte ----------------------------------------
   function showSysmon(data) {
     const card = el("section", "card sysmon");
@@ -854,6 +1078,14 @@
       else if (action.capability === "info.wikipedia" && data.found) showKnowledge(data);
       else if (action.capability === "timer.start" && data.id) timers.add(data);
       else if (action.capability === "system.monitor") showSysmon(data);
+      else if (action.capability === "web.search" && data.results?.length) showSearch(data);
+      else if (action.capability === "info.news" && data.headlines?.length) showNews(data);
+      else if (action.capability === "info.stock") showStock(data);
+      else if (action.capability === "calendar.list" && Array.isArray(data.events)) {
+        showAgenda(data.events, data.days > 1 ? `Termine · ${data.days} Tage` : "Termine");
+      } else if (action.capability === "assistant.day_plan" && Array.isArray(data.events)) {
+        showAgenda(data.events, `Tagesplan · ${data.day === "today" ? "heute" : "morgen"}`);
+      }
       else if (action.capability === "timer.cancel") timers.cancel((data.cancelled ?? []).map((t) => t.label ?? ""));
     }
     if (result.card?.type === "mail") showMail(result.card);

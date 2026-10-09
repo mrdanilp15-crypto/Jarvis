@@ -91,6 +91,7 @@ def register_stock_capabilities(registry: ToolRegistry, *, client: Any = None) -
         return {"symbol": symbol, "name": name, "currency": currency, "date": last["date"],
                 "close": last["close"], "change_pct": round(change, 2),
                 "low_4w": min(r["low"] for r in recent), "high_4w": max(r["high"] for r in recent),
+                "history": [{"date": r["date"], "close": r["close"]} for r in rows[-30:]],  # Kurve in der Anzeige
                 "source": "Stooq (Tagesschluss, nicht in Echtzeit)"}
 
     registry.register(Capability(

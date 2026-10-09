@@ -19,7 +19,11 @@ FORECAST = {
                 "relative_humidity_2m": 71, "precipitation": 0.0, "weather_code": 3, "wind_speed_10m": 11.2},
     "daily": {"time": ["2026-09-27", "2026-09-28"], "weather_code": [3, 61], "temperature_2m_max": [16.1, 13.4],
               "temperature_2m_min": [8.2, 9.0], "precipitation_probability_max": [10, 80],
-              "precipitation_sum": [0.0, 4.6]},
+              "precipitation_sum": [0.0, 4.6], "sunrise": ["2026-09-27T07:05", "2026-09-28T07:07"],
+              "sunset": ["2026-09-27T19:01", "2026-09-28T18:59"]},
+    "hourly": {"time": [f"2026-09-27T{h:02d}:00" for h in range(24)] + [f"2026-09-28T{h:02d}:00" for h in range(24)],
+               "temperature_2m": [10 + h / 4 for h in range(48)], "precipitation_probability": [h % 50 for h in range(48)],
+               "weather_code": [3] * 48},
 }
 RSS = """<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0"><channel><title>tagesschau.de</title>
@@ -74,6 +78,12 @@ def test_weather_current_and_forecast():
                                      "temp_max_c": 13.4, "temp_min_c": 9.0, "precipitation_probability_pct": 80,
                                      "precipitation_mm": 4.6}
     assert result["current"]["code"] == 3 and result["current"]["is_day"] is True  # für das Wettersymbol
+    # Für die Anzeige: die nächsten 24 Stunden ab jetzt (10:15 -> ab 10 Uhr), Sonne, Woche
+    assert len(result["hourly"]) == 24 and result["hourly"][0] == {"time": "10:00", "temp_c": 12.5, "rain_pct": 10,
+                                                                    "code": 3}
+    assert result["hourly"][-1]["time"] == "09:00"
+    assert result["sun"] == {"rise": "2026-09-27T07:05", "set": "2026-09-27T19:01"}
+    assert [d["date"] for d in result["week"]] == ["2026-09-27", "2026-09-28"]
     run(registry, "info.weather", {"location": "Berlin", "days": 2})
     assert len(calls) == 2  # zweiter Aufruf kommt aus dem Cache
 
