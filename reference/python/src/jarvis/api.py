@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 from collections.abc import Callable
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Body, Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -54,6 +55,7 @@ class Container:
     tts: Any = None  # Sprachausgabe mit synthesize_wav(text) -> bytes (Piper über Wyoming)
     notifier: Notifier | None = None  # Meldungen an offene Oberflächen (Timer, Erinnerungen)
     llm_settings: Any = None  # KI-Modell zur Laufzeit wählen (LLMSettings): lokales Modell, Claude-Schlüssel, Modus
+    smarthome: Any = None  # Home Assistant: finden, verbinden, Räume und Geräte (smarthome.SmartHome)
 
     async def run_turn(self, req: TurnRequest, *, channel: str, on_text: OnText | None = None,
                        location: str | None = None, on_status: OnStatus | None = None) -> TurnResult:
@@ -101,6 +103,15 @@ class ClaudeKeyIn(BaseModel):
     api_key: str = Field(min_length=10, max_length=300, description="Anthropic-API-Schlüssel (sk-ant-…)")
 
 
+class HomeTokenIn(BaseModel):
+    url: str = Field(min_length=3, max_length=200, examples=["http://homeassistant.local:8123"])
+    token: str = Field(min_length=20, max_length=600, description="Langlebiges Zugriffstoken aus Home Assistant")
+
+
+class HomeOAuthIn(BaseModel):
+    url: str = Field(min_length=3, max_length=200, examples=["http://homeassistant.local:8123"])
+
+
 class LLMSettingsIn(BaseModel):
     local_model: str | None = Field(default=None, max_length=120, examples=["qwen2.5:7b-instruct"])
     claude_model: str | None = Field(default=None, max_length=60, examples=["claude-opus-5-5"])
@@ -127,6 +138,22 @@ class ConfirmationIn(BaseModel):
     decision: Literal["approve", "reject"]
     # Im Betrieb belegt die App die Methode mit einer signierten Challenge (Geräteschlüssel + Biometrie).
     method: Literal["app", "app_biometric", "pin"]
+
+
+_OAUTH_PAGE = """<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="2;url={target}"><title>JARVIS · Smart Home</title></head>
+<body style="background:#03121a;color:#d8f6ff;font:18px system-ui;display:grid;place-items:center;height:100vh;margin:0">
+<div style="text-align:center"><div style="font-size:42px;color:{color}">&#9679;</div><p>{message}</p>
+<p><a style="color:#4fd8ff" href="{target}">Zurück zu JARVIS</a></p></div></body></html>"""
+
+
+def _home_health(home: Any) -> str:
+    """Kopfzeile: verbunden | getrennt | gefunden (noch nicht verbunden) | off."""
+    if home is None:
+        return "off"
+    if home.credentials():
+        return "connected" if home.connected else "disconnected"
+    return "found" if home.found else "off"
 
 
 def create_app(container: Container) -> FastAPI:
@@ -210,6 +237,53 @@ def create_app(container: Container) -> FastAPI:
         settings.remove_claude_key()
         return await settings.snapshot()
 
+    def smarthome() -> Any:
+        if container.smarthome is None:
+            raise JarvisError("JRV-NFD-001", "Smart Home ist in dieser Installation nicht eingerichtet")
+        return container.smarthome
+
+    @app.get("/v1/settings/home", tags=["Einstellungen"])
+    async def get_home(who: Principal = Depends(household_adult)) -> dict:
+        """Home Assistant: verbunden?, gefundene Adressen, Räume und Geräte. Das Token wird nie zurückgegeben."""
+        return smarthome().status()
+
+    @app.post("/v1/settings/home/discover", tags=["Einstellungen"])
+    async def discover_home(who: Principal = Depends(household_adult)) -> dict:
+        """Home Assistant im Heimnetz suchen (bekannte Adressen und /24-Netz, Port 8123)."""
+        await smarthome().discover()
+        return smarthome().status()
+
+    @app.post("/v1/settings/home/oauth", tags=["Einstellungen"])
+    async def start_home_oauth(body: HomeOAuthIn, request: Request,
+                               who: Principal = Depends(household_adult)) -> dict:
+        """Anmeldung bei Home Assistant starten: die Oberfläche öffnet ``authorize_url``; HA leitet danach zurück."""
+        return {"authorize_url": smarthome().oauth_start(body.url, str(request.base_url))}
+
+    @app.get("/v1/settings/home/oauth", response_class=HTMLResponse, include_in_schema=False)
+    async def finish_home_oauth(state: str = "", code: str = "", error: str = "") -> HTMLResponse:
+        """Rücksprung von Home Assistant (ohne Bearer-Token – geschützt durch den einmaligen ``state``)."""
+        try:
+            if error or not code:
+                raise JarvisError("JRV-AUTH-001", error or "kein Code",
+                                  user_message="Die Anmeldung bei Home Assistant wurde abgebrochen.")
+            info = await smarthome().oauth_finish(state, code)
+            message, ok = f"Verbunden mit {html.escape(info.get('location_name') or 'Home Assistant')}.", True
+        except JarvisError as exc:
+            message, ok = html.escape(style.error_message(exc.user_message or exc.detail or "Fehler")), False
+        return HTMLResponse(_OAUTH_PAGE.format(message=message, target="/#home=" + ("ok" if ok else "error"),
+                                               color="#4fe3a4" if ok else "#ff5c72"))
+
+    @app.put("/v1/settings/home/token", tags=["Einstellungen"])
+    async def put_home_token(body: HomeTokenIn, who: Principal = Depends(household_adult)) -> dict:
+        """Mit Adresse und langlebigem Token verbinden – geprüft wird vor dem Speichern."""
+        await smarthome().connect_with_token(body.url, body.token)
+        return smarthome().status()
+
+    @app.delete("/v1/settings/home", tags=["Einstellungen"])
+    async def delete_home(who: Principal = Depends(household_adult)) -> dict:
+        smarthome().disconnect()
+        return smarthome().status()
+
     @app.post("/v1/conversations/{conversation_id}/messages")
     async def post_message(conversation_id: str, body: MessageIn, who: Principal = Depends(principal)) -> dict:
         result = await container.run_turn(
@@ -271,6 +345,7 @@ def create_app(container: Container) -> FastAPI:
             "cloud_llm": container.router.cloud_breaker.state,
             "local_llm": container.llm_status,
             "pc_agent": "connected" if container.agents and container.agents.connected else "disconnected",
+            "smart_home": _home_health(container.smarthome),
             "tts": getattr(container.tts, "label", "configured") if container.tts is not None else "off",
             "style": f"{style.name} {style.version}",
             "llm": {"local_model": getattr(container.router.local, "model", None),

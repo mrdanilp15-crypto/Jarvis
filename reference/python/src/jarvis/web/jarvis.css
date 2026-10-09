@@ -513,12 +513,12 @@ dialog .train { display: flex; gap: 8px; flex-wrap: wrap; }
 }
 .weather-chip:hover { background: var(--cyan-faint); }
 .weather-chip svg { width: 26px; height: 26px; }
-.model-chip {
+.model-chip, .home-chip {
   border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; background: transparent; cursor: pointer;
   max-width: 260px; white-space: nowrap;
 }
 .model-chip span:last-child { overflow: hidden; text-overflow: ellipsis; }
-.model-chip:hover { background: var(--cyan-faint); }
+.model-chip:hover, .home-chip:hover { background: var(--cyan-faint); }
 .conn.model-chip[data-conn="cloud"] .dot { background: var(--c-research); box-shadow: 0 0 8px var(--c-research); }
 .conn.model-chip[data-conn="local"] .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .conn.model-chip[data-conn="loading"] .dot { background: var(--warn); animation: blink 1s steps(2) infinite; }
@@ -702,6 +702,15 @@ dialog h3 small { font-weight: 400; color: var(--muted); letter-spacing: 0; marg
   padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
   background: rgba(46, 200, 255, 0.05); color: var(--text) !important;
 }
+/* Smart Home */
+.conn.home-chip[data-conn="connecting"] .dot { background: var(--c-confirm); box-shadow: 0 0 8px var(--c-confirm); }
+.conn.home-chip { cursor: pointer; }
+.btn.wide { width: 100%; margin: 6px 0 4px; }
+.rooms { list-style: none; margin: 0 0 10px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px; }
+.rooms li { padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: 2px; }
+.rooms .note { font-size: 12px; color: var(--muted); }
+details.more { margin: 8px 0; }
+details.more summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .models { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .models li {
   display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center;
@@ -739,7 +748,7 @@ dialog input[type="password"] {
   .icon-btn { width: 34px; height: 34px; flex: none; }
   #conn-text, #pc-text { display: none; }  /* nur die Punkte: grün = verbunden */
   .conn + .conn { margin-left: 6px; }
-  .model-chip { max-width: 30vw; font-size: 11px; padding: 4px 8px; }
+  .model-chip, .home-chip { max-width: 30vw; font-size: 11px; padding: 4px 8px; }
   .weather-chip { padding: 2px 8px 2px 2px; }
   body.has-cards .stage { --hud-size: min(52vw, 260px); }
   .cards { max-height: none; }

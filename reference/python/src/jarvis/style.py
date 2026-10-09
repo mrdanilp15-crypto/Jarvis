@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.6.0"
+STYLE_VERSION = "2.7.0"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -546,21 +546,39 @@ class JarvisStyle(PlainStyle):
 
     def _success(self, capability: str, args: dict[str, Any], result: Any, slots: dict[str, Any]) -> tuple[str, str]:
         of_course, very_well = self.phrase("of_course"), self.phrase("very_well")
+        where = f" {slots['location']}" if slots.get("location") else ""
+        name = verbatim(slots["name"]) if slots.get("name") else ""
         if capability == "home.set_light":
-            where = f" {slots['location']}" if slots.get("location") else ""
-            if not args.get("on", True):
-                return of_course, f"Das Licht{where} ist nun ausgeschaltet."
-            pct = args.get("brightness_pct")
+            on, pct = args.get("on", True), args.get("brightness_pct")
+            subject = "Alle Lichter sind" if slots.get("all") else f"{name} ist" if name else f"Das Licht{where} ist"
+            if not on:
+                return of_course, f"{subject} nun ausgeschaltet."
             if pct is not None and pct < 100:
-                return of_course, f"Das Licht{where} ist nun auf {pct} Prozent gedimmt."
-            return of_course, f"Das Licht{where} ist nun eingeschaltet."
+                return of_course, f"{subject} nun auf {pct} Prozent gedimmt."
+            return of_course, f"{subject} nun eingeschaltet."
+        if capability == "home.set_switch":
+            subject = name or "Der Schalter"
+            return of_course, f"{subject} ist nun {'eingeschaltet' if args.get('on') else 'ausgeschaltet'}."
+        if capability == "home.set_cover":
+            what = {"rollos": "Rollos", "rollo": "Das Rollo", "jalousien": "Jalousien", "jalousie": "Die Jalousie",
+                    "markise": "Die Markise", "markisen": "Markisen", "vorhang": "Der Vorhang",
+                    "vorhänge": "Vorhänge"}.get(slots.get("what", ""), "Rollläden")
+            single = what.startswith(("Das ", "Die ", "Der "))
+            subject = what if single else f"Die {what}"
+            position = args.get("position", 0)
+            motion = "fährt" if single else "fahren"
+            target = "hoch" if position >= 100 else "herunter" if position <= 0 else f"auf {position} Prozent"
+            return very_well, f"{subject}{where} {motion} {target}."
         if capability == "home.lock":
-            name = entity_label(args.get("entity_id", "lock.tuer"))
-            return of_course, f"{name}: {'verriegelt' if args.get('state') == 'locked' else 'entriegelt'}."
+            label = name or entity_label(args.get("entity_id", "lock.tuer"))
+            return of_course, f"{label}: {'verriegelt' if args.get('state') == 'locked' else 'entriegelt'}."
         if capability == "home.set_climate" and args.get("temperature") is not None:
-            return very_well, f"Die Heizung ist auf {format_number(args['temperature'])} Grad eingestellt."
+            return very_well, f"Die Heizung{where} ist auf {format_number(args['temperature'])} Grad eingestellt."
+        if capability == "home.set_climate" and args.get("hvac_mode"):
+            state = "ausgeschaltet" if args["hvac_mode"] == "off" else "eingeschaltet"
+            return very_well, f"Die Heizung{where} ist {state}."
         if capability == "home.activate_scene":
-            return very_well, "Die Szene ist aktiviert."
+            return very_well, f"Die Szene „{name}“ ist aktiviert." if name else "Die Szene ist aktiviert."
         if capability == "timer.start":
             label = f" „{verbatim(args['label'])}“" if args.get("label") else ""
             due = _parse_moment((result or {}).get("due")) if isinstance(result, dict) else None
@@ -706,6 +724,7 @@ class JarvisStyle(PlainStyle):
         ("sprachmodell", "missing"): "Das Sprachmodell fehlt noch – bitte führen Sie ./deploy/start.sh aus.",
         ("sprachmodell", "unavailable"): "Das Sprachmodell ist derzeit nicht erreichbar.",
         ("pc_steuerung", "disconnected"): "Die PC-Steuerung ist nicht verbunden.",
+        ("smart_home", "disconnected"): "Home Assistant ist gerade nicht erreichbar.",
     }
     ESSENTIAL = {"sprachmodell"}
 
@@ -768,7 +787,8 @@ class JarvisStyle(PlainStyle):
     def unavailable(self, capability: str) -> str:
         domain = capability.split(".", 1)[0]
         detail = {
-            "home": "Für das Haus ist noch keine Steuerung verbunden – dafür wird Home Assistant benötigt.",
+            "home": "Das Smart Home ist noch nicht verbunden. Im Zahnrad-Menü unter „Smart Home“ suche ich Home "
+                    "Assistant und verbinde mich mit einem Klick.",
             "pc": "Die PC-Steuerung ist nicht eingerichtet.",
             "timer": "Timer stehen mir derzeit nicht zur Verfügung.",
         }.get(domain, "Diese Funktion steht mir derzeit nicht zur Verfügung.")

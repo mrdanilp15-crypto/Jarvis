@@ -409,6 +409,85 @@ paths:
       operationId: deleteClaudeKey
       responses:
         "200": { description: Entfernt }
+  /v1/settings/home:
+    get:
+      tags: [Einstellungen]
+      summary: Smart Home – Verbindung zu Home Assistant, gefundene Adressen, Räume und Geräte
+      description: Nur Erwachsene des Haushalts. Das Zugriffstoken wird nie zurückgegeben.
+      operationId: getHomeSettings
+      responses:
+        "200":
+          description: Zustand
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HomeSettings" }
+        "403": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [Einstellungen]
+      summary: Verbindung zu Home Assistant trennen (gespeicherten Zugang löschen)
+      operationId: deleteHomeSettings
+      responses:
+        "200": { description: Getrennt }
+  /v1/settings/home/discover:
+    post:
+      tags: [Einstellungen]
+      summary: Home Assistant im Heimnetz suchen (bekannte Adressen und das eigene /24-Netz, Port 8123)
+      operationId: discoverHome
+      responses:
+        "200":
+          description: Gefundene Adressen in `found`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HomeSettings" }
+  /v1/settings/home/oauth:
+    post:
+      tags: [Einstellungen]
+      summary: Anmeldung bei Home Assistant starten (OAuth/IndieAuth)
+      description: |
+        Liefert die Adresse der HA-Anmeldeseite. Nach der Anmeldung leitet Home Assistant zu
+        `GET /v1/settings/home/oauth?code=…&state=…` zurück; JARVIS legt sich dann einen langlebigen Zugang an und
+        speichert ihn serverseitig (Dateirechte 0600).
+      operationId: startHomeOAuth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, examples: ["http://homeassistant.local:8123"] }
+      responses:
+        "200":
+          description: Anmeldeseite
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorize_url: { type: string }
+  /v1/settings/home/token:
+    put:
+      tags: [Einstellungen]
+      summary: Mit Adresse und langlebigem Zugriffstoken verbinden (wird vor dem Speichern geprüft)
+      operationId: setHomeToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, token]
+              properties:
+                url: { type: string }
+                token: { type: string, minLength: 20, maxLength: 600, writeOnly: true }
+      responses:
+        "200":
+          description: Verbunden
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HomeSettings" }
+        "401": { $ref: "#/components/responses/Problem" }
 
   /v1/system/health:
     get:
@@ -475,6 +554,26 @@ components:
             model: { type: string }
             models: { type: array, items: { type: object } }
             state: { enum: [closed, open, half_open] }
+    HomeSettings:
+      type: object
+      properties:
+        configured: { type: boolean }
+        source: { enum: [ui, env, null] }
+        url: { type: [string, "null"] }
+        connected: { type: boolean }
+        name: { type: [string, "null"], description: Name des Zuhauses in Home Assistant }
+        version: { type: [string, "null"] }
+        error: { type: [string, "null"] }
+        devices: { type: integer }
+        rooms:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              devices: { type: array, items: { type: object, properties: { name: { type: string }, domain: { type: string } } } }
+        found: { type: array, items: { type: string } }
+        scanning: { type: boolean }
     TurnResult:
       type: object
       required: [text, route, stop_reason, tainted, actions]

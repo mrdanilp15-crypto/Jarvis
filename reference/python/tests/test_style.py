@@ -237,7 +237,8 @@ def test_status_reports_real_problems():
 def test_nothing_is_claimed_without_a_connection():
     no_home = make_orchestrator(fast_path=FastPath({}, {}), home=False)
     assert ask(no_home, "Mach das Licht an.").text == (
-        "Verzeihung, Sir. Für das Haus ist noch keine Steuerung verbunden – dafür wird Home Assistant benötigt.")
+        "Verzeihung, Sir. Das Smart Home ist noch nicht verbunden. Im Zahnrad-Menü unter „Smart Home“ suche ich "
+        "Home Assistant und verbinde mich mit einem Klick.")
     no_pc = make_orchestrator(pc_connected=False)
     assert ask(no_pc, "Öffne den Explorer").text.startswith("Verzeihung, Sir. Die PC-Steuerung ist nicht verbunden.")
 
@@ -307,7 +308,7 @@ def test_persona_selects_style_and_version():
     jarvis = Persona.load(REPO / "config" / "persona.jarvis.yaml", schema_path=REPO / "schemas" / "persona.schema.json")
     neutral = Persona.load(REPO / "config" / "persona.neutral.yaml")
     assert isinstance(JarvisStyle.from_persona(jarvis), JarvisStyle)
-    assert jarvis.config["version"] == STYLE_VERSION == "2.6.0"
+    assert jarvis.config["version"] == STYLE_VERSION == "2.7.0"
     assert type(JarvisStyle.from_persona(neutral)) is PlainStyle
 
 

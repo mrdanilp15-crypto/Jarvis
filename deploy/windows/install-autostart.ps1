@@ -4,7 +4,7 @@
 #   Verknüpfung "JARVIS" im Autostart-Ordner und auf dem Desktop
 # Kompatibel mit Windows PowerShell 5.1.
 param(
-    [ValidateSet('windows', 'wsl')] [string]$Mode = 'windows',
+    [ValidateSet('windows', 'wsl', 'native')] [string]$Mode = 'windows',   # native: ohne Docker (jarvis-install.ps1)
     [string]$Repo = '',       # Windows-Pfad (Modus windows) bzw. Linux-Pfad (Modus wsl) des Jarvis-Ordners
     [string]$Distro = '',     # WSL-Distribution (leer = Standard)
     [string]$Token = '',      # API-Token aus deploy/.env

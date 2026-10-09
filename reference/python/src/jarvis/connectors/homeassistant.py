@@ -33,14 +33,17 @@ class HomeAssistantClient:
     def __init__(
         self,
         url: str,
-        token: str,
+        token: str | Callable[[], Awaitable[str]],
         *,
         on_state_changed: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        on_connected: Callable[[], Awaitable[None]] | None = None,
         request_timeout_s: float = 10.0,
     ) -> None:
         self.url = url
-        self._token = token
+        self._token = token  # fester Token oder Funktion, die einen frischen liefert
         self._on_state_changed = on_state_changed
+        self._on_connected = on_connected
+        self.last_error: str | None = None  # für die Oberfläche: warum gerade keine Verbindung besteht
         self._timeout = request_timeout_s
         self._ids = itertools.count(1)
         self._pending: dict[int, asyncio.Future[Any]] = {}
@@ -62,9 +65,16 @@ class HomeAssistantClient:
                     reader = asyncio.create_task(self._read_loop(ws))
                     await self._bootstrap()
                     self.connected.set()
+                    self.last_error = None
                     backoff = 1.0
+                    if self._on_connected is not None:
+                        try:
+                            await self._on_connected()
+                        except Exception:  # Räume/Geräte nicht lesbar: Steuerung per entity_id geht trotzdem
+                            log.warning("home assistant registry sync failed", exc_info=True)
                     await reader
-            except (OSError, JarvisError, websockets.ConnectionClosed) as exc:
+            except (OSError, JarvisError, websockets.ConnectionClosed, TimeoutError) as exc:
+                self.last_error = getattr(exc, "user_message", None) or str(exc) or type(exc).__name__
                 log.warning("home assistant connection lost", extra={"error": str(exc), "retry_in_s": backoff})
             finally:
                 self.connected.clear()
@@ -80,10 +90,12 @@ class HomeAssistantClient:
         hello = json.loads(await ws.recv())
         if hello.get("type") != "auth_required":
             raise JarvisError("JRV-INT-001", f"Unerwartete Begrüßung: {hello.get('type')}")
-        await ws.send(json.dumps({"type": "auth", "access_token": self._token}))
+        token = self._token if isinstance(self._token, str) else await self._token()
+        await ws.send(json.dumps({"type": "auth", "access_token": token}))
         reply = json.loads(await ws.recv())
         if reply.get("type") != "auth_ok":
-            raise JarvisError("JRV-AUTH-001", "Home Assistant hat das Token abgelehnt")
+            raise JarvisError("JRV-AUTH-001", "Home Assistant hat das Token abgelehnt",
+                              user_message="Home Assistant hat den Zugang abgelehnt – bitte neu verbinden.")
 
     async def _bootstrap(self) -> None:
         for state in await self.call({"type": "get_states"}):
@@ -133,6 +145,17 @@ class HomeAssistantClient:
 
     def state(self, entity_id: str) -> dict[str, Any] | None:
         return self._states.get(entity_id)
+
+    def states(self) -> list[dict[str, Any]]:
+        return list(self._states.values())
+
+    async def registry(self) -> dict[str, list[dict[str, Any]]]:
+        """Räume, Geräte und Entitäten aus der HA-Registry (für Raumnamen und Gerätezuordnung)."""
+        areas, devices, entities = await asyncio.gather(
+            self.call({"type": "config/area_registry/list"}),
+            self.call({"type": "config/device_registry/list"}),
+            self.call({"type": "config/entity_registry/list"}))
+        return {"areas": areas or [], "devices": devices or [], "entities": entities or []}
 
 
 def state_changed_to_event(data: dict[str, Any], area: str | None = None) -> CloudEvent:

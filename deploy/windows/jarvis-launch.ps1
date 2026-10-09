@@ -1,4 +1,5 @@
-﻿# JARVIS starten: PC-Agent starten, Docker Desktop starten, auf JARVIS warten, JARVIS als eigenes Fenster öffnen.
+﻿# JARVIS starten: PC-Agent starten, JARVIS starten (als Programm oder über Docker Desktop), auf JARVIS warten,
+# JARVIS als eigenes Fenster öffnen.
 # install-autostart.ps1 kopiert dieses Skript nach %LOCALAPPDATA%\JARVIS und legt Verknüpfungen im Autostart und
 # auf dem Desktop an, die es unsichtbar starten. Protokoll: %LOCALAPPDATA%\JARVIS\launcher.log
 # Kompatibel mit Windows PowerShell 5.1.
@@ -48,6 +49,11 @@ function Start-PcAgent {
     # Öffnet auf Zuruf Programme, Ordner und Webseiten; verbindet sich selbst mit JARVIS, sobald er läuft
     $agent = Join-Path $jarvisHome 'jarvis-pc-agent.ps1'
     if (-not (Test-Path $agent)) { return }
+    try {
+        $running = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction Stop |
+            Where-Object { $_.CommandLine -like '*jarvis-pc-agent.ps1*' }
+        if ($running) { return }   # läuft schon (z. B. gerade von install-autostart.ps1 gestartet)
+    } catch { }
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     Start-Process -FilePath $powershell -WindowStyle Hidden -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$agent`"")
@@ -70,6 +76,60 @@ function Start-Jarvis {
         }
     }
     Write-Log ('docker compose up: ' + (($output | Out-String).Trim()))
+}
+
+function Test-Ollama {
+    try {
+        return (Invoke-WebRequest -Uri 'http://127.0.0.1:11434/api/tags' -UseBasicParsing -TimeoutSec 3).StatusCode -eq 200
+    } catch {
+        return $false
+    }
+}
+
+function Start-Native {
+    # JARVIS als Programm (jarvis-install.ps1): Python-Umgebung in %LOCALAPPDATA%\JARVIS\venv, Ollama auf diesem PC
+    $python = Join-Path $jarvisHome 'venv\Scripts\python.exe'
+    if (-not (Test-Path $python)) {
+        Show-Problem 'JARVIS ist noch nicht installiert. Bitte im Jarvis-Ordner "JARVIS installieren.cmd" ausführen.'
+        exit 1
+    }
+    if (-not (Test-Ollama)) {
+        $ollama = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'
+        $cmd = Get-Command ollama -ErrorAction SilentlyContinue
+        if ($cmd) { $ollama = $cmd.Source }
+        if (Test-Path $ollama) {
+            Write-Log 'Starte Ollama'
+            Start-Process -FilePath $ollama -ArgumentList 'serve' -WindowStyle Hidden
+        } else {
+            Write-Log 'Ollama fehlt – JARVIS startet ohne lokales Sprachmodell'
+        }
+    }
+    # Einstellungen aus jarvis.env (wie deploy\.env) und die festen Werte für den Betrieb ohne Docker
+    $envFile = Join-Path $jarvisHome 'jarvis.env'
+    if (Test-Path $envFile) {
+        foreach ($line in [System.IO.File]::ReadAllLines($envFile)) {
+            if ($line -match '^\s*([A-Z0-9_]+)=(.*)$') {
+                [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+            }
+        }
+    }
+    $configFile = 'jarvis.example.yaml'
+    if ($env:JARVIS_CONFIG_FILE) { $configFile = $env:JARVIS_CONFIG_FILE }
+    $env:JARVIS_CONFIG = Join-Path $config.repo "config\$configFile"
+    $env:JARVIS_DATA_DIR = Join-Path $jarvisHome 'data'
+    $env:JARVIS_BUS = 'memory'                         # kein Redis nötig
+    $env:JARVIS_OLLAMA_URL = 'http://127.0.0.1:11434'  # Ollama auf diesem PC
+    $env:JARVIS_PIPER = 'off'                          # Stimme: Edge („Conrad“), Azure oder Browser
+    $env:JARVIS_HOST = '127.0.0.1'
+    $env:JARVIS_PORT = '8080'
+    $env:PYTHONIOENCODING = 'utf-8'
+    $log = Join-Path $jarvisHome 'server.log'
+    foreach ($file in @($log, "$log.out")) {
+        if ((Test-Path $file) -and (Get-Item $file).Length -gt 5MB) { Move-Item -Force $file "$file.old" }
+    }
+    Start-Process -FilePath $python -ArgumentList @('-m', 'jarvis.app') -WorkingDirectory $config.repo `
+        -WindowStyle Hidden -RedirectStandardError $log -RedirectStandardOutput "$log.out"
+    Write-Log "JARVIS-Server gestartet (Protokoll: $log)"
 }
 
 function Find-Browser {
@@ -117,6 +177,17 @@ function Open-Jarvis {
 
 Write-Log "Start (Modus: $($config.mode), Repository: $($config.repo))"
 Start-PcAgent
+if ($config.mode -eq 'native') {
+    if (-not (Test-Jarvis)) {
+        Start-Native
+        if (-not (Wait-For { Test-Jarvis } 120)) {
+            Show-Problem "JARVIS startet nicht. Details: $(Join-Path $jarvisHome 'server.log')"
+            exit 1
+        }
+    }
+    Open-Jarvis
+    exit 0
+}
 if (Test-Jarvis) {
     Start-Jarvis   # läuft schon – nur sicherstellen, dass auch die Stimme (Piper) läuft
 } else {

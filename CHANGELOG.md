@@ -1,5 +1,46 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.7.0 – 2026-10-09
+
+Smart Home ohne Handarbeit und JARVIS als normales Windows-Programm – ohne Docker.
+
+### Neu
+- **Smart Home automatisch** (`smarthome.py`, Zahnrad → **Smart Home**):
+  - **Finden:** Beim Start sucht JARVIS Home Assistant selbst – homeassistant.local, der eigene PC, der Docker-Host und
+    das Heimnetz (/24, Port 8123; erkannt an `/auth/providers`). Gefunden → in der Kopfzeile „Haus verbinden“.
+  - **Verbinden mit einem Klick:** „Bei Home Assistant anmelden“ öffnet die Anmeldung von Home Assistant (OAuth/
+    IndieAuth). Danach legt JARVIS sich einen eigenen, dauerhaften Zugang an (`auth/long_lived_access_token`, in HA
+    unter Profil → Sicherheit sichtbar). Alternativ ein Token einfügen; es wird vor dem Speichern geprüft.
+    Gespeichert in `data/home.json` (Dateirechte 0600), nie an die Oberfläche zurückgegeben; nur Erwachsene.
+  - **Räume und Geräte übernehmen:** aus der HA-Registry, inklusive Aliasse, alle fünf Minuten neu. Diagnose- und
+    Konfigurations-Entitäten bleiben außen vor. Die Einstellungen zeigen die Räume mit ihren Geräten.
+  - **Sofortbefehle ohne Sprachmodell** (`homeindex.py`): „Licht im Wohnzimmer aus“, „Alle Lichter aus“, „Dimm das
+    Licht in der Küche auf dreißig Prozent“, „Mach die Stehlampe an“, „Kaffeemaschine an“, „Rollläden runter“, „Fahr
+    die Rollos im Schlafzimmer hoch“, „Heizung im Bad auf 21 Grad“, „Mach die Heizung aus“, „Starte Filmabend“,
+    „Schließ die Haustür ab“. Raum- und Gerätenamen werden unscharf verglichen („Kueche“ = „Küche“).
+    Mehrdeutiges bleibt dem Sprachmodell.
+  - **Sprachmodell kennt das Haus:** Es bekommt eine kurze Geräteliste mit entity_ids, Räumen und Zuständen (bisher
+    leer – es hätte IDs raten müssen).
+  - Ohne verbundenes Haus sagt JARVIS bei Hausbefehlen, wo man es einrichtet. Der Systemstatus meldet, wenn
+    Home Assistant nicht erreichbar ist.
+  - Neue Endpunkte `GET/DELETE /v1/settings/home`, `POST /v1/settings/home/discover`, `POST /v1/settings/home/oauth`,
+    `PUT /v1/settings/home/token`; Health-Feld `smart_home`.
+  - `deploy/.env` geht weiterhin: `JARVIS_HA_URL` plus `JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN`.
+- **JARVIS als Windows-Programm** – „JARVIS installieren.cmd“ doppelklicken (`deploy/windows/jarvis-install.ps1`):
+  - Installiert fehlendes Python 3.12 und Ollama über winget.
+  - Richtet JARVIS in `%LOCALAPPDATA%\JARVIS\venv` ein und wählt das Sprachmodell nach Grafik- bzw.
+    Arbeitsspeicher.
+  - Übernimmt die Einstellungen aus `deploy/.env` und beendet eine laufende Docker-Fassung.
+  - Richtet Autostart, Desktop-Verknüpfung und PC-Steuerung ein und öffnet JARVIS.
+  - Erneut ausführen aktualisiert; `-Stop` beendet, `-Uninstall` entfernt den Autostart.
+  - Der Server läuft dann ohne Redis und Postgres. Dafür gibt es neue Umgebungsvariablen: `JARVIS_BUS=memory`,
+    `JARVIS_OLLAMA_URL`, `JARVIS_PIPER=off`, `JARVIS_HOST`, `JARVIS_PORT`.
+
+### Geändert
+- Docker: `host.docker.internal` zeigt auch unter Linux auf den Rechner, damit Home Assistant auf demselben Gerät
+  gefunden wird.
+- Der Autostart startet die PC-Steuerung nicht doppelt.
+
 ## Jarvis-Modul 2.6.0 – 2026-09-29
 
 E-Mails schreiben, ohne dass das Sprachmodell Adressen verdreht – und ehrliche Antworten auf „Verstehst du mich?“.

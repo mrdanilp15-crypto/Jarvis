@@ -12,7 +12,11 @@
     settings: $("#settings"), settingsBtn: $("#settings-btn"), voice: $("#voice"), voiceTest: $("#voice-test"),
     optSpeak: $("#opt-speak"), optConvo: $("#opt-convo"), optLocation: $("#opt-location"), logout: $("#logout"),
     wakeToggle: $("#wake-toggle"), wakeText: $("#wake-text"), optEffect: $("#opt-effect"),
-    pc: $("#pc-status"), pcText: $("#pc-text"),
+    pc: $("#pc-status"), pcText: $("#pc-text"), homeChip: $("#home-chip"), homeChipText: $("#home-chip-text"),
+    homeNow: $("#home-now"), homeError: $("#home-error"), homeSetup: $("#home-setup"), homeFound: $("#home-found"),
+    homeUrl: $("#home-url"), homeSearch: $("#home-search"), homeLogin: $("#home-login"), homeToken: $("#home-token"),
+    homeTokenSave: $("#home-token-save"), homeConnected: $("#home-connected"), homeRooms: $("#home-rooms"),
+    homeRemove: $("#home-remove"),
     heard: $("#heard"), heardText: $("#heard-text"), heardLearn: $("#heard-learn"),
     wakeTrain: $("#wake-train"), wakeForget: $("#wake-forget"), wakeTrainStatus: $("#wake-train-status"),
     clockTime: $("#clock-time"), clockDate: $("#clock-date"), weatherChip: $("#weather-chip"),
@@ -48,11 +52,13 @@
     const params = new URLSearchParams(location.hash.slice(1));
     const value = params.get("token");
     if (params.get("wake") === "1") store.set("wake", true);
+    if (params.get("home")) homeReturn = params.get("home");  // Rückkehr von der Home-Assistant-Anmeldung
     if (!params.toString()) return null;
     history.replaceState(null, "", location.pathname + location.search);
     if (value) store.set("token", value);
     return value;
   }
+  let homeReturn = null;
   let token = tokenFromLink() || store.get("token", null);
   let sessionId = store.get("session", null);
   if (!sessionId) { sessionId = `web-${randomId()}`; store.set("session", sessionId); }
@@ -1647,6 +1653,7 @@
       ttsProvider = health.tts ?? "off";
       ttsConfigured = ttsProvider !== "off";
       setPcStatus(health.pc_agent === "connected");
+      setHomeChip(health.smart_home);
       setModelChip(health.llm);
       acknowledgement.prepare();
     } catch {
@@ -1654,6 +1661,18 @@
     }
     if (state === "idle") setState("idle");
     if (ws) healthTimer = setTimeout(checkHealth, LLM_STATUS[llmStatus] ? 3000 : 30000);
+  }
+
+  const HOME_CHIP = {
+    connected: ["online", "Haus", "Smart Home verbunden – Licht, Heizung, Rollläden per Sprache"],
+    disconnected: ["offline", "Haus", "Home Assistant ist gerade nicht erreichbar"],
+    found: ["connecting", "Haus verbinden", "Home Assistant gefunden – hier klicken und mit einem Klick verbinden"],
+  };
+  function setHomeChip(value) {
+    const entry = HOME_CHIP[value];
+    els.homeChip.hidden = !entry;
+    if (!entry) return;
+    [els.homeChip.dataset.conn, els.homeChipText.textContent, els.homeChip.title] = entry;
   }
 
   function setPcStatus(connected) {
@@ -1818,7 +1837,7 @@
   }
   els.settingsBtn.addEventListener("click", () => openSettings());
   els.modelChip.addEventListener("click", () => openSettings("ai"));
-  els.settings.addEventListener("close", () => clearTimeout(ai.timer));
+  els.settings.addEventListener("close", () => { clearTimeout(ai.timer); clearTimeout(home.timer); });
 
   // Reiter: Allgemein · Stimme & Hören · KI-Modell (Pfeiltasten wechseln wie bei Reitern üblich)
   let currentTab = store.get("settings.tab", "general");
@@ -1834,6 +1853,8 @@
     }
     if (name === "ai") ai.load();
     else clearTimeout(ai.timer);
+    if (name === "home") home.load();
+    else clearTimeout(home.timer);
   }
   els.tabs.forEach((tab, i) => {
     tab.addEventListener("click", () => selectTab(tab.id.slice(4)));
@@ -2046,6 +2067,109 @@
     if (event.target.name === "llm-mode") ai.change({ mode: event.target.value });
   });
 
+  // ---------------------------------------------------------------- Smart Home (Einstellungen)
+  const DOMAIN_LABEL = { light: "Licht", switch: "Schalter", cover: "Rollladen", climate: "Heizung", scene: "Szene",
+    lock: "Schloss", media_player: "Medien", sensor: "Sensor", binary_sensor: "Sensor" };
+  const home = {
+    data: null, timer: 0, busy: false,
+    async load() {
+      clearTimeout(this.timer);
+      try {
+        this.data = await api("GET", "/v1/settings/home");
+      } catch (err) {
+        els.homeNow.textContent = err.status === 403 ? "Nur Erwachsene des Haushalts können das Smart Home verbinden."
+          : `Smart Home ist gerade nicht erreichbar: ${err.message}`;
+        return;
+      }
+      this.render();
+      const d = this.data;
+      const waiting = d.scanning || (d.configured && (!d.connected || !d.devices));
+      if (els.settings.open && currentTab === "home") this.timer = setTimeout(() => this.load(), waiting ? 1500 : 10000);
+    },
+    render() {
+      const d = this.data;
+      const name = d.name ? `„${d.name}“` : "Home Assistant";
+      els.homeNow.textContent = d.connected
+        ? `Verbunden mit ${name} (${d.url}) – ${d.devices} Geräte in ${d.rooms.filter((r) => r.name !== "Ohne Raum").length} Räumen.`
+        : d.configured ? `Verbinde mit ${d.url} …${d.error ? ` (${d.error})` : ""}`
+          : d.scanning ? "Suche Home Assistant im Heimnetz …"
+            : d.found.length ? "Home Assistant gefunden – ein Klick genügt." : "Noch kein Smart Home verbunden.";
+      els.homeSetup.hidden = d.configured && d.connected;
+      els.homeConnected.hidden = !d.configured;
+      els.homeSearch.disabled = d.scanning || this.busy;
+      els.homeSearch.textContent = d.scanning ? "Suche …" : "Suchen";
+      if (!els.homeUrl.value && d.found.length) els.homeUrl.value = d.found[0];
+      els.homeFound.replaceChildren(...d.found.map((url) => {
+        const li = el("li", url === els.homeUrl.value ? "active" : "");
+        li.append(el("span", "name", "Home Assistant gefunden"), el("span", "note", url));
+        const side = el("div", "side");
+        side.append(button("Verbinden", "btn primary small", () => { els.homeUrl.value = url; this.login(); }));
+        li.append(side);
+        return li;
+      }));
+      els.homeRooms.replaceChildren(...d.rooms.map((room) => {
+        const li = el("li");
+        li.append(el("b", "", room.name));
+        const counts = {};
+        room.devices.forEach((device) => { counts[device.domain] = (counts[device.domain] ?? 0) + 1; });
+        li.append(el("span", "note", Object.entries(counts).map(([k, n]) => `${n} × ${DOMAIN_LABEL[k] ?? k}`).join(" · ")));
+        li.title = room.devices.map((device) => device.name).join(", ");
+        return li;
+      }));
+      setHomeChip(d.configured ? (d.connected ? "connected" : "disconnected") : d.found.length ? "found" : "off");
+    },
+    fail(err) {
+      els.homeError.textContent = err.message;
+      els.homeError.hidden = false;
+    },
+    async run(fn) {
+      els.homeError.hidden = true;
+      this.busy = true;
+      try { await fn(); } catch (err) { this.fail(err); } finally { this.busy = false; }
+      if (this.data) this.render();
+    },
+    search() {
+      return this.run(async () => {
+        els.homeSearch.disabled = true;
+        els.homeSearch.textContent = "Suche …";
+        this.data = await api("POST", "/v1/settings/home/discover");
+        if (!this.data.found.length) throw new Error("Kein Home Assistant gefunden. Ist er eingeschaltet und im selben Netz? Sonst die Adresse eintragen.");
+      });
+    },
+    login() {
+      return this.run(async () => {
+        const url = els.homeUrl.value.trim() || this.data?.found?.[0];
+        if (!url) throw new Error("Bitte erst suchen oder die Adresse von Home Assistant eintragen.");
+        const { authorize_url: target } = await api("POST", "/v1/settings/home/oauth", { url });
+        location.href = target;  // Anmeldung bei Home Assistant, danach zurück zu JARVIS (#home=ok)
+      });
+    },
+    saveToken() {
+      return this.run(async () => {
+        const url = els.homeUrl.value.trim() || this.data?.found?.[0];
+        if (!url) throw new Error("Bitte die Adresse von Home Assistant eintragen.");
+        this.data = await api("PUT", "/v1/settings/home/token", { url, token: els.homeToken.value.trim() });
+        els.homeToken.value = "";
+        flash("found");
+        this.load();
+      });
+    },
+    remove() {
+      return this.run(async () => { this.data = await api("DELETE", "/v1/settings/home"); });
+    },
+  };
+  els.homeSearch.addEventListener("click", () => home.search());
+  els.homeLogin.addEventListener("click", () => home.login());
+  els.homeTokenSave.addEventListener("click", () => home.saveToken());
+  els.homeToken.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); home.saveToken(); }
+  });
+  els.homeUrl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); home.login(); }
+  });
+  els.homeRemove.addEventListener("click", () => home.remove());
+  els.homeChip.addEventListener("click", () => openSettings("home"));
+
   // Modell-Anzeige in der Kopfzeile
   const CLAUDE_SHORT = { "claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-fable-5-1": "Fable 5.1" };
   function setModelChip(llm) {
@@ -2134,6 +2258,11 @@
   });
 
   updateComposer();
+  if (homeReturn && token) {  // zurück von der Home-Assistant-Anmeldung: Ergebnis gleich zeigen
+    openSettings("home");
+    if (homeReturn === "ok") flash("found");
+    else home.fail(new Error("Die Anmeldung bei Home Assistant hat nicht geklappt. Bitte noch einmal versuchen."));
+  }
   tickClock();
   weatherChip.restore();
   setWake(settings.wake);

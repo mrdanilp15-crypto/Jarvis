@@ -26,7 +26,7 @@ import yaml
 from .agenda import CalendarService, day_plan_entries, register_calendar_capabilities
 from .api import Container, create_app
 from .capabilities import register_memory_capabilities
-from .connectors.homeassistant import HomeAssistantClient, register_home_capabilities, state_changed_to_event
+from .connectors.homeassistant import state_changed_to_event
 from .context import ContextBuilder, Situation
 from .errors import CircuitBreaker, JarvisError
 from .events import InMemoryEventBus, RedisStreamEventBus
@@ -40,6 +40,7 @@ from .mail import MailConfig, MailReader, register_mail_capabilities
 from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingWeights
 from .orchestrator import ConfirmationStore, Orchestrator
 from .pc import AgentHub, register_pc_capabilities, resolve_recipient
+from .smarthome import SmartHome
 from .skills import register_assistant_capabilities
 from .timers import Alarm, AlarmScheduler, Notifier, register_timer_capabilities
 from .persona import Persona
@@ -66,8 +67,13 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
     tz = ZoneInfo(cfg["system"]["timezone"])
     background: list[Coroutine[Any, Any, None]] = []
 
+    # Datenordner: Timer, Termine, Modellwahl, Smart-Home-Zugang (Docker: Volume „jarvis-data“)
+    data_dir = Path(os.environ.get("JARVIS_DATA_DIR") or (root / "data"))
+    # JARVIS als Programm ohne Docker: kein Redis, Ollama auf diesem PC (JARVIS_BUS=memory, JARVIS_OLLAMA_URL)
+    ollama_url = os.environ.get("JARVIS_OLLAMA_URL") or None
+
     bus_cfg = cfg["bus"]
-    if bus_cfg["backend"] == "redis_streams":
+    if (os.environ.get("JARVIS_BUS") or bus_cfg["backend"]) == "redis_streams":
         bus: Any = RedisStreamEventBus(bus_cfg["url"], prefix=bus_cfg["stream_prefix"],
                                        group=bus_cfg["consumer_group"], max_len=bus_cfg["max_len"])
         background.append(bus.run(["input", "sensor", "webhook", "schedule"]))
@@ -75,21 +81,23 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         bus = InMemoryEventBus()
 
     registry = ToolRegistry()
-    ha_cfg = cfg["homeassistant"]
-    ha_token = resolve_ref(ha_cfg["token"])
-    if ha_token:
-        async def forward(data: dict[str, Any]) -> None:
-            await bus.publish(state_changed_to_event(data))
+    # Smart Home: Home Assistant wird gesucht und in der Oberfläche verbunden (Zahnrad → Smart Home). Ein Token in
+    # deploy/.env (JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN, Adresse JARVIS_HA_URL) gilt weiterhin.
+    ha_cfg = cfg.get("homeassistant") or {}
 
-        ha = HomeAssistantClient(ha_cfg["websocket_url"], ha_token, on_state_changed=forward)
-        register_home_capabilities(registry, ha)
-        background.append(ha.run_forever())
+    async def forward(data: dict[str, Any]) -> None:
+        await bus.publish(state_changed_to_event(data))
+
+    smarthome = SmartHome(path=data_dir / "home.json", registry=registry,
+                          env_url=os.environ.get("JARVIS_HA_URL") or ha_cfg.get("websocket_url"),
+                          env_token=resolve_ref(ha_cfg.get("token")), on_state_changed=forward)
+    background.append(smarthome.run())
 
     emb_cfg = cfg["llm"]["embeddings"]
     mem_cfg = cfg["memory"]
     memory = MemoryService(
         InMemoryMemoryStore(dedup_similarity=mem_cfg["dedup_similarity"]),  # Betrieb: PostgresMemoryStore
-        OllamaEmbedder(emb_cfg["base_url"], emb_cfg["model"], keep_alive=emb_cfg.get("keep_alive", "24h")),
+        OllamaEmbedder(ollama_url or emb_cfg["base_url"], emb_cfg["model"], keep_alive=emb_cfg.get("keep_alive", "24h")),
         RankingWeights(**mem_cfg["retrieval"]["weights"], half_life_days=mem_cfg["retrieval"]["half_life_days"]),
     )
     register_memory_capabilities(registry, memory)
@@ -125,7 +133,7 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
     providers = cfg["llm"]["providers"]
     local_cfg = providers[cfg["llm"]["default_local"]]
     # JARVIS_LLM_MODEL (deploy/.env) überschreibt das Modell – start.sh wählt es passend zur Hardware
-    local = OllamaProvider(base_url=local_cfg["base_url"],
+    local = OllamaProvider(base_url=ollama_url or local_cfg["base_url"],
                            model=os.environ.get("JARVIS_LLM_MODEL") or local_cfg["model"],
                            num_ctx=local_cfg["num_ctx"], timeout_s=local_cfg["timeout_s"],
                            keep_alive=local_cfg.get("keep_alive", "24h"))
@@ -179,11 +187,12 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
 
     def situation(principal: Principal, channel: str) -> Situation:
         # Nie die Actor-ID als Namen zeigen (daher kam „Alex“): ohne Namen spricht JARVIS nur mit „Sir“ an
-        return Situation(now=datetime.now(tz), user_display=principal.name,
-                         area=principal.area, channel=channel, location=home_location)
+        return Situation(now=datetime.now(tz), user_display=principal.name, area=principal.area, channel=channel,
+                         location=home_location, home_state=smarthome.situation_lines())
 
+    smarthome.fast_path = orchestrator.fast_path
     container = Container(orchestrator=orchestrator, bus=bus, router=router, tokens=tokens,
-                          webhook_secrets={}, situation=situation, agents=agents, tts=_tts(cfg))
+                          webhook_secrets={}, situation=situation, agents=agents, tts=_tts(cfg), smarthome=smarthome)
 
     pc_enabled = registry.get("pc.open_app") is not None
 
@@ -194,10 +203,11 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         if pc_enabled:
             components["pc_steuerung"] = "ok" if agents.connected else "disconnected"
         components["stimme"] = getattr(container.tts, "label", "ok") if container.tts is not None else "browser"
+        if smarthome.credentials() is not None:
+            components["smart_home"] = "ok" if smarthome.connected else "disconnected"
         return components
 
-    # Timer, Erinnerungen, Kalender, E-Mail – Daten im Datenordner (Docker: Volume „jarvis-data“)
-    data_dir = Path(os.environ.get("JARVIS_DATA_DIR") or (root / "data"))
+    # Timer, Erinnerungen, Kalender, E-Mail – Daten im Datenordner
     notifier = container.notifier = Notifier()
 
     async def announce(alarm: Alarm) -> None:
@@ -277,7 +287,7 @@ def _tts(cfg: dict[str, Any]) -> Any:
     """JARVIS-Stimme: Azure Speech (Conrad), wenn ein Schlüssel hinterlegt ist, sonst bzw. als Rückfall Piper."""
     tts_cfg = (cfg.get("voice") or {}).get("tts") or {}
     piper = None
-    if tts_cfg.get("uri"):
+    if tts_cfg.get("uri") and os.environ.get("JARVIS_PIPER", "").lower() not in ("off", "0", "false"):
         try:
             import wyoming  # noqa: F401  – optionales Extra „voice“
         except ImportError:
@@ -331,7 +341,8 @@ def main() -> None:
 
     app.router.lifespan_context = lifespan
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    uvicorn.run(app, host=cfg["api"]["host"], port=cfg["api"]["port"])
+    uvicorn.run(app, host=os.environ.get("JARVIS_HOST") or cfg["api"]["host"],
+                port=int(os.environ.get("JARVIS_PORT") or cfg["api"]["port"]))
 
 
 if __name__ == "__main__":

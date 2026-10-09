@@ -20,6 +20,8 @@
     <button class="conn model-chip" id="model-chip" type="button" data-conn="none" title="KI-Modell – ändern im Zahnrad-Menü">
       <span class="dot"></span><span id="model-text">KI</span></button>
     <div class="conn" id="pc-status" data-conn="none" title="PC-Steuerung"><span class="dot"></span><span id="pc-text">PC</span></div>
+    <button class="conn home-chip" id="home-chip" type="button" data-conn="none" hidden title="Smart Home">
+      <span class="dot"></span><span id="home-chip-text">Haus</span></button>
     <button class="icon-btn" id="settings-btn" type="button" aria-label="Einstellungen" title="Einstellungen">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
@@ -125,6 +127,7 @@
         <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true">Allgemein</button>
         <button type="button" role="tab" id="tab-voice" aria-controls="panel-voice" aria-selected="false">Stimme &amp; Hören</button>
         <button type="button" role="tab" id="tab-ai" aria-controls="panel-ai" aria-selected="false">KI-Modell</button>
+        <button type="button" role="tab" id="tab-home" aria-controls="panel-home" aria-selected="false">Smart Home</button>
       </div>
 
       <section class="tab-panel" id="panel-general" role="tabpanel" aria-labelledby="tab-general">
@@ -210,6 +213,45 @@
         <p class="hint">Sensibles (Gesundheit, Passwörter, Konten, Kamera) beantwortet immer das lokale Modell. Den
           Schlüssel erstellen Sie auf platform.claude.com unter „API Keys“. JARVIS prüft ihn kostenlos und speichert ihn nur
           auf dem JARVIS-Server – die Oberfläche zeigt danach nur noch die letzten vier Zeichen.</p>
+      </section>
+
+      <section class="tab-panel" id="panel-home" role="tabpanel" aria-labelledby="tab-home" hidden>
+        <p class="ai-now" id="home-now">Lade …</p>
+        <p class="form-error" id="home-error" hidden></p>
+        <div id="home-setup">
+          <h3>Home Assistant <small>Licht, Heizung, Rollläden, Steckdosen, Szenen, Schlösser</small></h3>
+          <ul class="models" id="home-found"></ul>
+          <div class="row-field">
+            <input id="home-url" type="text" maxlength="200" spellcheck="false" autocomplete="off"
+                   placeholder="Adresse, z. B. http://homeassistant.local:8123" aria-label="Adresse von Home Assistant">
+            <button class="btn" type="button" id="home-search">Suchen</button>
+          </div>
+          <button class="btn primary wide" type="button" id="home-login">Bei Home Assistant anmelden &amp; verbinden</button>
+          <p class="hint">Sie melden sich einmal mit Ihrem Home-Assistant-Konto an. JARVIS legt sich danach einen
+            eigenen, dauerhaften Zugang an (sichtbar in Home Assistant unter Profil → Sicherheit) und übernimmt Räume und
+            Geräte automatisch.</p>
+          <details class="more">
+            <summary>Stattdessen ein Token einfügen</summary>
+            <p class="hint">In Home Assistant: unten links auf Ihren Namen → „Sicherheit“ → „Langlebige Zugriffstoken“ →
+              „Token erstellen“, Namen „JARVIS“ eingeben und den Token hier einfügen.</p>
+            <div class="row-field">
+              <input id="home-token" type="password" maxlength="600" autocomplete="off" spellcheck="false"
+                     placeholder="Langlebiges Zugriffstoken" aria-label="Zugriffstoken">
+              <button class="btn" type="button" id="home-token-save">Prüfen &amp; verbinden</button>
+            </div>
+          </details>
+          <p class="hint">Noch kein Home Assistant? Am einfachsten auf einem Raspberry Pi oder Mini-PC
+            (home-assistant.io → „Installation“). Danach Geräte dort hinzufügen und Räumen zuordnen – JARVIS findet ihn
+            von selbst.</p>
+        </div>
+        <div id="home-connected" hidden>
+          <h3>Räume und Geräte <small>werden alle fünf Minuten aus Home Assistant übernommen</small></h3>
+          <ul class="rooms" id="home-rooms"></ul>
+          <p class="hint">Sagen Sie zum Beispiel: „Licht im Wohnzimmer aus“, „Alle Lichter aus“, „Dimm das Licht in der
+            Küche auf 30 Prozent“, „Rollläden runter“, „Heizung im Bad auf 21 Grad“, „Starte Filmabend“, „Schließ die
+            Haustür ab“. Räume und Gerätenamen nimmt JARVIS aus Home Assistant.</p>
+          <button class="btn danger small" type="button" id="home-remove">Verbindung trennen</button>
+        </div>
       </section>
 
       <div class="actions">

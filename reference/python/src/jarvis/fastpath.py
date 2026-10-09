@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+from .homeindex import HomeIndex, match_home
 from .when import parse_duration, parse_when
 
 NUMBER_WORDS = {
@@ -472,6 +473,14 @@ class FastPath:
     def __init__(self, area_lights: dict[str, list[str]], area_aliases: dict[str, str] | None = None) -> None:
         self.area_lights = area_lights  # area_id -> [light.*]
         self.area_aliases = area_aliases or {}  # "küche" -> "kueche"
+        self.home: HomeIndex | None = None  # Räume und Geräte aus Home Assistant (smarthome.py)
+
+    def set_home(self, index: HomeIndex | None) -> None:
+        """Neue Geräteliste aus Home Assistant: Räume und Lichter gelten sofort für die Sofortbefehle."""
+        self.home = index
+        if index is not None:
+            self.area_lights = index.area_lights()
+            self.area_aliases = index.area_aliases()
 
     def _area(self, spoken: str) -> str | None:
         spoken = spoken.lower()
@@ -578,6 +587,11 @@ class FastPath:
                     {"entity_ids": self.area_lights[area], "on": pct > 0, "brightness_pct": pct},
                     0.96, "light_brightness", {"area": area, "brightness_pct": pct},
                 )
+        # Haus: Räume und Geräte aus Home Assistant („Licht im Bad aus“, „Rollläden runter“, „Heizung auf 21 Grad“)
+        # (fest konfigurierte Räume ohne Home Assistant – Tests, Demo – bleiben bei den Grammatiken oben)
+        plain = re.sub(r"\s+", " ", _FILLER.sub(" ", simple)).strip()
+        if (self.home is not None or not self.area_lights) and (home := match_home(plain, self.home, default_area)):
+            return FastPathMatch(home.capability, home.arguments, 0.94, home.grammar, home.slots)
         return self._match_pc(canonical_command(text), text)
 
     def _match_pc(self, text: str, raw: str | None = None) -> FastPathMatch | None:

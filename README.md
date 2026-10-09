@@ -105,7 +105,24 @@ pip install -e ".[dev]"
 python -m jarvis.demo              # spielt Fast-Path, Tool-Use, Bestätigungen, Injection-Abwehr durch
 ```
 
-### Variante B – JARVIS-Server mit Docker (lokales KI-Modell)
+### Variante B – Als Windows-Programm, ohne Docker (empfohlen unter Windows)
+
+Im Jarvis-Ordner **„JARVIS installieren.cmd“ doppelklicken** – sonst ist nichts zu tun:
+
+- Fehlen Python 3.12 oder Ollama, installiert das Skript sie selbst (über winget, ohne Administratorrechte).
+- JARVIS kommt in eine eigene Python-Umgebung (`%LOCALAPPDATA%\JARVIS`). Das Sprachmodell wird passend zur Hardware
+  gewählt und geladen; Ollama nutzt eine NVIDIA- oder AMD-Grafikkarte direkt.
+- Lief JARVIS bisher mit Docker, übernimmt das Skript Token, Name, Claude-Schlüssel und die übrigen Einstellungen aus
+  `deploy/.env` und beendet die Docker-Fassung. Timer und eigene Termine bleiben im Docker-Volume.
+- Danach startet JARVIS beim Anmelden automatisch; auf dem Desktop liegt die Verknüpfung „JARVIS“. Die PC-Steuerung läuft
+  mit. Kein Redis, kein Postgres, kein Docker Desktop – deutlich weniger Arbeitsspeicher und ein schnellerer Start.
+
+Aktualisieren: `git pull`, dann „JARVIS installieren.cmd“ erneut. Beenden: `JARVIS installieren.cmd -Stop`, Autostart
+entfernen: `-Uninstall`. Einstellungen stehen in `%LOCALAPPDATA%\JARVIS\jarvis.env` (wie `deploy/.env`), das
+Protokoll in `server.log` daneben. Die lokale Piper-Stimme gibt es nur in der Docker-Fassung; als Programm spricht
+JARVIS mit „Microsoft Conrad“ (Edge oder Azure) bzw. der Browserstimme.
+
+### Variante C – JARVIS-Server mit Docker (lokales KI-Modell)
 
 Voraussetzung: Docker mit Compose v2; für flüssige Antworten 32 GB RAM oder eine GPU (siehe
 [Hardware-Tabelle](docs/06-integrationsplan.md#65-lokale-ki-modelle)).
@@ -128,6 +145,16 @@ Mit **„Jarvis“-Aktivierung** (Schalter unter dem Kreis) reicht „Jarvis, wi
 senden das Audio dafür an Google bzw. Microsoft – mit „Jarvis“-Aktivierung dauerhaft); vollständig lokal über
 Whisper/Piper/openWakeWord ist der nächste Ausbauschritt. API-Beschreibung: `http://127.0.0.1:8080/docs`
 (oben rechts **Authorize** → Token).
+
+**Smart Home** (Zahnrad → **Smart Home**): JARVIS sucht Home Assistant beim Start selbst – unter
+homeassistant.local, auf dem PC und im Heimnetz. Ist er gefunden, erscheint oben „Haus verbinden“. Ein Klick öffnet die
+Anmeldung von Home Assistant; danach legt JARVIS sich einen eigenen, dauerhaften Zugang an (in Home Assistant unter
+Profil → Sicherheit sichtbar) und übernimmt Räume, Geräte und deren Aliasse – alle fünf Minuten neu. Licht, Schalter,
+Rollläden, Heizung, Szenen und Schlösser schaltet JARVIS dann ohne Sprachmodell, sofort; das Aufschließen einer Tür
+muss in der App bestätigt werden. Freiere Fragen („Ist im Bad noch Licht an?“, „Wie warm ist es im Wohnzimmer?“)
+beantwortet das Sprachmodell mit der aktuellen Geräteliste. Wer lieber ein Token einfügt: „Stattdessen ein Token
+einfügen“ im selben Reiter. Noch kein Home Assistant? Am einfachsten auf einem Raspberry Pi oder Mini-PC
+(home-assistant.io → Installation), Geräte dort hinzufügen und Räumen zuordnen – den Rest erledigt JARVIS.
 
 Eingebaut und ohne API-Schlüssel: **Wetter** (Open-Meteo), **Nachrichten** (Tagesschau-RSS, weitere Feeds in
 `config/jarvis.example.yaml`) und **Wikipedia**.
@@ -186,7 +213,7 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Anmelden | „Melde mich bei Netflix an“ öffnet die Anmeldeseite – Passwörter gibt JARVIS nie ein (das übernimmt der Passwortmanager des Browsers) | PC-Agent |
 | Wissen | „Wie wird das Wetter morgen?“, „Was gibt es Neues?“, „Wer war Ada Lovelace?“ (nachgeschlagen) → „Erzähl mir mehr“, „Wer ist ARTERIION?“ → „Nein, das ist ein Künstler“ | Internet |
 | Assistenz | „Status?“, „Plan für morgen?“ (mit Terminen und Wetter), „Wie spät ist es?“, „Was kannst du?“, „Kannst du mich verstehen?“ (sagt, was angekommen ist) | – |
-| Haus | „Mach das Licht in der Küche an“ | Home Assistant |
+| Haus | „Licht im Wohnzimmer aus“, „Alle Lichter aus“, „Dimm das Licht in der Küche auf 30 Prozent“, „Mach die Stehlampe an“, „Rollläden runter“, „Heizung im Bad auf 21 Grad“, „Starte Filmabend“, „Schließ die Haustür ab“ – Räume und Gerätenamen kommen aus Home Assistant | Home Assistant (Zahnrad → Smart Home) |
 | Noch nicht | E-Mails selbst versenden (bewusst: nur Entwürfe), Termine in Google/Outlook eintragen (nur lesen), Formulare mit Passwörtern ausfüllen | – |
 
 Befehle erkennt JARVIS ohne Sprachmodell (sofort). Freie Fragen beantwortet das Sprachmodell. Unvollständige
@@ -284,7 +311,8 @@ JARVIS_URL=ws://127.0.0.1:8080 JARVIS_TOKEN=dev-alex-token node jarvis-client.mj
   wenig Arbeitsspeicher) versteht freie Fragen deutlich schlechter; wenn möglich mindestens `qwen2.5:7b-instruct`.
 - Ohne Claude-Schlüssel arbeitet JARVIS rein lokal; ein Schlüssel in der Oberfläche hat Vorrang vor
   `ANTHROPIC_API_KEY` in `deploy/.env`.
-- Home Assistant verbinden: Token als `JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN` in `.env` eintragen
+- Home Assistant verbinden: Zahnrad → Smart Home (oder Token als `JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN` und
+  Adresse als `JARVIS_HA_URL` in `.env`)
   ([Anleitung](docs/06-integrationsplan.md#61-home-assistant)).
 - Sprache, MQTT, Node-RED und Plugins kommen schrittweise dazu: [Inbetriebnahme](docs/06-integrationsplan.md#610-inbetriebnahme-referenz-deployment).
 - Stoppen: `docker compose down` (Daten bleiben in Docker-Volumes erhalten).

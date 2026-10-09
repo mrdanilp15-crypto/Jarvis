@@ -20,6 +20,7 @@ services:
       JARVIS_DATABASE_URL: postgresql://jarvis:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD fehlt}@postgres:5432/jarvis
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN: ${JARVIS_SECRET_KV_JARVIS_HOMEASSISTANT_TOKEN:-}
+      JARVIS_HA_URL: ${JARVIS_HA_URL:-}                 # optional; sonst Zahnrad → Smart Home (Suche + Anmeldung)
       JARVIS_SECRET_KV_JARVIS_MQTT_PASSWORD: ${JARVIS_SECRET_KV_JARVIS_MQTT_PASSWORD:-}
       JARVIS_DEV_TOKENS: ${JARVIS_DEV_TOKENS:-{}}
       JARVIS_LLM_MODEL: ${JARVIS_LLM_MODEL:-}           # leer = Modell aus der Konfiguration
@@ -41,6 +42,8 @@ services:
       - jarvis-data:/app/data             # Timer, Erinnerungen, eigene Termine
     ports:
       - "127.0.0.1:8080:8080"          # extern nur über Reverse Proxy / VPN
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Home Assistant auf demselben Rechner finden (auch unter Linux)
     depends_on:                         # Mosquitto ist optional (Bridge verbindet sich bei Bedarf neu)
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

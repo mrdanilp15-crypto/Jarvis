@@ -32,8 +32,9 @@ def test_without_api_key_cloud_is_disabled(config_path, monkeypatch):
     container, background = build(config_path)
     assert container.router.cloud is None
     assert container.router.local.name == "ollama"
-    # Timer-Planer und Vorwärmen des lokalen Modells (kein HA-Token, In-Memory-Bus)
-    assert [job.__name__ for job in background] == ["run", "warm_up_local_model"]
+    # Smart Home (sucht Home Assistant), Timer-Planer und Vorwärmen des lokalen Modells (In-Memory-Bus)
+    assert [job.__qualname__ for job in background] == ["SmartHome.run", "AlarmScheduler.run",
+                                                         "build.<locals>.warm_up_local_model"]
     for job in background:
         job.close()
     assert container.router.local.num_ctx == 8192 and container.router.local.keep_alive == "24h"
@@ -86,7 +87,8 @@ def test_warm_up_retries_until_model_is_ready(config_path, monkeypatch):
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(OllamaProvider, "warm_up", fake_warm_up)
-    container, [scheduler, warm_up] = app_module.build(config_path)
+    container, [smart_home, scheduler, warm_up] = app_module.build(config_path)
+    smart_home.close()
     scheduler.close()
     holder["container"] = container
     monkeypatch.setattr(app_module.asyncio, "sleep", no_sleep)
