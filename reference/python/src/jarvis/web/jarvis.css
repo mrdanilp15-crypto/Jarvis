@@ -53,7 +53,7 @@ body {
   overflow: hidden;
 }
 
-button, input, select { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 
 /* ---------- Kopfzeile ---------- */
 .topbar {
@@ -448,7 +448,7 @@ dialog code { color: var(--text); }
 dialog .field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
 dialog .check { display: flex; gap: 10px; align-items: flex-start; margin: 10px 0; cursor: pointer; }
 dialog .check input { margin-top: 4px; accent-color: var(--cyan); }
-dialog input[type="text"], dialog select {
+dialog input[type="text"], dialog select, dialog textarea {
   width: 100%;
   padding: 9px 12px;
   border-radius: 8px;
@@ -900,3 +900,61 @@ body[data-fx="aus"] .draw { stroke-dashoffset: 0; }
   body.has-show .cards { max-height: none; }
   .hourcurve text { font-size: 17px; } .hourcurve .tval { font-size: 19px; }  /* Kurve wird schmal skaliert */
 }
+
+/* ---------- Protokolle ---------- */
+dialog textarea { resize: vertical; font-family: var(--font-ui); line-height: 1.45; }
+.protocols .steps { font-size: 12px; }
+.proto-edit { margin-top: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.card.protocol { --accent: var(--c-tool); }
+.card.protocol .steps { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.card.protocol .step { display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: center;
+  animation: rise-in 0.35s ease both; animation-delay: calc(var(--i) * 0.45s); }
+.card.protocol .step b { font-weight: 600; color: var(--text); }
+.card.protocol .step small { display: block; color: var(--muted); font-size: 12px; }
+.card.protocol .mark { position: relative; width: 26px; height: 26px; }
+.card.protocol .ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--line);
+  border-top-color: var(--accent); animation: spin 0.6s linear calc(var(--i) * 0.45s) 1, ring-done 0.01s linear calc(var(--i) * 0.45s + 0.6s) forwards; }
+.card.protocol .tick { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 700; font-size: 14px;
+  color: var(--ok); animation: pop-in 0.3s ease calc(var(--i) * 0.45s + 0.6s) both; }
+.card.protocol .step.skipped .tick, .card.protocol .step.denied .tick, .card.protocol .step.failed .tick { color: var(--muted); }
+.card.protocol .step.failed .tick, .card.protocol .step.denied .tick { color: var(--danger); }
+.card.protocol .step.pending_confirmation .tick { color: var(--c-confirm); }
+@keyframes ring-done { to { border-color: color-mix(in srgb, var(--accent) 70%, transparent); } }
+.card.protocol .done { margin: 12px 0 0; font-family: var(--font-hud); letter-spacing: 0.16em; text-transform: uppercase;
+  font-size: 12px; color: var(--accent); animation: rise-in 0.4s ease both; animation-delay: calc(var(--i) * 0.45s + 0.5s); }
+
+/* ---------- Start-Sequenz ---------- */
+.boot {
+  position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; background: radial-gradient(circle at 50% 42%, #072433 0%, var(--bg) 70%); cursor: pointer;
+  animation: rise-in 0.4s ease both;
+}
+.boot.leaving { animation: boot-out 0.6s ease forwards; }
+@keyframes boot-out { to { opacity: 0; transform: scale(1.04); filter: blur(6px); } }
+.boot-rings { width: min(40vmin, 320px); height: min(40vmin, 320px); color: var(--cyan); overflow: visible; }
+.boot-rings circle { fill: none; stroke: currentColor; transform-origin: 0 0; }
+.boot-rings .r1 { stroke-width: 3; stroke-dasharray: 60 8 20 8 90 12 40 122; animation: spin 6s linear infinite; opacity: 0.85; }
+.boot-rings .r2 { stroke-width: 1.5; stroke-dasharray: 2 4; animation: spin 14s linear infinite reverse; opacity: 0.6; }
+.boot-rings .r3 { stroke-width: 5; stroke-dasharray: 30 10 70 10 20 220; animation: spin 3.5s linear infinite; }
+.boot-rings .r4 { stroke-width: 1; opacity: 0.5; fill: color-mix(in srgb, var(--cyan) 8%, transparent); }
+.boot.ready .boot-rings { color: var(--ok); transition: color 0.6s ease; }
+.boot-core { position: relative; display: grid; place-items: center; }
+.boot-core > * { grid-area: 1 / 1; }
+.boot-title {
+  font-family: var(--font-hud); letter-spacing: 0.3em; font-size: clamp(18px, 3.4vmin, 30px); color: var(--text);
+  text-shadow: 0 0 14px var(--hud-glow); }
+.boot-sub { font-family: var(--font-hud); letter-spacing: 0.18em; text-transform: uppercase; font-size: 13px; color: var(--cyan); }
+.boot.ready .boot-sub { color: var(--ok); }
+.boot-checks { list-style: none; margin: 0; padding: 0; width: min(92vw, 420px); display: flex; flex-direction: column; gap: 6px; }
+.boot-checks li { display: grid; grid-template-columns: 24px 1fr auto; gap: 10px; align-items: center; font-size: 14px;
+  animation: rise-in 0.3s ease both; }
+.boot-checks .mark { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; }
+.boot-checks li.pending .mark { border-top-color: var(--cyan); animation: spin 0.6s linear infinite; }
+.boot-checks li.ok:not(.pending) .mark { color: var(--ok); border-color: var(--ok); }
+.boot-checks li.warn:not(.pending) .mark { color: var(--warn); border-color: var(--warn); }
+.boot-checks li.off:not(.pending) .mark { color: var(--muted); }
+.boot-checks .detail { color: var(--muted); font-size: 12px; text-align: right; }
+.boot-bar { width: min(92vw, 420px); height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.boot-bar span { display: block; height: 100%; width: 0; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); transition: width 0.35s ease; }
+.boot.ready .boot-bar span { background: var(--ok); }

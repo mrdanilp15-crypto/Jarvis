@@ -183,6 +183,6 @@ def test_location_from_client_reaches_the_model_context(orchestrator):
         tokens={}, webhook_secrets={},
         situation=lambda who, channel: Situation(now=datetime(2026, 9, 27, 10, 0), channel=channel, location="Berlin"),
     )
-    request = TurnRequest(text="Wie ist das Wetter?", session_id="loc1", principal=ALEX)
+    request = TurnRequest(text="Brauche ich heute eine Jacke?", session_id="loc1", principal=ALEX)
     asyncio.run(container.run_turn(request, channel="voice", location="Hamburg"))
     assert "Ort des Nutzers: Hamburg" in seen["dynamic"]  # Ort der Oberfläche schlägt den Standardort

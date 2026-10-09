@@ -132,6 +132,7 @@
         <button type="button" role="tab" id="tab-voice" aria-controls="panel-voice" aria-selected="false">Stimme &amp; Hören</button>
         <button type="button" role="tab" id="tab-ai" aria-controls="panel-ai" aria-selected="false">KI-Modell</button>
         <button type="button" role="tab" id="tab-home" aria-controls="panel-home" aria-selected="false">Smart Home</button>
+        <button type="button" role="tab" id="tab-protocols" aria-controls="panel-protocols" aria-selected="false">Protokolle</button>
         <button type="button" role="tab" id="tab-devices" aria-controls="panel-devices" aria-selected="false">Geräte</button>
       </div>
 
@@ -149,6 +150,8 @@
           <option value="aus">aus – ruhige Anzeige (für langsame Rechner)</option>
         </select>
       </label>
+      <label class="check"><input type="checkbox" id="opt-boot">
+        <span>Start-Sequenz: beim Öffnen von JARVIS Systemcheck und Begrüßung mit Wetter und Terminen</span></label>
       <label class="check"><input type="checkbox" id="opt-presence">
         <span>Anwesenheit über die Kamera erkennen und mich nach einer Abwesenheit begrüßen</span></label>
       <label class="field">Begrüßen nach
@@ -174,6 +177,8 @@
         </select>
       </label>
       <p class="hint" id="stt-state"></p>
+      <label class="check"><input type="checkbox" id="opt-barge">
+        <span>Ins Wort fallen: „Jarvis, stopp“ oder „Jarvis, …“ unterbricht ihn mitten im Satz</span></label>
       <label class="field">Stimme <select id="voice"></select></label>
       <label class="field">KI-Effekt der JARVIS-Stimme
         <select id="opt-effect">
@@ -283,6 +288,29 @@
           <p class="hint" id="home-routines-empty">Noch nichts gelernt. Nach etwa einer Woche Nutzung schlägt JARVIS
             hier wiederkehrende Schaltungen vor (z. B. „Küchenlicht werktags gegen 6:45 an“). Die Uhrzeit folgt danach
             gleitend Ihren Gewohnheiten.</p>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="panel-protocols" role="tabpanel" aria-labelledby="tab-protocols" hidden>
+        <p class="hint">Ein Protokoll erledigt mehrere Dinge auf einen Satz – „Jarvis, Protokoll Gute Nacht“ oder ein
+          eigener Auslöser wie „Ich gehe schlafen“. Jeder Schritt ist ein Befehl, so wie Sie ihn sagen würden.</p>
+        <p class="form-error" id="proto-error" hidden></p>
+        <ul class="models protocols" id="proto-list"></ul>
+        <button class="btn" type="button" id="proto-new">Neues Protokoll</button>
+        <div class="proto-edit" id="proto-edit" hidden>
+          <label class="field">Name <input id="proto-name" type="text" maxlength="40" placeholder="z. B. Hausparty"></label>
+          <label class="field">Eigene Auslöser (optional, durch Komma getrennt)
+            <input id="proto-triggers" type="text" maxlength="300" placeholder="z. B. Party!, Lass uns feiern"></label>
+          <label class="field">Schritte – einer pro Zeile
+            <textarea id="proto-steps" rows="6" maxlength="1500" spellcheck="false"
+                      placeholder="Alle Lichter an&#10;Spiel Radio Bob im Wohnzimmer&#10;Wie wird das Wetter?"></textarea></label>
+          <p class="hint">Was geht: alles, was JARVIS als Sofortbefehl kennt – Licht, Heizung, Szenen, Rollläden, Radio,
+            Programme öffnen, Bildschirm sperren, Wetter, Termine, Nachrichten, Timer. Freie Fragen an das Sprachmodell
+            laufen bewusst nicht in Protokollen. Was eine Bestätigung braucht (z. B. Herunterfahren), fragt nach.</p>
+          <div class="train">
+            <button class="btn primary" type="button" id="proto-save">Speichern</button>
+            <button class="btn" type="button" id="proto-cancel">Abbrechen</button>
+          </div>
         </div>
       </section>
 

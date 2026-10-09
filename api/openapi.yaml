@@ -409,6 +409,77 @@ paths:
       operationId: deleteClaudeKey
       responses:
         "200": { description: Entfernt }
+  /v1/startup:
+    get:
+      tags: [System]
+      summary: Start-Sequenz – Systemcheck und Begrüßung mit Wetter und nächstem Termin
+      operationId: startup
+      parameters:
+        - { name: location, in: query, required: false, schema: { type: string, maxLength: 100 } }
+      responses:
+        "200":
+          description: Prüfpunkte (ok | warn | off), Begrüßungstext, Wetterdaten für die Anzeige
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        label: { type: string }
+                        state: { enum: [ok, warn, "off"] }
+                        detail: { type: string }
+                  text: { type: string }
+                  weather: { type: [object, "null"] }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/settings/protocols:
+    get:
+      tags: [Einstellungen]
+      summary: Protokolle („Protokoll Gute Nacht“) mit Auslösern und Schritten
+      operationId: listProtocols
+      responses:
+        "200": { description: Protokolle }
+        "403": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [Einstellungen]
+      summary: Protokoll anlegen – jeder Schritt ist ein Sofortbefehl, wie gesprochen
+      operationId: addProtocol
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProtocolIn" }
+      responses:
+        "200": { description: Angelegt }
+        "422": { $ref: "#/components/responses/Problem" }
+  /v1/settings/protocols/{protocol_id}:
+    put:
+      tags: [Einstellungen]
+      summary: Protokoll ändern
+      operationId: updateProtocol
+      parameters:
+        - { name: protocol_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProtocolIn" }
+      responses:
+        "200": { description: Geändert }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [Einstellungen]
+      summary: Protokoll löschen
+      operationId: removeProtocol
+      parameters:
+        - { name: protocol_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Gelöscht }
+        "404": { $ref: "#/components/responses/Problem" }
   /v1/settings/devices:
     get:
       tags: [Einstellungen]
@@ -695,6 +766,13 @@ components:
         application/problem+json:
           schema: { $ref: "../schemas/error.schema.json" }
   schemas:
+    ProtocolIn:
+      type: object
+      required: [name, steps]
+      properties:
+        name: { type: string, maxLength: 40 }
+        triggers: { type: array, maxItems: 5, items: { type: string, maxLength: 60 } }
+        steps: { type: array, minItems: 1, maxItems: 12, items: { type: string, maxLength: 120 } }
     RoomDevice:
       type: object
       properties:

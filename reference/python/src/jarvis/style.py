@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.10.0"
+STYLE_VERSION = "2.11.0"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -429,8 +429,78 @@ class PlainStyle:
         return PHRASES[key].format(sir=sir)
 
     # -- Aktionen ----------------------------------------------------------------------------------------
+    WEEKDAYS = ("Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag")
+
+    def weather_text(self, result: dict[str, Any], slots: dict[str, Any] | None = None) -> str:
+        """Wetter aus info.weather – knapp: jetzt/heute, morgen, übermorgen, die Woche oder nur „Schirm ja/nein“."""
+        slots = slots or {}
+        if result.get("error"):
+            return ("Für welchen Ort darf ich nachsehen? Sagen Sie zum Beispiel „Wetter in Hamburg“ – oder tragen Sie "
+                    "Ihren Ort im Zahnrad-Menü ein.") if "Kein Ort" in result["error"] else str(result["error"])
+        place = str(result.get("location") or "Ihrer Region").split(",")[0]
+        week = result.get("week") or result.get("forecast") or []
+        when = slots.get("when", "jetzt")
+        index = {"morgen": 1, "übermorgen": 2}.get(when, 0)
+
+        def rain(day: dict[str, Any]) -> tuple[str, int]:
+            p = day.get("precipitation_probability_pct") or 0
+            return (f", Regenwahrscheinlichkeit {p} Prozent" if p >= 20 else ""), p
+
+        if when == "woche" and len(week) > 2:
+            from datetime import date as _date
+
+            def name(day: dict[str, Any]) -> str:
+                return self.WEEKDAYS[_date.fromisoformat(day["date"]).weekday()]
+
+            warm = max(week, key=lambda d: d.get("temp_max_c") or -99)
+            wet = [name(d) for d in week[1:] if (d.get("precipitation_probability_pct") or 0) >= 60]
+            lows = [d["temp_min_c"] for d in week if isinstance(d.get("temp_min_c"), int | float)]
+            highs = [d["temp_max_c"] for d in week if isinstance(d.get("temp_max_c"), int | float)]
+            text = (f"Die Aussichten für {place}: {format_number(min(lows))} bis {format_number(max(highs))} Grad, "
+                    f"am wärmsten am {name(warm)}.") if lows and highs else f"Die Aussichten für {place}."
+            days = " und ".join([", ".join(wet[:-1]), wet[-1]] if len(wet) > 1 else wet)
+            text += f" Regen ist am {days} wahrscheinlich." if wet else " Größerer Regen ist nicht in Sicht."
+            return text
+        day = week[index] if index < len(week) else {}
+        label = {1: "Morgen", 2: "Übermorgen"}.get(index, "Heute")
+        rain_text, probability = rain(day) if day else ("", 0)
+        if slots.get("rain"):
+            if not day:
+                return f"Dazu liegt mir für {place} keine Vorhersage vor."
+            verdict = ("Ein Schirm wäre ratsam." if probability >= 50 else
+                       "Den Schirm können Sie vermutlich zu Hause lassen." if probability < 25 else
+                       "Ein kleiner Schirm schadet nicht.")
+            return f"{label} in {place}: Regenwahrscheinlichkeit {probability} Prozent. {verdict}"
+        parts = []
+        current = result.get("current") or {}
+        if index == 0 and isinstance(current.get("temperature_c"), int | float):
+            parts.append(f"In {place} sind es {format_number(round(current['temperature_c']))} Grad, "
+                         f"{current.get('conditions', '')}.".replace(", .", "."))
+        if day and isinstance(day.get("temp_max_c"), int | float):
+            span = f"{format_number(round(day['temp_min_c']))} bis {format_number(round(day['temp_max_c']))} Grad"
+            if index:
+                conditions = f"{day['conditions']}, " if day.get("conditions") else ""
+                parts.append(f"{label} in {place}: {conditions}{span}{rain_text}.")
+            else:
+                parts.append(f"Heute {span}{rain_text}.")
+            if probability >= 60:
+                parts.append("Ein Schirm wäre ratsam.")
+        return " ".join(parts) or f"Für {place} liegt mir gerade keine Vorhersage vor."
+
+    def news_text(self, result: dict[str, Any]) -> str:
+        items = [h for h in result.get("headlines") or [] if h.get("title")][:3]
+        if not items:
+            return "Gerade liegen mir keine Schlagzeilen vor."
+        titles = " ".join(f"{verbatim(h['title'].strip().rstrip('.'))}." for h in items)
+        return f"Die Schlagzeilen: {titles}"
+
     def action_reply(self, record: Any, slots: dict[str, Any] | None = None, *, via_confirmation: bool = False) -> str:
         status = record.status
+        if status == "succeeded" and isinstance(record.result, dict):
+            if record.capability == "info.weather":
+                return self.weather_text(record.result, slots)
+            if record.capability == "info.news":
+                return self.news_text(record.result)
         if status == "succeeded":
             return listing_text(record.capability, record.arguments, record.result) or "Erledigt."
         if status == "pending_confirmation":
@@ -509,6 +579,60 @@ class PlainStyle:
         if next_event:
             when = f"um {next_event['time']} Uhr" if next_event.get("time") else "heute"
             text += f" Ihr nächster Termin: {verbatim(next_event['title'])} {when}."
+        return text
+
+    # -- Trockener Humor ----------------------------------------------------------------------------------------
+    def night_remark(self, now: datetime, *, going_to_bed: bool = False) -> str:
+        """Einmal pro Nacht (1–5 Uhr) eine Bemerkung zur Uhrzeit – höflich, trocken, nie belehrend."""
+        return ""
+
+    # -- Start-Sequenz -----------------------------------------------------------------------------------------
+    def startup_text(self, now: datetime, problems: list[str], weather: dict[str, Any] | None = None,
+                     next_event: dict[str, Any] | None = None, events_today: int | None = None) -> str:
+        """„Guten Morgen, Sir. Alle Systeme einsatzbereit. Draußen 8 Grad, bewölkt. Ihr erster Termin: …“"""
+        sir = f", {self.address}" if self.address else ""
+        greeting = "Guten Morgen" if 5 <= now.hour < 11 else "Guten Tag" if now.hour < 18 else "Guten Abend"
+        if not problems:
+            status = "Alle Systeme einsatzbereit."
+        elif len(problems) == 1:
+            status = f"Alle Systeme einsatzbereit – bis auf {problems[0]}."
+        else:
+            status = f"Einsatzbereit, allerdings ohne {', '.join(problems[:-1])} und {problems[-1]}."
+        text = f"{greeting}{sir}. {status}"
+        current = (weather or {}).get("current") or {}
+        if isinstance(current.get("temperature_c"), int | float):
+            conditions = f", {current['conditions']}" if current.get("conditions") else ""
+            text += f" Draußen {round(current['temperature_c'])} Grad{conditions}."
+        if next_event:
+            when = f"um {next_event['time']} Uhr" if next_event.get("time") else "heute"
+            first = "Ihr erster Termin" if events_today and 5 <= now.hour < 11 else "Ihr nächster Termin"
+            text += f" {first}: {verbatim(next_event['title'])} {when}."
+        elif events_today == 0:
+            text += " Heute stehen keine weiteren Termine an."
+        return text
+
+    # -- Protokolle -------------------------------------------------------------------------------------------
+    def protocol_text(self, name: str | None, steps: list[dict[str, Any]], spoken: list[str] | None = None, *,
+                      unknown: str = "", known: list[str] | None = None) -> str:
+        """„Protokoll „Gute Nacht“ abgeschlossen, Sir.“ – dazu, was die Schritte zu sagen haben (Wetter, Termine),
+        und ehrlich, was nicht ging."""
+        sir = f", {self.address}" if self.address else ""
+        if name is None:
+            names = ", ".join(f"„{n}“" for n in known or [])
+            return (f"Ein Protokoll „{verbatim(unknown)}“ kenne ich nicht{sir}."
+                    + (f" Vorhanden: {names}." if names else " Anlegen können Sie Protokolle im Zahnrad-Menü."))
+        failed = [s for s in steps if s["status"] not in ("succeeded", "pending_confirmation")]
+        waiting = [s for s in steps if s["status"] == "pending_confirmation"]
+        if failed and len(failed) == len(steps):
+            text = f"Protokoll „{verbatim(name)}“ ließ sich nicht ausführen{sir}."
+        elif failed:
+            text = f"Protokoll „{verbatim(name)}“ ausgeführt{sir} – bis auf {len(failed)} von {len(steps)} Schritten."
+        else:
+            text = f"Protokoll „{verbatim(name)}“ abgeschlossen{sir}."
+        if spoken:
+            text += " " + " ".join(spoken)
+        if waiting:
+            text += " " + waiting[0]["text"]
         return text
 
     # -- Sehen ------------------------------------------------------------------------------------------------
@@ -599,6 +723,18 @@ class PlainStyle:
 
 
 class JarvisStyle(PlainStyle):
+    NIGHT_REMARKS = (
+        "Darf ich anmerken, dass es bereits {time} Uhr ist{sir}?",
+        "Ich erwähne es nur ungern{sir}, aber es ist {time} Uhr.",
+        "Nur zur Kenntnis{sir}: Es ist {time} Uhr. Der Schlaf läuft Ihnen nicht davon – vermutlich.",
+    )
+
+    def night_remark(self, now: datetime, *, going_to_bed: bool = False) -> str:
+        sir = f", {self.address}" if self.address else ""
+        if going_to_bed:
+            return f"Eine weise Entscheidung angesichts der Uhrzeit{sir}."
+        return self.NIGHT_REMARKS[now.toordinal() % len(self.NIGHT_REMARKS)].format(time=f"{now:%H:%M}", sir=sir)
+
     """Höflich, charmant, britisch-präzise; ruhig und technisch klar; Anrede sparsam; kein Slang."""
 
     name = "jarvis"
@@ -855,6 +991,10 @@ class JarvisStyle(PlainStyle):
             return self.phrase("analysis_done"), self.status_text(result or {})
         if capability == "assistant.day_plan":
             return very_well, self.day_plan_text(result or {})
+        if capability == "info.weather" and isinstance(result, dict):
+            return "", self.weather_text(result, slots)
+        if capability == "info.news" and isinstance(result, dict):
+            return "", self.news_text(result)
         return very_well, "Erledigt."
 
     # -- Status und Tagesplan -------------------------------------------------------------------------

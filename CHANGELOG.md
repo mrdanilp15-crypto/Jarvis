@@ -1,5 +1,32 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.11.0 – 2026-10-09
+
+### Neu
+- **Protokolle wie im Film:** „Jarvis, Protokoll Gute Nacht“ oder ein eigener Auslöser wie „Ich gehe schlafen“.
+  - Mehrere Schritte laufen nacheinander und werden sichtbar abgehakt.
+  - Jeder Schritt ist ein normaler Sofortbefehl („Alle Lichter aus“, „Wie wird das Wetter morgen?“) mit denselben
+    Rechten und Rückfragen wie gesprochen. Freie Fragen an das Sprachmodell laufen bewusst nicht.
+  - Vorhanden sind „Gute Nacht“ und „Morgenbriefing“; eigene Protokolle legen Sie an unter Zahnrad → Protokolle.
+- **Start-Sequenz:** Beim Öffnen von JARVIS, etwa nach dem Hochfahren, läuft ein Systemcheck als Vollbild:
+  Sprachmodell, Stimme, PC-Steuerung, Smart Home, Raum-Geräte, Wetterdienst, Kalender. Danach begrüßt JARVIS:
+  „Guten Morgen, Sir. Alle Systeme einsatzbereit. Draußen 8 Grad … Ihr erster Termin …“ und zeigt das Wetter.
+  Abschaltbar unter Zahnrad → Allgemein.
+- **Ins Wort fallen:**
+  - „Jarvis, stopp“ oder „Stopp“ unterbricht ihn mitten im Satz.
+  - „Jarvis, wie spät ist es?“ unterbricht und stellt gleich die neue Frage; „Jarvis“ allein unterbricht und hört zu.
+  - Was JARVIS gerade selbst sagt, zählt nicht als Unterbrechung (Schutz vor dem Lautsprecher-Echo).
+  - Abschaltbar unter Zahnrad → Stimme & Hören.
+- **Trockener Humor:** Zwischen 1 und 5 Uhr eine Bemerkung pro Nacht („Ich erwähne es nur ungern, Sir, aber es
+  ist 02:14 Uhr.“). Auf „Gute Nacht“ zu später Stunde antwortet er: „Eine weise Entscheidung angesichts der
+  Uhrzeit.“
+- **Wetter und Nachrichten direkt, ohne Sprachmodell:**
+  - Wetter: „Wie wird das Wetter morgen?“, „Wetter in Hamburg“, „Brauche ich einen Schirm?“, „Wie wird das Wetter
+    die nächsten Tage?“
+  - Nachrichten: „Nachrichten“, „Was gibt es Neues?“
+  - Beides kommt schnell, mit echten Daten und mit Show. Vorher lief es über das Sprachmodell, das dabei auch
+    raten konnte.
+
 ## Jarvis-Modul 2.10.0 – 2026-10-09
 
 ### Neu

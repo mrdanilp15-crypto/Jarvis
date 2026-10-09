@@ -136,6 +136,9 @@ class TurnResult:
     retracted: bool = False  # Gestreamter Text wurde zurückgezogen (erfundene Links) – Oberfläche hört auf zu sprechen
 
 
+# Protokolle: Schritte, die nicht passen (Dialoge, Kamera), und solche, deren Ergebnis JARVIS vorliest
+PROTOCOL_UNSUITABLE = {"incomplete", "mail_dialog", "vision", "refuse_password"}
+PROTOCOL_SPOKEN = ("info.", "assistant.", "calendar.list", "timer.list", "mail.list", "system.status", "system.monitor")
 _URL = re.compile(r"https?://[^\s)\]>\"'<]+")
 
 
@@ -277,6 +280,8 @@ class Orchestrator:
         self.app_resolver = app_resolver
         # Wen meint „an Mama“ bzw. „max punkt mustermann at gmx punkt de“? (Kontakte aus der Konfiguration)
         self.recipient_resolver = recipient_resolver or resolve_recipient
+        self.protocols: Any = None  # protocols.ProtocolStore – „Protokoll Gute Nacht“
+        self._night_noted: dict[str, Any] = {}  # actor -> Datum der letzten nächtlichen Bemerkung
 
     # ------------------------------------------------------------------
     # Einstieg für Sprache/Text
@@ -299,6 +304,8 @@ class Orchestrator:
         finally:
             _ON_STATUS.reset(token)
         await stream.flush()
+        if remark := self._night_remark(req, situation, result):
+            result.text = f"{result.text} {remark}"
         result.text = self.style.finalize(result.text)
         session = self.sessions.get(req.session_id)
         result.awaiting_reply = bool(session and (session.expect or session.mail or
@@ -333,6 +340,10 @@ class Orchestrator:
             reply = confirmation_reply(req.text)
             if reply is not None:
                 return await self._resolve_by_voice(pending, req, approve=reply)
+
+        # Protokoll („Protokoll Gute Nacht“, eigene Auslöser): mehrere Sofortbefehle nacheinander
+        if self.protocols is not None and (found := self.protocols.match(req.text)) is not None:
+            return await self._run_protocol(found, req, situation)
 
         # E-Mail im Entstehen: der Satz ist Empfänger, Betreff oder Text (oder „abbrechen“, „die Adresse ist falsch“)
         if session.mail is not None and session.mail.expired():
@@ -421,7 +432,12 @@ class Orchestrator:
                 correlation_id=req.correlation_id, session_id=req.session_id, via="fast_path",
                 ctx=PolicyContext(tainted=False, allowed_domains=None, mode=req.mode, now=situation.now),
             )
-            return self._fast_path_result(record, match.slots)
+            result = self._fast_path_result(record, match.slots)
+            cap = self.registry.get(match.capability)
+            if cap is not None and cap.output_trust == "untrusted" and record.status == "succeeded":
+                session.tainted = True  # Schlagzeilen u. Ä. stehen jetzt im Verlauf: ab hier Aktionen >= R2 nur mit Bestätigung
+            result.tainted = session.tainted
+            return result
 
         # 4) Wissensfragen und Folgesätze zum Thema: nachschlagen statt raten
         sources, researched = "", []
@@ -853,7 +869,7 @@ class Orchestrator:
     def _interpret(self, match: FastPathMatch, situation: Situation) -> dict[str, Any]:
         """Kontext-Interpretation: Angaben ergänzen, die der Nutzer nicht nennen muss."""
         arguments = dict(match.arguments)
-        if match.capability == "assistant.day_plan" and situation.location:
+        if match.capability in ("assistant.day_plan", "info.weather") and situation.location:
             arguments.setdefault("location", situation.location)
         return arguments
 
@@ -899,6 +915,65 @@ class Orchestrator:
         match = self.fast_path.match(req.text, default_area=req.principal.area, now=situation.now) \
             if self.fast_path else None
         return match is not None and match.grammar not in ("incomplete", "pc_open_guess")
+
+    def _night_remark(self, req: TurnRequest, situation: Situation, result: TurnResult) -> str:
+        """Trockener Humor, sparsam: zwischen 1 und 5 Uhr einmal pro Nacht ein Hinweis auf die Uhrzeit."""
+        now = situation.now
+        if not (1 <= now.hour < 5) or not result.text or result.pending_confirmation or result.retracted:
+            return ""
+        if self._night_noted.get(req.principal.actor) == now.date():
+            return ""
+        self._night_noted[req.principal.actor] = now.date()
+        bedtime = bool(result.card and result.card.get("type") == "protocol"
+                       and "nacht" in str(result.card.get("name", "")).lower())
+        return self.style.night_remark(now, going_to_bed=bedtime)
+
+    async def _run_protocol(self, found: Any, req: TurnRequest, situation: Situation) -> TurnResult:
+        """Schritte eines Protokolls nacheinander – jeder wie ein gesagter Sofortbefehl (Richtlinien inklusive).
+        Was kein Sofortbefehl ist, wird übersprungen, nie dem Sprachmodell überlassen."""
+        if found.protocol is None:
+            return TurnResult(self.style.protocol_text(None, [], unknown=found.spoken_name,
+                                                       known=[p.name for p in self.protocols.items]), route="protocol")
+        protocol = found.protocol
+        steps: list[dict[str, Any]] = []
+        actions: list[ActionRecord] = []
+        spoken: list[str] = []
+        pending: PendingConfirmation | None = None
+        for step in protocol.steps:
+            entry: dict[str, Any] = {"label": step, "status": "skipped", "text": "nicht verstanden"}
+            steps.append(entry)
+            match = (self.fast_path.match(step, default_area=req.principal.area, now=situation.now)
+                     if self.fast_path else None)
+            if match is not None and match.grammar == "pc_open_guess":
+                app = (self.app_resolver(match.arguments["app"])
+                       if self.app_resolver and self.registry.get(match.capability) is not None else None)
+                match = replace(match, arguments={"app": app}) if app else None
+            if match is None:
+                if (intent := conversation_intent(step)) in ("time", "date"):  # „Wie spät ist es?“ im Protokoll
+                    entry.update(status="succeeded", text=self.style.finalize(self.style.conversation(intent, situation)))
+                    spoken.append(entry["text"])
+                continue
+            if (match.grammar in PROTOCOL_UNSUITABLE or match.grammar.endswith("_unavailable")
+                    or self.registry.get(match.capability) is None):
+                entry["text"] = "nicht verfügbar"
+                continue
+            await report("action", capability=match.capability)
+            record = await self.request_action(
+                capability=match.capability, arguments=self._interpret(match, situation), principal=req.principal,
+                correlation_id=req.correlation_id, session_id=req.session_id, via="automation",
+                ctx=PolicyContext(tainted=False, allowed_domains=None, mode=req.mode, now=situation.now),
+            )
+            reply = self._fast_path_result(record, match.slots)
+            actions.append(record)
+            pending = reply.pending_confirmation or pending
+            failed = isinstance(record.result, dict) and bool(record.result.get("error"))  # z. B. Wetter ohne Ort
+            entry.update(status="failed" if failed and record.status == "succeeded" else record.status,
+                         text=self.style.finalize(reply.text))
+            if record.status == "succeeded" and match.capability.startswith(PROTOCOL_SPOKEN) and not failed:
+                spoken.append(entry["text"])
+        return TurnResult(self.style.protocol_text(protocol.name, steps, spoken), route="protocol", actions=actions,
+                          pending_confirmation=pending,
+                          card={"type": "protocol", "name": protocol.name, "steps": steps})
 
     def _fast_path_result(self, record: ActionRecord, slots: dict[str, Any] | None = None) -> TurnResult:
         pending = self.confirmations.get(record.confirmation_id) if record.confirmation_id else None

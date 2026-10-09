@@ -427,6 +427,40 @@ def canonical_command(text: str) -> str:
 # Status und Tagesplan (Skills mit Capability) sowie Gesprächs-Intents ohne Aktion. Verglichen wird die ganze,
 # normalisierte Äußerung – „Status?“ ja, „Wie ist der Status der Waschmaschine?“ nein (geht an das LLM).
 # Gedächtnis: „Merk dir, dass ich Kaffee schwarz trinke“, „Was weißt du über mich?“, „Vergiss, dass …“
+# Wetter und Nachrichten direkt (ohne Sprachmodell – das riet sonst gern): „Wie wird das Wetter morgen?“,
+# „Wetter in Hamburg“, „Brauche ich einen Schirm?“, „Wie wird das Wetter die nächsten Tage?“, „Nachrichten“
+WEATHER = re.compile(r"^(?:und\s+)?(?:wie (?:ist|wird|war) (?:das|denn das|eigentlich das) wetter|wie wird es|"
+                     r"wetter(?:bericht|vorhersage|lage)?|was sagt (?:das|der) wetter(?:bericht)?|"
+                     r"(?:wie|wieviel|wie viel) (?:warm|kalt|grad) (?:ist|wird|hat) es|regnet es|wird es regnen|"
+                     r"(?P<rain>brauche ich (?:einen|nen|n) (?:regen)?schirm|gibt es regen))"
+                     r"(?P<rest>(?:\s+.*)?)$")
+_WEATHER_WHEN = [(r"\bübermorgen\b", "übermorgen", 3), (r"\bmorgen\b", "morgen", 2),
+                 (r"\b(?:woche|wochenende|nächsten tage|kommenden tage|nächste zeit)\b", "woche", 7),
+                 (r"\bheute\b", "heute", 1)]
+NEWS = re.compile(r"^(?:(?:die )?(?:neuesten |aktuellen |letzten )?(?:nachrichten|news|schlagzeilen)|"
+                  r"was gibt(?:'s| es) neues(?: in der welt)?|was (?:ist|passiert) (?:gerade )?in der welt(?: los)?|"
+                  r"(?:zeig|lies|sag|gib) (?:mir )?(?:die )?(?:neuesten |aktuellen )?(?:nachrichten|news|schlagzeilen))$")
+
+
+def _weather(simple: str) -> FastPathMatch | None:
+    m = WEATHER.match(simple)
+    if not m:
+        return None
+    rest = m["rest"].strip()
+    when, days = "jetzt", 1
+    for pattern, label, count in _WEATHER_WHEN:
+        if re.search(pattern, rest):
+            when, days = label, count
+            break
+    place = re.search(r"\b(?:in|für|bei|am)\s+(?P<place>(?!der nächsten|den nächsten|der woche)[a-zäöüß][\wäöüß .-]{1,60}?)"
+                      r"(?:\s+(?:heute|morgen|übermorgen|am wochenende|diese woche|die nächsten tage))?$", rest)
+    arguments: dict[str, Any] = {"days": days}
+    if place and place["place"] not in ("der woche", "den nächsten tagen", "der nächsten zeit"):
+        arguments["location"] = place["place"].strip().title()
+    return FastPathMatch("info.weather", arguments, 0.94, "weather",
+                         {"when": when, "rain": bool(m["rain"] or simple.startswith(("regnet", "wird es regnen")))})
+
+
 # Durchsagen: „Sag in der Küche, dass das Essen fertig ist“, „Durchsage an alle: Abfahrt in fünf Minuten“
 _ROOM = r"(?P<room>(?:in|im|ins|an|für)\s+(?:der\s+|dem\s+|die\s+|den\s+|das\s+)?[\wäöüß-]+|an\s+alle|allen|überall)"
 ANNOUNCE = [
@@ -707,6 +741,10 @@ class FastPath:
                 name = re.sub(r"[- ]?aktie$", "", m["name"]).strip()
                 if name in SYMBOLS or "aktie" in simple:  # sonst wäre „Wie steht der Timer?“ eine Aktie
                     return FastPathMatch("info.stock", {"name": name}, 0.93, "stock", {"name": name})
+        if found := _weather(simple):
+            return found
+        if NEWS.match(simple):
+            return FastPathMatch("info.news", {"count": 5}, 0.94, "news")
         for focus, pattern in SYSMON:
             if pattern.match(simple):
                 return FastPathMatch("system.monitor", {"focus": focus}, 0.95, "sysmon", {"focus": focus})

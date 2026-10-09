@@ -201,7 +201,9 @@ def register_info_capabilities(registry: ToolRegistry, config: InfoConfig | None
                 for i, date in enumerate((daily.get("time") or [])[:days])
             ],
             "week": [
-                {"date": date, "code": day_value("weather_code", i), "temp_max_c": day_value("temperature_2m_max", i),
+                {"date": date, "code": day_value("weather_code", i),
+                 "conditions": WEATHER_CODES.get(day_value("weather_code", i), "unbekannt"),
+                 "temp_max_c": day_value("temperature_2m_max", i),
                  "temp_min_c": day_value("temperature_2m_min", i),
                  "precipitation_probability_pct": day_value("precipitation_probability_max", i)}
                 for i, date in enumerate((daily.get("time") or [])[:7])

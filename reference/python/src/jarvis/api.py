@@ -63,6 +63,7 @@ class Container:
     speech: Any = None  # lokale Spracherkennung (voice.local.LocalSpeech) – None: nur Browser-Erkennung
     vision: Any = None  # Bildmodell (vision.VisionService) für „Was siehst du?“
     learner: Any = None  # gelernte Routinen (patterns.PatternLearner)
+    protocols: Any = None  # Protokolle („Protokoll Gute Nacht“, protocols.ProtocolStore)
     calendar: Any = None  # Kalender (agenda.CalendarService) – für den nächsten Termin in der Begrüßung
     devices: Any = None  # gekoppelte Raumgeräte (devices.DeviceRegistry)
     wake: Any = None  # rooms.WakeArbiter: bei mehreren Geräten antwortet nur das nächste
@@ -113,6 +114,12 @@ def turn_to_json(result: TurnResult) -> dict[str, Any]:
 
 class ClaudeKeyIn(BaseModel):
     api_key: str = Field(min_length=10, max_length=300, description="Anthropic-API-Schlüssel (sk-ant-…)")
+
+
+class ProtocolIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40, examples=["Gute Nacht"])
+    triggers: list[str] = Field(default_factory=list, max_length=5, description="Eigene Auslöser („Ich gehe schlafen“)")
+    steps: list[str] = Field(min_length=1, max_length=12, description="Je Schritt ein Sofortbefehl, wie gesprochen")
 
 
 class DeviceIn(BaseModel):
@@ -333,6 +340,37 @@ def create_app(container: Container) -> FastAPI:
             raise JarvisError("JRV-NFD-001", f"Vorschlag {suggestion_id} unbekannt")
         return {"suggestion": found.to_json()}
 
+    def protocol_store() -> Any:
+        if container.protocols is None:
+            raise JarvisError("JRV-NFD-001", "Protokolle sind in dieser Installation nicht eingerichtet")
+        return container.protocols
+
+    @app.get("/v1/settings/protocols", tags=["Einstellungen"])
+    async def list_protocols(who: Principal = Depends(household_adult)) -> dict:
+        """Protokolle („Protokoll Gute Nacht“): Name, eigene Auslöser, Schritte (je ein Sofortbefehl)."""
+        return {"protocols": protocol_store().public()}
+
+    @app.post("/v1/settings/protocols", tags=["Einstellungen"])
+    async def add_protocol(body: ProtocolIn, who: Principal = Depends(household_adult)) -> dict:
+        from dataclasses import asdict
+
+        return {"protocol": asdict(protocol_store().save(None, body.name, body.triggers, body.steps))}
+
+    @app.put("/v1/settings/protocols/{protocol_id}", tags=["Einstellungen"])
+    async def update_protocol(protocol_id: str, body: ProtocolIn, who: Principal = Depends(household_adult)) -> dict:
+        from dataclasses import asdict
+
+        store = protocol_store()
+        if store.get(protocol_id) is None:
+            raise JarvisError("JRV-NFD-001", f"Protokoll {protocol_id} unbekannt")
+        return {"protocol": asdict(store.save(protocol_id, body.name, body.triggers, body.steps))}
+
+    @app.delete("/v1/settings/protocols/{protocol_id}", tags=["Einstellungen"])
+    async def remove_protocol(protocol_id: str, who: Principal = Depends(household_adult)) -> dict:
+        if not protocol_store().remove(protocol_id):
+            raise JarvisError("JRV-NFD-001", f"Protokoll {protocol_id} unbekannt")
+        return {"removed": protocol_id}
+
     def rooms() -> list[dict[str, str]]:
         index = getattr(container.smarthome, "index", None)
         return [{"id": area_id, "name": name} for area_id, name in (index.areas.items() if index else [])]
@@ -481,6 +519,67 @@ def create_app(container: Container) -> FastAPI:
                     "cloud_model": getattr(container.router.cloud, "model", None),
                     "mode": getattr(container.router, "mode", "auto")},
         }
+
+    @app.get("/v1/startup", tags=["System"])
+    async def startup(location: str | None = None, who: Principal = Depends(principal)) -> dict:
+        """Start-Sequenz der Oberfläche: Systemcheck, Begrüßung mit Wetter und nächstem Termin."""
+        situation = container.situation(who, "voice")
+        state = await health()
+        llm = {"ready": "ok"}.get(state["local_llm"], "warn")
+        home = {"connected": "ok", "disconnected": "warn"}.get(state["smart_home"], "off")
+        checks = [
+            {"id": "llm", "label": "Sprachmodell", "state": llm,
+             "detail": state["llm"]["local_model"] or "", "problem": "das Sprachmodell"},
+            {"id": "voice", "label": "Stimme", "state": "ok",
+             "detail": "Browserstimme" if state["tts"] == "off" else state["tts"], "problem": ""},
+            {"id": "pc", "label": "PC-Steuerung", "state": "ok" if state["pc_agent"] == "connected" else "warn",
+             "detail": "", "problem": "die PC-Steuerung"},
+            {"id": "home", "label": "Smart Home", "state": home, "detail": "", "problem": "das Smart Home"},
+        ]
+        if container.devices is not None:
+            count = len(container.devices.devices)
+            checks.append({"id": "devices", "label": "Raum-Geräte", "state": "ok" if count else "off",
+                           "detail": f"{count} gekoppelt" if count else "keine", "problem": ""})
+        weather = None
+        registry = getattr(container.orchestrator, "registry", None)
+        cap = registry.get("info.weather") if registry is not None else None
+        place = location or getattr(situation, "location", None)
+        if cap is not None:
+            from .tools import InvocationContext
+
+            try:
+                weather = await asyncio.wait_for(cap.handler(
+                    {"location": place} if place else {}, InvocationContext(correlation_id="startup", actor=who.actor)),
+                    timeout=5)
+                weather = weather if isinstance(weather, dict) and weather.get("current") else None
+            except Exception:  # Wetter ist nur Beiwerk – die Start-Sequenz läuft trotzdem
+                weather = None
+            checks.append({"id": "net", "label": "Wetterdienst", "state": "ok" if weather else "warn",
+                           "detail": (weather or {}).get("location", ""), "problem": ""})
+        next_event, events_today = None, None
+        if container.calendar is not None:
+            from datetime import timedelta
+
+            from .agenda import describe
+
+            try:
+                now = situation.now
+                end = now.replace(hour=23, minute=59, second=0, microsecond=0)
+                upcoming = [e for e in await container.calendar.between(now, end) if not e.all_day]
+                events_today = len(upcoming)
+                if not upcoming:
+                    later = [e for e in await container.calendar.between(now, now + timedelta(hours=12)) if not e.all_day]
+                    upcoming = later
+                if upcoming:
+                    next_event = describe(upcoming[0], container.calendar.tz)
+                checks.append({"id": "calendar", "label": "Kalender", "state": "ok",
+                               "detail": f"{events_today} heute" if events_today else "frei", "problem": ""})
+            except JarvisError:
+                checks.append({"id": "calendar", "label": "Kalender", "state": "warn", "detail": "", "problem": ""})
+        problems = [c["problem"] for c in checks if c["state"] == "warn" and c["problem"]]
+        text = style.startup_text(situation.now, problems, weather, next_event, events_today)
+        return {"checks": [{k: v for k, v in c.items() if k != "problem"} for c in checks],
+                "text": style.finalize(text), "weather": weather}
 
     @app.websocket("/v1/stream")
     async def stream(ws: WebSocket) -> None:

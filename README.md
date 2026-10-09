@@ -219,6 +219,8 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Börse | „Wie steht Apple?“, „Wie steht der DAX?“, „Was kostet Bitcoin?“, „Aktienkurs von SAP“ (Tagesschluss) | Internet |
 | Sehen | „Was siehst du?“, „Was halte ich in der Hand?“, „Lies mir das Etikett vor“ – ein Einzelbild, Kamera danach aus, Bild bleibt auf dem Rechner | Kamera, Bildmodell (lädt JARVIS selbst) |
 | Anwesenheit | Zahnrad → Allgemein → „Anwesenheit über die Kamera“: JARVIS merkt, wenn Sie nach einer Abwesenheit (10–60 min) zurückkommen, und begrüßt Sie („Willkommen zurück, Sir. Ihr nächster Termin: …“). Nur Bewegung, keine Gesichtserkennung, Bilder bleiben im Browser | Webcam |
+| Protokolle | „Protokoll Gute Nacht“, „Ich gehe schlafen“, „Briefing“ – mehrere Befehle nacheinander mit Abhak-Anzeige; eigene unter Zahnrad → Protokolle | – |
+| Unterbrechen | „Jarvis, stopp“ mitten im Satz; „Jarvis, …“ unterbricht und fragt gleich Neues | Mikrofon |
 | Raum-Satelliten | Altes Tablet oder Handy als JARVIS in Küche, Bad, Flur: Zahnrad → Geräte → Raum wählen → „Koppeln“ → QR-Code mit dem Tablet scannen. Es hört auf „Jarvis“, bleibt an, und „Licht an“ meint seinen Raum | Tablet mit Chrome (Android) bzw. Safari (iPad), Ladegerät, selbes WLAN |
 | Durchsagen | „Sag in der Küche, dass das Essen fertig ist“, „Durchsage an alle: Abfahrt in fünf Minuten“. Timer auf dem Küchen-Tablet klingeln in der Küche; hören mehrere Geräte „Jarvis“, antwortet nur das nächste | gekoppelte Raumgeräte |
 | Radio & Medien | „Spiel Radio Bob im Wohnzimmer“, „Spiel den Sender 1Live in der Küche“ – auf Chromecast, Sonos, DLNA-Fernsehern | Home Assistant mit Mediaplayern |

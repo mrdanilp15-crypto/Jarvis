@@ -140,8 +140,30 @@ def test_news_via_orchestrator_taints_session(orchestrator, situation):
     register = make_registry([])
     orchestrator.registry.register(register.get("info.news"))
     provider = ScriptedProvider([call_tool("info__news", {"count": 2}), say("Hier die Nachrichten, Sir.")])
-    result = asyncio.run(orchestrator.handle_turn(TurnRequest(text="Was gibt es Neues?", session_id="n1",
+    result = asyncio.run(orchestrator.handle_turn(TurnRequest(text="Was ist in der Politik los?", session_id="n1",
                                                               principal=ALEX), provider=provider,
                                                   situation=situation))
     assert result.text == "Hier die Nachrichten, Sir." and result.tainted
     assert result.actions[0].result["headlines"][0]["title"] == "Erste Meldung"
+
+
+def test_weather_and_news_without_the_model(orchestrator, situation):
+    """Wetter und Nachrichten laufen direkt – das kleine Sprachmodell riet hier sonst gern."""
+    from jarvis.orchestrator import TurnRequest
+    from jarvis.testing import ScriptedProvider
+
+    from conftest import ALEX
+
+    register = make_registry([])
+    orchestrator.registry.register(register.get("info.news"))
+    orchestrator.registry.register(register.get("info.weather"))
+
+    def ask(text, session="w1"):
+        return asyncio.run(orchestrator.handle_turn(TurnRequest(text=text, session_id=session, principal=ALEX),
+                                                    provider=ScriptedProvider([]), situation=situation))
+
+    weather = ask("Wie wird das Wetter morgen in Berlin?")
+    assert weather.route == "fast_path" and weather.actions[0].arguments == {"days": 2, "location": "Berlin"}
+    assert "Morgen in Berlin: leichter Regen, 9 bis 13 Grad, Regenwahrscheinlichkeit 80 Prozent." in weather.text
+    news = ask("Nachrichten", session="w2")
+    assert news.route == "fast_path" and "Erste Meldung" in news.text and news.tainted

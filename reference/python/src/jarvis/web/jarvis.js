@@ -17,6 +17,10 @@
     homeNow: $("#home-now"), homeError: $("#home-error"), homeSetup: $("#home-setup"), homeFound: $("#home-found"),
     homeUrl: $("#home-url"), homeSearch: $("#home-search"), homeLogin: $("#home-login"), homeToken: $("#home-token"),
     homeTokenSave: $("#home-token-save"), homeConnected: $("#home-connected"), homeRooms: $("#home-rooms"),
+    protoList: $("#proto-list"), protoNew: $("#proto-new"), protoEdit: $("#proto-edit"), protoName: $("#proto-name"),
+    protoTriggers: $("#proto-triggers"), protoSteps: $("#proto-steps"), protoSave: $("#proto-save"),
+    protoCancel: $("#proto-cancel"), protoError: $("#proto-error"),
+    optBoot: $("#opt-boot"), optBarge: $("#opt-barge"),
     homeRemove: $("#home-remove"), roomChip: $("#room-chip"), devNow: $("#dev-now"), devError: $("#dev-error"),
     devSetup: $("#dev-setup"), devName: $("#dev-name"), devRoom: $("#dev-room"), devRooms: $("#dev-rooms"),
     devAdd: $("#dev-add"), devPair: $("#dev-pair"), devQr: $("#dev-qr"), devLink: $("#dev-link"), devCopy: $("#dev-copy"),
@@ -73,6 +77,7 @@
     speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice.v2", ""),
     wake: store.get("wake", false), location: store.get("location", ""), effect: store.get("effect", "dezent"),
     fx: store.get("fx", "voll"), stt: store.get("stt.v2", "auto"),
+    boot: store.get("boot", true), barge: store.get("barge", true),
     presence: store.get("presence", false), presenceMinutes: Number(store.get("presence.minutes", 20)) || 20,
   };
   document.body.dataset.fx = settings.fx;
@@ -205,6 +210,7 @@
     if (route === "research") return "nachgeschlagen";
     if (route === "conversation") return "Gespräch";
     if (route === "confirmation_resolver") return "Bestätigung";
+    if (route === "protocol") return "Protokoll";
     const sourced = route.endsWith(":research") ? " · nachgeschlagen" : "";  // Modell antwortet aus Quellen
     if (route.startsWith("llm:claude")) return `Claude · Cloud${sourced}`;
     if (route.startsWith("llm:")) return `lokales Modell${sourced}`;
@@ -752,6 +758,15 @@
   };
   window.jarvisPresence = presence;  // für Tests
   els.camChip.addEventListener("click", () => openSettings("general"));
+  els.optBarge.addEventListener("change", () => {
+    settings.barge = els.optBarge.checked;
+    store.set("barge", settings.barge);
+    if (!settings.barge) barge.stop();
+  });
+  els.optBoot.addEventListener("change", () => {
+    settings.boot = els.optBoot.checked;
+    store.set("boot", settings.boot);
+  });
   els.optPresence.addEventListener("change", () => {
     settings.presence = els.optPresence.checked;
     store.set("presence", settings.presence);
@@ -1088,6 +1103,7 @@
       }
       else if (action.capability === "timer.cancel") timers.cancel((data.cancelled ?? []).map((t) => t.label ?? ""));
     }
+    if (result.card?.type === "protocol") showProtocol(result.card);
     if (result.card?.type === "mail") showMail(result.card);
     else if (result.card?.type === "vision") vision.capture(result.card.question);
     else if (mailShown) { mailShown = null; cards.remove("mail"); }  // Entwurf abgebrochen: anderer Wunsch
@@ -1328,7 +1344,8 @@
     speakJarvis(clean) {
       const generation = this.generation;
       this.pending += 1;
-      wake.stop();  // nicht zuhören, während JARVIS spricht – sonst hört er sich selbst
+      wake.stop();  // nicht auf „Jarvis“ warten, während JARVIS spricht – nur auf „Jarvis, stopp“ (barge)
+      barge.start(clean);
       const audio = fetchSpeech(clean);  // Synthese startet sofort, parallel zur Wiedergabe des Satzes davor
       audio.catch(() => {});
       this.chain = this.chain.then(async () => {
@@ -1398,11 +1415,13 @@
       };
       this.pending += 1;
       wake.stop();
+      barge.start(clean);
       speechSynthesis.speak(utterance);
     },
     stop() {
       this.generation += 1;
       this.pending = 0;
+      barge.stop();
       try { this.source?.stop(); } catch { /* schon beendet */ }
       this.source = null;
       if (canSpeak) speechSynthesis.cancel();
@@ -1590,6 +1609,11 @@
       addConfirmation(current.item, result.pending_confirmation, waiting?.action_id);
     }
     showResults(result, current.item);  // Wetter, Nachgeschlagenes, Timer als Karten
+    if (barge.pendingCommand) {  // mitten in der Antwort unterbrochen: „Jarvis, wie spät ist es?“
+      const command = barge.pendingCommand;
+      barge.pendingCommand = null;
+      setTimeout(() => sendText(command, true), 200);
+    }
     flash(outcomeOf(result, finalText));
     setAlert(Boolean(document.querySelector(".confirm:not(.done)")));
     expectReply = Boolean(result.awaiting_reply) && current.spoken && canListen;
@@ -1620,6 +1644,7 @@
   }
 
   function onSpeechDone() {
+    barge.stop();
     if (turn) { setState("thinking"); return; }        // Antwort läuft noch, nächster Satz kommt
     if (!ws || ws.readyState !== WebSocket.OPEN) { setState("offline"); return; }
     if (((lastTurnSpoken && settings.convo) || expectReply) && (canListen || localVoice.enabled) && state !== "listening") {
@@ -2063,6 +2088,88 @@
     },
   };
 
+  // ---------------------------------------------------------------- Ins Wort fallen
+  // Während JARVIS spricht, horcht er nur auf „Jarvis …“ oder „Stopp“. Was er gerade selbst sagt, zählt nicht
+  // (Lautsprecher-Echo): ein Treffer gilt nur, wenn das Wort nicht in seinem eigenen Text vorkommt.
+  const STOP_WORDS = /\b(?:stopp?|halt|ruhe|still|warte|abbrechen|genug|schluss|aufhören|hör auf)\b/i;
+  const wordsOf = (text) => (text.toLowerCase().match(/\p{L}{3,}/gu) ?? []);
+  const barge = {
+    active: false, rec: null, spoken: new Set(), pendingCommand: null, restarts: 0,
+    start(text) {
+      wordsOf(text).forEach((w) => this.spoken.add(w));
+      if (!settings.barge) return;
+      if (localVoice.enabled) {  // lokal: der Server hört auf „Jarvis“ (jeder Satz schaltet die Erkennung kurz ab)
+        this.active = true;
+        if (localVoice.mode !== "wake") localVoice.setMode("wake");
+        return;
+      }
+      if (this.active) return;
+      if (!SpeechRecognition || !ws || ws.readyState !== WebSocket.OPEN) return;
+      this.active = true;
+      this.restarts = 0;
+      this.listen();
+    },
+    listen() {
+      const rec = new SpeechRecognition();
+      rec.lang = "de-DE";
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.maxAlternatives = 3;
+      rec.onresult = (event) => {
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          for (let k = 0; k < event.results[i].length; k += 1) {
+            if (this.check(event.results[i][k].transcript)) return;
+          }
+        }
+      };
+      rec.onend = () => {
+        if (this.rec !== rec) return;
+        this.rec = null;
+        if (this.active && tts.busy && this.restarts < 5) { this.restarts += 1; setTimeout(() => { if (this.active && !this.rec) this.listen(); }, 150); }
+      };
+      this.rec = rec;
+      try { rec.start(); } catch { this.rec = null; }
+    },
+    check(text) {  // -> true, wenn unterbrochen wurde
+      if (!this.active || !text) return false;
+      const lower = text.toLowerCase();
+      const wakeEnd = findWake(text);
+      const stop = STOP_WORDS.exec(lower);
+      const own = (word) => this.spoken.has(word);
+      const heardWake = wakeEnd >= 0 && !wordsOf(text.slice(0, wakeEnd)).some(own);
+      const heardStop = stop && !own(stop[0].split(" ")[0]);
+      if (!heardWake && !heardStop) return false;
+      this.trigger(heardWake ? `jarvis ${text.slice(wakeEnd)}` : stop[0]);
+      return true;
+    },
+    trigger(text) {
+      const rest = text.replace(/^jarvis\b[\s,.!]*/i, "").trim();
+      const command = STOP_WORDS.test(rest) || !hasWords(rest) ? "" : rest;
+      if (turn) turn.muted = true;
+      tts.stop();  // beendet auch das Horchen
+      flash("alert");
+      if (command) {
+        if (turn) this.pendingCommand = command;  // Antwort läuft noch: danach ausführen
+        else setTimeout(() => sendText(command, true), 150);
+      } else if (/^jarvis/i.test(text) && !STOP_WORDS.test(rest)) {
+        setTimeout(() => { if (!turn) startListening(); }, 250);  // nur „Jarvis“: zuhören
+      } else if (!turn) {
+        setState("idle");
+        els.status.textContent = "Angehalten.";
+      }
+    },
+    stop() {
+      if (!turn) this.spoken.clear();  // Echo-Schutz gilt für die ganze Antwort, auch zwischen den Sätzen
+      if (!this.active) return;
+      this.active = false;
+      if (localVoice.mode === "wake") localVoice.setMode("idle");
+      const rec = this.rec;
+      this.rec = null;
+      if (rec) { rec.onresult = null; rec.onend = null; try { rec.abort(); } catch { /* schon beendet */ } }
+    },
+  };
+  window.jarvisBarge = barge;  // für Tests
+
   // ---------------------------------------------------------------- Lokale Spracherkennung
   // Mikrofon -> 16 kHz/16 Bit -> WS /v1/audio. Der Server schneidet Äußerungen, erkennt „Jarvis“ und transkribiert
   // mit Whisper. Gesendet wird nur, solange JARVIS zuhört oder auf „Jarvis“ wartet – nie, während er spricht.
@@ -2160,6 +2267,7 @@
     handle(event) {
       switch (event.type) {
         case "wake":
+          if (barge.active) { barge.trigger("jarvis"); break; }
           this.setMode("idle");  // „Ja, Sir?“ nicht selbst hören
           arbiter.claim(event.score).then((granted) => {
             if (!granted) { arbiter.yield(); return; }
@@ -2174,6 +2282,7 @@
           if (state !== "listening") setState("listening");
           break;
         case "transcript":
+          if (barge.active) { barge.trigger(`jarvis ${event.text}`); break; }
           this.setMode("idle");
           els.caption.textContent = "";
           if (!event.wake) { sendText(event.text, true); break; }
@@ -2183,6 +2292,7 @@
           });
           break;
         case "heard":
+          if (barge.active) { barge.check(event.text); break; }
           heard.show(event.text);
           break;
         case "nothing":
@@ -2389,6 +2499,7 @@
       if (!greeted) {
         greeted = true;
         addSystem("JARVIS ist online. Sprechen Sie mit mir oder schreiben Sie unten.");
+        bootSequence.maybeRun();
       }
     });
     socket.addEventListener("message", (event) => {
@@ -2504,6 +2615,9 @@
     els.optLocation.value = settings.location;
     els.optFx.value = settings.fx;
     els.optPresence.checked = settings.presence;
+    els.optBoot.checked = settings.boot;
+    els.optBarge.checked = settings.barge;
+    els.optBarge.disabled = !canListen;
     els.optPresenceMin.value = String(settings.presenceMinutes);
     els.optStt.value = ["auto", "browser", "local"].includes(settings.stt) ? settings.stt : "auto";
     localVoice.update(sttLocal);
@@ -2534,6 +2648,7 @@
     if (name === "home") home.load();
     else clearTimeout(home.timer);
     if (name === "devices") devices.load();
+    if (name === "protocols") protocols.load();
   }
   els.tabs.forEach((tab, i) => {
     tab.addEventListener("click", () => selectTab(tab.id.slice(4)));
@@ -2867,6 +2982,146 @@
   });
   els.homeRemove.addEventListener("click", () => home.remove());
   els.homeChip.addEventListener("click", () => openSettings("home"));
+
+  // ---------------------------------------------------------------- Start-Sequenz
+  // Beim ersten Öffnen (neues Fenster, z. B. nach dem Hochfahren): Systemcheck als Vollbild, dann die Begrüßung
+  const BOOT_MARK = { ok: "✓", warn: "!", off: "–" };
+  const bootSequence = {
+    running: false,
+    maybeRun() {
+      let fresh = true;
+      try { fresh = !sessionStorage.getItem("jarvis.booted"); sessionStorage.setItem("jarvis.booted", "1"); } catch { /* privat */ }
+      if (fresh && settings.boot && token) this.run();
+    },
+    async run() {
+      if (this.running) return;
+      this.running = true;
+      const overlay = el("div", "boot");
+      overlay.setAttribute("role", "status");
+      overlay.innerHTML = `<div class="boot-core"><svg class="boot-rings" viewBox="-100 -100 200 200" aria-hidden="true">
+        <circle r="92" class="r1" pathLength="360"/><circle r="78" class="r2" pathLength="360"/>
+        <circle r="64" class="r3" pathLength="360"/><circle r="50" class="r4"/></svg>
+        <div class="boot-title">J.A.R.V.I.S</div></div>`;
+      const sub = el("div", "boot-sub", "Initialisiere Kernsysteme …");
+      const list = el("ol", "boot-checks");
+      const bar = el("div", "boot-bar");
+      bar.append(el("span"));
+      overlay.append(sub, list, bar);
+      overlay.addEventListener("click", () => this.finish(overlay));
+      document.body.append(overlay);
+      const location = settings.location ? `?location=${encodeURIComponent(settings.location)}` : "";
+      let data = null;
+      try { data = await api("GET", `/v1/startup${location}`); } catch { /* ohne Daten: nur die Optik */ }
+      const checks = data?.checks ?? [];
+      for (const [i, check] of checks.entries()) {
+        if (!overlay.isConnected) return;
+        const li = el("li", `pending ${check.state}`);
+        li.append(el("span", "mark", ""), el("span", "label", check.label), el("span", "detail", check.detail ?? ""));
+        list.append(li);
+        bar.firstChild.style.width = `${((i + 1) / checks.length) * 100}%`;
+        await new Promise((r) => setTimeout(r, calm() ? 0 : 380));
+        li.classList.remove("pending");
+        li.querySelector(".mark").textContent = BOOT_MARK[check.state] ?? "–";
+      }
+      if (!overlay.isConnected) return;
+      const problems = checks.filter((c) => c.state === "warn").length;
+      sub.textContent = problems ? `Einsatzbereit – ${problems} ${problems === 1 ? "Hinweis" : "Hinweise"}` : "Alle Systeme einsatzbereit";
+      overlay.classList.add("ready");
+      if (data?.text) {
+        addMessage("jarvis", data.text, `JARVIS · ${timeNow()} · Start`);
+        if (settings.speak) tts.speak(data.text);
+      }
+      setTimeout(() => this.finish(overlay, data), calm() ? 800 : 2200);
+    },
+    finish(overlay, data) {
+      if (!overlay.isConnected) return;
+      overlay.classList.add("leaving");
+      setTimeout(() => overlay.remove(), 600);
+      this.running = false;
+      if (data?.weather?.current) showWeather(data.weather);
+    },
+  };
+  window.jarvisBoot = bootSequence;  // für Tests
+
+  // ---------------------------------------------------------------- Protokolle (Einstellungen)
+  const protocols = {
+    items: [], editing: null,
+    async load() {
+      try {
+        ({ protocols: this.items } = await api("GET", "/v1/settings/protocols"));
+        els.protoError.hidden = true;
+      } catch (err) { this.fail(err); return; }
+      this.render();
+    },
+    fail(err) {
+      els.protoError.textContent = err.status === 403 ? "Protokolle bearbeiten nur Erwachsene des Haushalts." : err.message;
+      els.protoError.hidden = false;
+    },
+    render() {
+      els.protoList.replaceChildren(...this.items.map((p) => {
+        const li = el("li");
+        const info = el("div");
+        const triggers = [`„Protokoll ${p.name}“`, ...p.triggers.map((t) => `„${t}“`)].join(" · ");
+        info.append(el("span", "name", p.name), el("span", "note", triggers), el("span", "note steps", p.steps.join(" → ")));
+        const side = el("div", "side");
+        side.append(button("Ausführen", "btn primary small", () => { els.settings.close(); sendText(`Protokoll ${p.name}`, false); }),
+          button("Bearbeiten", "btn small", () => this.edit(p)),
+          button("Löschen", "btn danger small", async () => {
+            try { await api("DELETE", `/v1/settings/protocols/${encodeURIComponent(p.id)}`); await this.load(); } catch (err) { this.fail(err); }
+          }));
+        li.append(info, side);
+        return li;
+      }));
+    },
+    edit(p) {
+      this.editing = p?.id ?? null;
+      els.protoName.value = p?.name ?? "";
+      els.protoTriggers.value = (p?.triggers ?? []).join(", ");
+      els.protoSteps.value = (p?.steps ?? []).join("\n");
+      els.protoEdit.hidden = false;
+      els.protoName.focus();
+    },
+    async save() {
+      const body = { name: els.protoName.value.trim(), triggers: els.protoTriggers.value.split(",").map((t) => t.trim()).filter(Boolean),
+        steps: els.protoSteps.value.split("\n").map((t) => t.trim()).filter(Boolean) };
+      try {
+        if (this.editing) await api("PUT", `/v1/settings/protocols/${encodeURIComponent(this.editing)}`, body);
+        else await api("POST", "/v1/settings/protocols", body);
+        els.protoEdit.hidden = true;
+        flash("done");
+        await this.load();
+      } catch (err) { this.fail(err); }
+    },
+  };
+  els.protoNew.addEventListener("click", () => protocols.edit(null));
+  els.protoCancel.addEventListener("click", () => { els.protoEdit.hidden = true; });
+  els.protoSave.addEventListener("click", () => protocols.save());
+
+  // Protokoll läuft: Schritte erscheinen nacheinander und werden abgehakt
+  const STEP_MARK = { succeeded: "✓", pending_confirmation: "?", skipped: "–" };
+  function showProtocol(data) {
+    const card = el("section", "card show protocol");
+    card.append(el("p", "kicker", `Protokoll · ${data.name ?? ""}`));
+    const list = el("ol", "steps");
+    const steps = data.steps ?? [];
+    steps.forEach((step, i) => {
+      const li = el("li", `step ${step.status}`);
+      li.style.setProperty("--i", String(i));
+      const mark = el("span", "mark");
+      mark.append(el("span", "ring"), el("span", "tick", STEP_MARK[step.status] ?? "✕"));
+      const body = el("div");
+      body.append(el("b", "", step.label));
+      if (step.text && step.status !== "succeeded") body.append(el("small", "", step.text));
+      li.append(mark, body);
+      list.append(li);
+    });
+    card.append(list);
+    const ok = steps.filter((s) => s.status === "succeeded").length;
+    const done = el("p", "done", ok === steps.length ? "Protokoll abgeschlossen" : `${ok} von ${steps.length} Schritten ausgeführt`);
+    done.style.setProperty("--i", String(steps.length));
+    card.append(done);
+    cards.show("protocol", card, 60000);
+  }
 
   // ---------------------------------------------------------------- Geräte koppeln (Einstellungen)
   const devices = {

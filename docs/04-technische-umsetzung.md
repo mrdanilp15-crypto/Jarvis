@@ -156,6 +156,7 @@ kurzlebigen Token im Query-Parameter (≤ 60 s gültig, einmalig), da beim Hands
 | ← | `output.final` | `text`, `route`, `actions`, `pending_confirmation?` | Turn abgeschlossen |
 | ← | `action.update` | `action` | Statusänderung einer Aktion |
 | ← | `notification` | `title`, `body`, `priority` | proaktiver Hinweis |
+| ← | `output.final` mit `retracted: true` | – | Gestreamter Text wurde verworfen (erfundene Links) – nicht weitersprechen |
 | ← | `wake.result` | `ref`, `granted` | Abstimmung entschieden: nur das lauteste Gerät antwortet (höchstens 0,6 s Wartezeit, mit nur einem Gerät sofort) |
 | ← | `error` | `error` (Problem Details) | Fehler zu einer Nachricht; Verbindung bleibt offen |
 | ← | `pong` | – | Heartbeat-Antwort |

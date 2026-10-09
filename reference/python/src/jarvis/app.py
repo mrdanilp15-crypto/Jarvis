@@ -41,6 +41,7 @@ from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingW
 from .orchestrator import ConfirmationStore, Orchestrator
 from .pc import AgentHub, register_pc_capabilities, resolve_recipient
 from .devices import LAN_PORT, DeviceRegistry, ensure_certificate
+from .protocols import ProtocolStore
 from .rooms import WakeArbiter, register_room_capabilities
 from .smarthome import SmartHome
 from .patterns import PatternLearner, action_call, describe, run_routines
@@ -363,6 +364,7 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
                                             "text": text})
 
     container.learner = learner
+    orchestrator.protocols = container.protocols = ProtocolStore(data_dir / "protocols.json")
     container.devices = devices
     container.calendar = calendar
     background.append(run_routines(learner, run_routine, learn))
