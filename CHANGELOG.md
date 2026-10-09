@@ -3,6 +3,8 @@
 ## Jarvis-Modul 2.9.1 – 2026-10-09
 
 ### Behoben
+- **Windows-Programm startete nicht** („No time zone found with key Europe/Berlin“): Python bringt unter Windows
+  keine Zeitzonen-Datenbank mit. Das Paket `tzdata` wird jetzt mitinstalliert.
 - **Geöffnete Fenster landen vorne** (PC-Agent 2.9.1):
   - Bisher öffneten sich Ordner, Programme, Dateien und Webseiten oft hinter anderen Fenstern oder nur in der
     Taskleiste. Besonders betroffen: ein zweiter Ordner bei schon offenem Explorer. Ursache war die Fokus-Sperre

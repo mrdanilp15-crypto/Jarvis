@@ -11,6 +11,7 @@ dependencies = [
     "pydantic>=2.7",
     "jsonschema>=4.22",
     "pyyaml>=6.0",
+    "tzdata>=2024.1; sys_platform == 'win32'",  # Windows bringt keine Zeitzonen mit (sonst: Europe/Berlin fehlt)
 ]
 
 [project.optional-dependencies]
