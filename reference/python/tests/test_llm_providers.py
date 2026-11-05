@@ -115,7 +115,8 @@ def test_key_check_uses_the_models_api():
 
     def handler(request):
         assert request.url.path == "/v1/models/claude-opus-5-5"
-        if request.headers["x-api-key"] == "gut":
+        key = request.headers.get("x-api-key") or request.headers.get("authorization", "").removeprefix("Bearer ")  # SDK-Versionen
+        if key == "gut":
             return httpx2.Response(200, json={"type": "model", "id": "claude-opus-5-5", "display_name": "Claude Opus 5.5",
                                               "created_at": "2026-09-01T00:00:00Z"})
         return httpx2.Response(401, json={"type": "error", "error": {"type": "authentication_error",
