@@ -560,6 +560,18 @@ CONVERSATION = [
     ("greeting", re.compile(r"^(?:hallo|hi|hey|servus|moin|guten (?:morgen|tag|abend)|grüß dich|grüß gott)$")),
     ("how_are_you", re.compile(r"^(?:wie geht(?:s| es)(?: dir| ihnen)?|wie läuft(?:s| es)|alles (?:gut|klar) bei dir|"
                                r"was geht(?: ab)?|was läuft|na(?: du)?|wie sieht'?s aus)$")),
+    # Befinden: kein Sprachmodell, keine Werkzeuge – eine ruhige, ehrliche Antwort. Ernstes wird zuerst erkannt.
+    ("crisis", re.compile(r"^(?:ich (?:will|möchte|kann) nicht mehr(?: leben)?|ich will mich (?:umbringen|töten)|"
+                          r"ich habe (?:keine lust|keinen sinn)(?: mehr)?(?: zu leben| im leben)?|ich möchte sterben|"
+                          r"ich will sterben|es hat alles keinen sinn(?: mehr)?)$")),
+    ("emergency", re.compile(r".*(?:brustschmerz|schmerzen in der brust|atemnot|keine luft|herzinfarkt|schlaganfall|"
+                             r"ohnmacht|bewusstlos|starke blutung|allergischer schock)")),
+    ("unwell", re.compile(r"^(?:mir (?:geht(?:'s| es)|ist es) (?:heute |gerade |ziemlich |gar |überhaupt )?(?:nicht|schlecht|"
+                          r"nicht so|nicht besonders|nicht gut)(?: so)?(?: gut)?|mir ist (?:schlecht|übel|schwindelig|kalt|zu heiß)|"
+                          r"ich (?:bin|fühle mich) (?:(?:heute|gerade|ziemlich|etwas|sehr|total|echt) )?(?:krank|müde|erschöpft|"
+                          r"gestresst|traurig|down|schlapp|k\.?o\.?|nicht fit|nicht gut|schlecht|einsam|ängstlich|überfordert)|"
+                          r"ich habe (?:kopfschmerzen|bauchschmerzen|halsschmerzen|fieber|erkältung|einen schlechten tag)|"
+                          r"mein (?:kopf|bauch|hals|rücken) tut weh)$")),
     ("identity", re.compile(r"^(?:wer bist du|was bist du|stell dich vor)$")),
     ("capabilities", re.compile(r"^(?:was kannst du(?: alles)?(?: tun)?|was sind deine fähigkeiten|wobei kannst du helfen)$")),
     ("name", re.compile(r"^(?:wie heiße ich|wer bin ich|weißt du wie ich heiße|kennst du meinen namen)$")),

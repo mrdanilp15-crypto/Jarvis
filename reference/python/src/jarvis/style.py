@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.12.0"
+STYLE_VERSION = "2.12.1"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -1094,6 +1094,16 @@ class JarvisStyle(PlainStyle):
             if not heard:
                 return f"Laut und deutlich{sir}."
             return f"Laut und deutlich{sir}. Bei mir angekommen ist: {_quoted(heard)}"
+        if intent == "crisis":
+            return (f"Das klingt sehr schwer{sir}, und ich möchte, dass Sie damit nicht allein bleiben. Die Telefonseelsorge "
+                    "ist rund um die Uhr kostenlos erreichbar: 0800 111 0 111. Bei akuter Gefahr wählen Sie bitte sofort die 112.")
+        if intent == "emergency":
+            return (f"Das klingt nach einem medizinischen Notfall{sir}. Bitte wählen Sie sofort die 112 – ich kann hier "
+                    "nicht helfen, aber der Notruf kann es.")
+        if intent == "unwell":
+            return (f"Das tut mir leid{sir}. Ruhen Sie sich aus, wenn es geht, und trinken Sie etwas. Soll ich das Licht "
+                    "dimmen, ruhige Musik spielen oder Sie später an etwas erinnern? Bei starken Beschwerden erreichen Sie "
+                    "den ärztlichen Bereitschaftsdienst unter 116117, im Notfall die 112.")
         if intent == "help":
             return self.phrase("ready")
         if intent == "thanks":

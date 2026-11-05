@@ -34,6 +34,7 @@ from .llm.base import (
     AssistantTurn,
     LLMProvider,
     OnText,
+    SystemPrompt,
     ToolCall,
     ToolResult,
     ToolResultsTurn,
@@ -45,6 +46,7 @@ from .memory import MemoryService
 from .pc import resolve_recipient
 from .policy import Decision, PolicyContext, PolicyEngine, Principal
 from .style import JarvisStyle, PlainStyle
+from .toolgate import wanted_domains
 from .tools import Capability, InvocationContext, ToolRegistry
 
 log = logging.getLogger(__name__)
@@ -190,6 +192,7 @@ class Session:
     recent_terms: list[str] = field(default_factory=list)  # zuletzt allein geschriebene Begriffe („ARTERIION“)
     topic: Topic | None = None  # worüber gerade gesprochen wird („Erzähl mir mehr“, „Das ist ein Künstler“)
     mail: MailDraft | None = None  # E-Mail im Entstehen: die nächsten Sätze sind Empfänger, Betreff, Text
+    last_domains: frozenset[str] = frozenset()  # Werkzeugbereiche der letzten Runde (für Anschlusssätze, toolgate.py)
 
 
 class AuditSink(Protocol):
@@ -485,7 +488,18 @@ class Orchestrator:
                             extra={"correlation_id": req.correlation_id})
         system = self.context.system_prompt(situation, memories)
         session.transcript.append(UserTurn(req.text, context=system.dynamic, sources=sources))
-        tools = self.registry.tool_specs(req.allowed_domains)
+        known = frozenset(c.domain for c in self.registry.all())
+        wanted = wanted_domains(req.text, known, session.last_domains)
+        session.last_domains = wanted
+        if req.allowed_domains is not None:
+            wanted &= req.allowed_domains
+        tools = self.registry.tool_specs(wanted)
+        if not tools:  # reines Gespräch: nichts ausführen, nichts erfinden
+            system = SystemPrompt(system.static, system.dynamic + "\n<tools>In dieser Runde stehen dir keine Werkzeuge zur "
+                                  "Verfügung. Antworte nur mit Worten: Behaupte nie, etwas getan, nachgeschlagen, aufgelistet "
+                                  "oder geöffnet zu haben, und erfinde keine Orte, Adressen, Praxen oder Zahlen. Bietest du "
+                                  "etwas an, dann nur, was JARVIS per Sprachbefehl kann (Licht, Musik, Timer, Wetter, "
+                                  "Programme öffnen).</tools>")
         result = TurnResult(text="", route=f"llm:{provider.name}", tainted=session.tainted)
 
         for _ in range(self.max_iterations):

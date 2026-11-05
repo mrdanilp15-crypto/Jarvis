@@ -1,5 +1,19 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.12.1 – 2026-11-05
+
+### Behoben
+- **Falsche Werkzeuge, erfundene Antworten:** Auf „Mir geht es nicht so gut“ rief das lokale Modell den Tagesplan auf, auf
+  „Ja, bitte“ den Systemmonitor und behauptete dann, es habe Ärzte in Memmingen aufgelistet.
+  - Das Modell bekommt jetzt nur die Werkzeuge der Bereiche, die der Satz anspricht (Licht, Wetter, Termine …).
+    Reines Gespräch läuft ganz ohne Werkzeuge, mit dem Hinweis, nichts zu behaupten oder zu erfinden.
+  - Anschlusssätze („Und morgen?“) behalten den Bereich der letzten Frage.
+  - Das spart auch Text im Prompt und macht freie Antworten schneller.
+- **Befinden ohne Sprachmodell:** „Mir geht es nicht gut“, „Ich bin krank“, „Ich habe Kopfschmerzen“ bekommen eine
+  ruhige Antwort mit Angeboten, die JARVIS wirklich kann (Licht dimmen, Musik, Erinnerung) und dem Hinweis auf den
+  ärztlichen Bereitschaftsdienst 116117. Bei Notfällen (Brustschmerzen, Atemnot …) kommt die 112, bei
+  Lebensmüdigkeit die Telefonseelsorge 0800 111 0 111.
+
 ## Jarvis-Modul 2.12.0 – 2026-11-05
 
 ### Neu
