@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.11.0"
+STYLE_VERSION = "2.12.0"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -995,6 +995,16 @@ class JarvisStyle(PlainStyle):
             return "", self.weather_text(result, slots)
         if capability == "info.news" and isinstance(result, dict):
             return "", self.news_text(result)
+        if capability == "automation.watch" and isinstance(result, dict):
+            return very_well, f"Ich sage Bescheid, sobald {result.get('describe', 'es soweit ist')}."
+        if capability == "automation.watch_list" and isinstance(result, dict):
+            items = result.get("watches") or []
+            if not items:
+                return "", "Im Moment beobachte ich nichts."
+            return "", "Ich achte darauf, ob " + "; ob ".join(items) + "."
+        if capability == "automation.watch_cancel" and isinstance(result, dict):
+            n = result.get("cancelled", 0)
+            return very_well, f"{n} Beobachter beendet." if n else "Es lief kein Beobachter."
         return very_well, "Erledigt."
 
     # -- Status und Tagesplan -------------------------------------------------------------------------

@@ -304,6 +304,13 @@
           <label class="field">Schritte – einer pro Zeile
             <textarea id="proto-steps" rows="6" maxlength="1500" spellcheck="false"
                       placeholder="Alle Lichter an&#10;Spiel Radio Bob im Wohnzimmer&#10;Wie wird das Wetter?"></textarea></label>
+          <div class="row-field">
+            <label class="field">Von selbst starten um <input id="proto-time" type="time"></label>
+            <label class="field">an <select id="proto-days"><option value="daily">jedem Tag</option>
+              <option value="weekdays">Werktagen</option><option value="weekend">Wochenenden</option></select></label>
+          </div>
+          <p class="hint">Mit Uhrzeit läuft das Protokoll ohne Zutun, solange JARVIS läuft; die Meldung erscheint auf
+            Ihrem Bildschirm. Schritte, die eine Bestätigung brauchen, werden dann übersprungen.</p>
           <p class="hint">Was geht: alles, was JARVIS als Sofortbefehl kennt – Licht, Heizung, Szenen, Rollläden, Radio,
             Programme öffnen, Bildschirm sperren, Wetter, Termine, Nachrichten, Timer. Freie Fragen an das Sprachmodell
             laufen bewusst nicht in Protokollen. Was eine Bestätigung braucht (z. B. Herunterfahren), fragt nach.</p>

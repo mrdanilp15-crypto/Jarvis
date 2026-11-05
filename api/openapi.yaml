@@ -773,6 +773,10 @@ components:
         name: { type: string, maxLength: 40 }
         triggers: { type: array, maxItems: 5, items: { type: string, maxLength: 60 } }
         steps: { type: array, minItems: 1, maxItems: 12, items: { type: string, maxLength: 120 } }
+        schedule:
+          type: [object, "null"]
+          description: 'Von selbst starten: time (HH:MM) und days (daily, weekdays oder weekend)'
+          additionalProperties: { type: string }
     RoomDevice:
       type: object
       properties:

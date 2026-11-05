@@ -38,7 +38,7 @@ from .llm_settings import LLMSettings
 from .logging_setup import configure_logging
 from .mail import MailConfig, MailReader, register_mail_capabilities
 from .memory import InMemoryMemoryStore, MemoryService, OllamaEmbedder, RankingWeights, SqliteMemoryStore
-from .orchestrator import ConfirmationStore, Orchestrator
+from .orchestrator import ConfirmationStore, Orchestrator, TurnRequest
 from .pc import AgentHub, register_pc_capabilities, resolve_recipient
 from .devices import LAN_PORT, DeviceRegistry, ensure_certificate
 from .protocols import ProtocolStore
@@ -52,6 +52,7 @@ from .timers import Alarm, AlarmScheduler, Notifier, register_timer_capabilities
 from .persona import Persona
 from .policy import PolicyContext, PolicyEngine, Principal
 from .tools import ToolRegistry
+from .watchers import WatchService, register_watch_capabilities
 from .websearch import WebSearch, register_web_capabilities
 
 log = logging.getLogger(__name__)
@@ -365,6 +366,28 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
 
     container.learner = learner
     orchestrator.protocols = container.protocols = ProtocolStore(data_dir / "protocols.json")
+
+    async def tell(actor: str, text: str, kind: str = "watch", **extra: Any) -> None:
+        await notifier.send(actor, {"type": "notification", "kind": kind, "id": new_id("ntf"), "text": text, **extra})
+
+    watcher = WatchService(data_dir / "watchers.json", tell)
+    register_watch_capabilities(registry, watcher)
+    background.append(watcher.run())
+
+    def household() -> Principal | None:  # wer zeitgesteuerte Protokolle ausführt: der erste Erwachsene des Haushalts
+        return next((p for p in tokens.values() if p.role in ("admin", "adult") and p.actor.startswith("user:")), None)
+
+    async def run_scheduled(protocol: Any) -> None:
+        who = household()
+        if who is None:
+            return
+        from .protocols import ProtocolMatch
+
+        request = TurnRequest(text=f"Protokoll {protocol.name}", session_id=f"schedule-{protocol.id}", principal=who)
+        result = await orchestrator._run_protocol(ProtocolMatch(protocol), request, situation(who, "voice"), unattended=True)
+        await tell(who.actor, result.text, kind="protocol", card=result.card)
+
+    background.append(orchestrator.protocols.run_scheduled(lambda: datetime.now(tz), run_scheduled))
     container.devices = devices
     container.calendar = calendar
     background.append(run_routines(learner, run_routine, learn))

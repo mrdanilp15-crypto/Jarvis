@@ -120,6 +120,7 @@ class ProtocolIn(BaseModel):
     name: str = Field(min_length=1, max_length=40, examples=["Gute Nacht"])
     triggers: list[str] = Field(default_factory=list, max_length=5, description="Eigene Auslöser („Ich gehe schlafen“)")
     steps: list[str] = Field(min_length=1, max_length=12, description="Je Schritt ein Sofortbefehl, wie gesprochen")
+    schedule: dict[str, str] | None = Field(default=None, description='Von selbst starten: {"time": "07:00", "days": "daily|weekdays|weekend"}')
 
 
 class DeviceIn(BaseModel):
@@ -354,7 +355,7 @@ def create_app(container: Container) -> FastAPI:
     async def add_protocol(body: ProtocolIn, who: Principal = Depends(household_adult)) -> dict:
         from dataclasses import asdict
 
-        return {"protocol": asdict(protocol_store().save(None, body.name, body.triggers, body.steps))}
+        return {"protocol": asdict(protocol_store().save(None, body.name, body.triggers, body.steps, body.schedule))}
 
     @app.put("/v1/settings/protocols/{protocol_id}", tags=["Einstellungen"])
     async def update_protocol(protocol_id: str, body: ProtocolIn, who: Principal = Depends(household_adult)) -> dict:
@@ -363,7 +364,7 @@ def create_app(container: Container) -> FastAPI:
         store = protocol_store()
         if store.get(protocol_id) is None:
             raise JarvisError("JRV-NFD-001", f"Protokoll {protocol_id} unbekannt")
-        return {"protocol": asdict(store.save(protocol_id, body.name, body.triggers, body.steps))}
+        return {"protocol": asdict(store.save(protocol_id, body.name, body.triggers, body.steps, body.schedule))}
 
     @app.delete("/v1/settings/protocols/{protocol_id}", tags=["Einstellungen"])
     async def remove_protocol(protocol_id: str, who: Principal = Depends(household_adult)) -> dict:

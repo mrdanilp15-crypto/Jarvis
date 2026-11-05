@@ -1,5 +1,18 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.12.0 – 2026-11-05
+
+### Neu
+- **Zeitgesteuerte Protokolle:** Im Protokoll-Editor eine Uhrzeit und Tage wählen (täglich, werktags, Wochenende) –
+  dann läuft es von selbst, etwa das Morgenbriefing um 7 Uhr. Die Meldung erscheint mit Abhak-Anzeige und wird
+  gesprochen. Schritte, die eine Bestätigung brauchen, werden dabei übersprungen. Nach einem Neustart holt JARVIS
+  ein Protokoll bis 15 Minuten nach der Zeit noch nach.
+- **Beobachter:** „Sag Bescheid, wenn der Akku unter 15 Prozent fällt“, „… wenn der Download fertig ist“,
+  „… wenn Handbrake fertig ist“. Sie melden sich einmal und überstehen einen Neustart. „Was beobachtest du gerade?“
+  und „Beende alle Beobachter“ verwalten sie. Läuft auf dem JARVIS-Rechner, ohne Netz und ohne Sprachmodell.
+- **Spracherkennung auf der Grafikkarte:** Lokales Whisper nutzt mit NVIDIA-Karte automatisch das genauere Modell
+  „medium“ auf der GPU, sonst „small“ auf dem Prozessor. Fehlen die CUDA-Bibliotheken, fällt es ohne Fehler zurück.
+  Unter Windows installiert der Installer cuBLAS und cuDNN mit.
 ## Jarvis-Modul 2.11.0 – 2026-10-09
 
 ### Neu

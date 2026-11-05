@@ -44,12 +44,38 @@ class WhisperTranscriber:
     """faster-whisper, beim ersten Aufruf geladen. Modell/Rechenwerk über JARVIS_STT_MODEL / JARVIS_STT_DEVICE."""
 
     def __init__(self, model: str | None = None, device: str | None = None, language: str = "de") -> None:
-        self.model_name = model or os.environ.get("JARVIS_STT_MODEL") or "small"
-        self.device = device or os.environ.get("JARVIS_STT_DEVICE") or "cpu"
+        # Standard „auto“: mit NVIDIA-Grafikkarte das genauere Modell auf der GPU, sonst „small“ auf dem Prozessor
+        self.device = device or os.environ.get("JARVIS_STT_DEVICE") or "auto"
+        self.model_name = model or os.environ.get("JARVIS_STT_MODEL") or ("medium" if self._has_gpu() else "small")
         self.language = language
         self._model: Any = None
         self.state = "idle"  # idle | loading | ready | error
         self.error: str | None = None
+
+    def _has_gpu(self) -> bool:
+        if self.device == "cpu":
+            return False
+        if self.device == "cuda":
+            return True
+        try:
+            import ctranslate2
+
+            return ctranslate2.get_cuda_device_count() > 0
+        except Exception:  # Paket fehlt oder keine NVIDIA-Treiber
+            return False
+
+    @staticmethod
+    def _cuda_libraries() -> None:
+        """Windows: cuBLAS/cuDNN liegen als pip-Pakete (nvidia-*-cu12) – ihre DLL-Ordner dem Lader nennen."""
+        import sys
+        from pathlib import Path
+
+        if sys.platform != "win32":
+            return
+        for base in map(Path, sys.path):
+            for folder in (base / "nvidia").glob("*/bin") if (base / "nvidia").is_dir() else []:
+                os.add_dll_directory(str(folder))  # type: ignore[attr-defined]
+                os.environ["PATH"] = f"{folder}{os.pathsep}{os.environ.get('PATH', '')}"
 
     def load(self) -> None:
         if self._model is not None:
@@ -58,9 +84,18 @@ class WhisperTranscriber:
         try:
             from faster_whisper import WhisperModel
 
-            compute = "float16" if self.device == "cuda" else "int8"
             started = time.monotonic()
-            self._model = WhisperModel(self.model_name, device=self.device, compute_type=compute)
+            if self._has_gpu():
+                try:
+                    self._cuda_libraries()
+                    self._model = WhisperModel(self.model_name, device="cuda", compute_type="float16")
+                    self.device = "cuda"
+                except Exception as exc:  # CUDA-Bibliotheken fehlen: auf dem Prozessor mit dem kleineren Modell weiter
+                    log.warning("Whisper auf der GPU nicht möglich (%s) – nutze den Prozessor", exc)
+                    self.device, self.model_name = "cpu", "small"
+            if self._model is None:
+                self.device = "cpu"
+                self._model = WhisperModel(self.model_name, device="cpu", compute_type="int8")
             self.state = "ready"
             log.info("Whisper-Modell %s (%s) geladen in %.1f s", self.model_name, self.device,
                      time.monotonic() - started)

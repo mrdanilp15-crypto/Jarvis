@@ -11,14 +11,19 @@ schlafen“). Gespeichert in ``data/protocols.json``, bearbeitbar im Zahnrad →
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .errors import JarvisError
+
+log = logging.getLogger(__name__)
 
 MAX_STEPS = 12
 DEFAULTS = [
@@ -43,12 +48,32 @@ class Protocol:
     name: str
     triggers: list[str] = field(default_factory=list)
     steps: list[str] = field(default_factory=list)
+    schedule: dict[str, str] | None = None  # {"time": "07:00", "days": "daily|weekdays|weekend"} – läuft dann von selbst
+
+    def due(self, now: Any, last: Any) -> bool:
+        """Zeit erreicht (auf die Minute), Tag passt und heute noch nicht gelaufen?"""
+        if not self.schedule or last == now.date():
+            return False
+        days = self.schedule.get("days", "daily")
+        if (days == "weekdays" and now.weekday() >= 5) or (days == "weekend" and now.weekday() < 5):
+            return False
+        hour, _, minute = self.schedule.get("time", "").partition(":")
+        return hour.isdigit() and minute.isdigit() and (now.hour, now.minute) >= (int(hour), int(minute)) \
+            and (now.hour * 60 + now.minute) - (int(hour) * 60 + int(minute)) < 15  # nach einem Neustart bis 15 min später
 
 
 @dataclass
 class ProtocolMatch:
     protocol: Protocol | None  # None: „Protokoll X“ gesagt, aber X gibt es nicht
     spoken_name: str = ""
+
+
+def clean_schedule(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict) or not re.fullmatch(r"(?:[01]?\d|2[0-3]):[0-5]\d", str(value.get("time", ""))):
+        return None
+    hour, minute = str(value["time"]).split(":")
+    days = value.get("days") if value.get("days") in ("daily", "weekdays", "weekend") else "daily"
+    return {"time": f"{int(hour):02d}:{minute}", "days": days}
 
 
 class ProtocolStore:
@@ -68,7 +93,8 @@ class ProtocolStore:
             try:
                 out.append(Protocol(id=str(item["id"]), name=str(item["name"]),
                                     triggers=[str(t) for t in item.get("triggers", [])],
-                                    steps=[str(s) for s in item.get("steps", [])]))
+                                    steps=[str(s) for s in item.get("steps", [])],
+                                    schedule=clean_schedule(item.get("schedule"))))
             except (KeyError, TypeError):
                 continue
         return out
@@ -101,7 +127,8 @@ class ProtocolStore:
             return ProtocolMatch(None, (spoken["name"] if spoken else m["name"]).strip())
         return None
 
-    def save(self, protocol_id: str | None, name: str, triggers: list[str], steps: list[str]) -> Protocol:
+    def save(self, protocol_id: str | None, name: str, triggers: list[str], steps: list[str],
+             schedule: dict[str, str] | None = None) -> Protocol:
         name = re.sub(r"\s+", " ", name).strip()[:40]
         steps = [re.sub(r"\s+", " ", s).strip()[:120] for s in steps if s.strip()][:MAX_STEPS]
         triggers = [re.sub(r"\s+", " ", t).strip()[:60] for t in triggers if t.strip()][:5]
@@ -123,6 +150,7 @@ class ProtocolStore:
             existing = Protocol(id=new_id, name=name)
             self.items.append(existing)
         existing.name, existing.triggers, existing.steps = name, triggers, steps
+        existing.schedule = clean_schedule(schedule)
         self._save()
         return existing
 
@@ -133,6 +161,21 @@ class ProtocolStore:
         self.items.remove(protocol)
         self._save()
         return True
+
+    async def run_scheduled(self, now: Callable[[], Any], run: Callable[[Protocol], Awaitable[None]],
+                            interval: float = 20.0) -> None:
+        """Hintergrundschleife: Protokolle mit Uhrzeit starten von selbst (einmal pro Tag)."""
+        last: dict[str, Any] = {}
+        while True:
+            moment = now()
+            for protocol in list(self.items):
+                if protocol.due(moment, last.get(protocol.id)):
+                    last[protocol.id] = moment.date()
+                    try:
+                        await run(protocol)
+                    except Exception:  # ein fehlgeschlagenes Protokoll darf die Schleife nicht beenden
+                        log.exception("Zeitgesteuertes Protokoll %s fehlgeschlagen", protocol.id)
+            await asyncio.sleep(interval)
 
     def public(self) -> list[dict[str, Any]]:
         return [asdict(p) for p in self.items]

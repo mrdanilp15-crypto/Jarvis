@@ -461,6 +461,36 @@ def _weather(simple: str) -> FastPathMatch | None:
                          {"when": when, "rain": bool(m["rain"] or simple.startswith(("regnet", "wird es regnen")))})
 
 
+# Beobachter: „Sag Bescheid, wenn der Akku unter 15 Prozent fällt“, „… wenn der Download fertig ist“, „… wenn Handbrake fertig ist“
+_WATCH_LEAD = r"^(?:sag|sage|gib|gebe|meld|melde)\s+(?:mir\s+)?(?:bescheid|laut)\s*,?\s*(?:sobald|wenn)\s+"
+WATCH_BATTERY = re.compile(_WATCH_LEAD + r"(?:der |mein )?akku\s+(?:unter|auf|bei)\s+(?P<pct>\d{1,2})\s*(?:prozent|%)"
+                           r"(?:\s+(?:fällt|ist|steht|sinkt|liegt))?$|^warn(?:e)? mich(?: bei| wenn)?\s+(?:der |mein )?akku"
+                           r"\s+(?:unter|auf|bei)\s+(?P<pct2>\d{1,2})\s*(?:prozent|%)$")
+WATCH_DOWNLOAD = re.compile(_WATCH_LEAD + r"(?:mein |der |die |das )?(?:download|herunterladen|datei)\s*(?:fertig|geladen|da)?"
+                            r"(?:\s+(?:ist|sind))?(?:\s+(?:fertig|geladen|heruntergeladen))?$")
+WATCH_PROCESS = re.compile(_WATCH_LEAD + r"(?:der |die |das |mein |meine )?(?P<name>[\wäöüß.+-]{3,30})\s+(?:fertig|durch|"
+                           r"beendet|zu ende)\s*(?:ist)?$")
+WATCH_LIST = re.compile(r"^(?:was|welche)\s+(?:beobachtest|überwachst)\s+du(?: gerade)?$|^welche beobachter (?:laufen|gibt es)$")
+WATCH_CANCEL = re.compile(r"^(?:beende|stopp|stoppe|lösche|lösch|brich)\s+(?:alle\s+)?(?:die\s+)?(?:beobachter|überwachungen)"
+                          r"(?:\s+ab)?$")
+_NOT_PROGRAMS = {"timer", "wecker", "essen", "kaffee", "download", "akku", "installation"}
+
+
+def _watch(simple: str) -> FastPathMatch | None:
+    if m := WATCH_BATTERY.match(simple):
+        pct = m["pct"] or m["pct2"]
+        return FastPathMatch("automation.watch", {"kind": "battery", "value": pct}, 0.95, "watch")
+    if WATCH_DOWNLOAD.match(simple):
+        return FastPathMatch("automation.watch", {"kind": "download"}, 0.95, "watch")
+    if (m := WATCH_PROCESS.match(simple)) and m["name"] not in _NOT_PROGRAMS:
+        return FastPathMatch("automation.watch", {"kind": "process", "value": m["name"]}, 0.9, "watch")
+    if WATCH_LIST.match(simple):
+        return FastPathMatch("automation.watch_list", {}, 0.95, "watch_list")
+    if WATCH_CANCEL.match(simple):
+        return FastPathMatch("automation.watch_cancel", {}, 0.95, "watch_cancel")
+    return None
+
+
 # Durchsagen: „Sag in der Küche, dass das Essen fertig ist“, „Durchsage an alle: Abfahrt in fünf Minuten“
 _ROOM = r"(?P<room>(?:in|im|ins|an|für)\s+(?:der\s+|dem\s+|die\s+|den\s+|das\s+)?[\wäöüß-]+|an\s+alle|allen|überall)"
 ANNOUNCE = [
@@ -713,6 +743,8 @@ class FastPath:
                 return FastPathMatch("home.set_light", {"on": on}, 0.9, "light_unavailable")
         simple = normalize_utterance(text)
         raw = re.sub(r"\s+", " ", _PREFIX.sub("", text.strip())).strip()
+        if found := _watch(simple):
+            return found
         for pattern in ANNOUNCE:
             if (m := pattern.match(raw)) and len(m["text"].split()) >= 2:
                 text = m["text"].strip(" ,.!?")

@@ -928,7 +928,8 @@ class Orchestrator:
                        and "nacht" in str(result.card.get("name", "")).lower())
         return self.style.night_remark(now, going_to_bed=bedtime)
 
-    async def _run_protocol(self, found: Any, req: TurnRequest, situation: Situation) -> TurnResult:
+    async def _run_protocol(self, found: Any, req: TurnRequest, situation: Situation, *,
+                            unattended: bool = False) -> TurnResult:
         """Schritte eines Protokolls nacheinander – jeder wie ein gesagter Sofortbefehl (Richtlinien inklusive).
         Was kein Sofortbefehl ist, wird übersprungen, nie dem Sprachmodell überlassen."""
         if found.protocol is None:
@@ -963,6 +964,10 @@ class Orchestrator:
                 correlation_id=req.correlation_id, session_id=req.session_id, via="automation",
                 ctx=PolicyContext(tainted=False, allowed_domains=None, mode=req.mode, now=situation.now),
             )
+            if unattended and record.status == "pending_confirmation":  # niemand da, der Ja sagen könnte
+                self.confirmations.pop(record.confirmation_id)
+                entry.update(status="skipped", text="braucht Ihre Bestätigung – übersprungen")
+                continue
             reply = self._fast_path_result(record, match.slots)
             actions.append(record)
             pending = reply.pending_confirmation or pending

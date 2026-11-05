@@ -19,7 +19,7 @@
     homeTokenSave: $("#home-token-save"), homeConnected: $("#home-connected"), homeRooms: $("#home-rooms"),
     protoList: $("#proto-list"), protoNew: $("#proto-new"), protoEdit: $("#proto-edit"), protoName: $("#proto-name"),
     protoTriggers: $("#proto-triggers"), protoSteps: $("#proto-steps"), protoSave: $("#proto-save"),
-    protoCancel: $("#proto-cancel"), protoError: $("#proto-error"),
+    protoCancel: $("#proto-cancel"), protoTime: $("#proto-time"), protoDays: $("#proto-days"), protoError: $("#proto-error"),
     optBoot: $("#opt-boot"), optBarge: $("#opt-barge"),
     homeRemove: $("#home-remove"), roomChip: $("#room-chip"), devNow: $("#dev-now"), devError: $("#dev-error"),
     devSetup: $("#dev-setup"), devName: $("#dev-name"), devRoom: $("#dev-room"), devRooms: $("#dev-rooms"),
@@ -2548,6 +2548,7 @@
     item.classList.add("notice");
     flash("alert");
     if (message.kind === "timer" && message.id) timers.done(message.id);
+    if (message.card?.type === "protocol") showProtocol(message.card);
     if (settings.speak && !turn?.muted) {
       if (!tts.busy && !turn) wake.stop();
       chime();
@@ -2558,7 +2559,7 @@
     }
   }
   const NOTICE_LABELS = { timer: "Timer", reminder: "Erinnerung", event: "Termin", suggestion: "Vorschlag",
-    announcement: "Durchsage" };
+    announcement: "Durchsage", watch: "Beobachter", protocol: "Protokoll" };
 
   function onServerError(problem) {
     const text = problem.user_message || problem.detail || problem.title || "Unbekannter Fehler";
@@ -3061,7 +3062,8 @@
       els.protoList.replaceChildren(...this.items.map((p) => {
         const li = el("li");
         const info = el("div");
-        const triggers = [`„Protokoll ${p.name}“`, ...p.triggers.map((t) => `„${t}“`)].join(" · ");
+        const when = p.schedule ? ` · automatisch ${{ daily: "täglich", weekdays: "werktags", weekend: "am Wochenende" }[p.schedule.days]} um ${p.schedule.time}` : "";
+        const triggers = [`„Protokoll ${p.name}“`, ...p.triggers.map((t) => `„${t}“`)].join(" · ") + when;
         info.append(el("span", "name", p.name), el("span", "note", triggers), el("span", "note steps", p.steps.join(" → ")));
         const side = el("div", "side");
         side.append(button("Ausführen", "btn primary small", () => { els.settings.close(); sendText(`Protokoll ${p.name}`, false); }),
@@ -3078,12 +3080,15 @@
       els.protoName.value = p?.name ?? "";
       els.protoTriggers.value = (p?.triggers ?? []).join(", ");
       els.protoSteps.value = (p?.steps ?? []).join("\n");
+      els.protoTime.value = p?.schedule?.time ?? "";
+      els.protoDays.value = p?.schedule?.days ?? "daily";
       els.protoEdit.hidden = false;
       els.protoName.focus();
     },
     async save() {
       const body = { name: els.protoName.value.trim(), triggers: els.protoTriggers.value.split(",").map((t) => t.trim()).filter(Boolean),
-        steps: els.protoSteps.value.split("\n").map((t) => t.trim()).filter(Boolean) };
+        steps: els.protoSteps.value.split("\n").map((t) => t.trim()).filter(Boolean),
+        schedule: els.protoTime.value ? { time: els.protoTime.value, days: els.protoDays.value } : null };
       try {
         if (this.editing) await api("PUT", `/v1/settings/protocols/${encodeURIComponent(this.editing)}`, body);
         else await api("POST", "/v1/settings/protocols", body);
