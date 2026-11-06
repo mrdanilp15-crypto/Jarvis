@@ -35,7 +35,7 @@ KEYWORDS: dict[str, str] = {
     "vision": r"kamera|siehst|sehen|schau mal|was ist das|auf dem bild|halte ich",
     "stocks": r"aktie|börse|kurs\b",
     "lists": r"einkaufs|liste\b|todo|to-do|aufgabe|kaufen|streich",
-    "media": r"radio|sender\b|musik|hör",
+    "media": r"radio|sender\b|musik|hör|spiel|antenne|deutschlandfunk|1live|bayern ?[1-4]|swr|wdr|ndr",
     "knowledge": r"notiz|dokument|unterlagen|vertrag|meine pdf|mein wissen|rechnung|kaution|miete",
 }
 _COMPILED = {domain: re.compile(pattern) for domain, pattern in KEYWORDS.items()}

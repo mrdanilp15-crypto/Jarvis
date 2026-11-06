@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.14.0"
+STYLE_VERSION = "2.14.1"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -730,6 +730,7 @@ class PlainStyle:
             "timeout": "Das dauert länger als erwartet; ich habe den Vorgang abgebrochen.",
             "not_processed": "Das konnte ich nicht vollständig verarbeiten. Bitte formulieren Sie es anders.",
             "invented_links": "Echte Suchergebnisse habe ich dazu nicht. Sagen Sie „Such nach …“, dann sehe ich nach.",
+            "fake_call": "Das habe ich gar nicht ausgeführt – das Sprachmodell hat es nur behauptet. Sagen Sie es bitte als direkten Befehl, etwa „Spiel Radio Antenne Bayern“.",
             "max_iterations": "Ich habe die Aufgabe nach mehreren Schritten angehalten, um nichts Unbeabsichtigtes "
                               "zu tun.",
             "confirm_in_app": "Für diese Aktion benötige ich Ihre Bestätigung in der App.",
@@ -1266,6 +1267,8 @@ class JarvisStyle(PlainStyle):
             "confirm_in_app": f"Für diese Aktion benötige ich Ihre Bestätigung in der App{', ' + self.address if self.address else ''}.",
             "confirm_same_person": "Diese Bestätigung muss von der Person kommen, die den Auftrag erteilt hat.",
             "generic_error": f"{apology} Dabei ist ein Fehler aufgetreten.",
+            "fake_call": (f"Das habe ich gar nicht ausgeführt{', ' + self.address if self.address else ''} – mein Sprachmodell hat es "
+                          "nur behauptet. Sagen Sie es bitte als direkten Befehl, etwa „Spiel Radio Antenne Bayern“."),
             "invented_links": (f"Echte Suchergebnisse habe ich dazu nicht{', ' + self.address if self.address else ''} – und "
                                "Links erfinde ich nicht. Sagen Sie „Such nach …“, dann sehe ich im Web nach."),
             "no_passwords": (f"Passwörter tippe ich aus Sicherheitsgründen nicht ein{', ' + self.address if self.address else ''} "

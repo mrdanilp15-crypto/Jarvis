@@ -139,3 +139,32 @@ def test_tailscale_addresses_are_offered(monkeypatch):
     found = local_addresses()
     assert "100.101.102.103" in found and "172.17.0.2" not in found
     assert ipaddress.ip_address("100.101.102.103").is_private is False  # darum die Sonderbehandlung
+
+
+@pytest.mark.parametrize("text, station", [
+    ("Spiele Antenne Bayern", "antenne bayern"), ("Spiel Antenne Bayern an", "antenne bayern"),
+    ("Hör Deutschlandfunk", "deutschlandfunk"), ("Spiel 1Live", "1live"), ("Spiel Bayern 3", "bayern 3"),
+])
+def test_stations_without_the_word_radio(text, station):
+    found = FastPath({}).match(text)
+    assert (found.capability, found.arguments) == ("media.radio", {"station": station})
+
+
+@pytest.mark.parametrize("text", ["Spiel Bob Marley", "Spiel Minecraft", "Spiel Arteriion auf Spotify"])
+def test_music_and_games_are_no_radio(text):
+    found = FastPath({}).match(text)
+    assert found is None or found.capability != "media.radio"
+
+
+def test_invented_tool_calls_are_retracted(orchestrator, situation):
+    from jarvis.orchestrator import TurnRequest
+    from jarvis.style import JarvisStyle
+    from jarvis.testing import say
+
+    from conftest import ALEX
+
+    orchestrator.style = JarvisStyle()
+    llm = ScriptedProvider([say("Sehr wohl. (Tool-Aufruf: media.play_radio) Die Sendung läuft jetzt.")])
+    result = asyncio.run(orchestrator.handle_turn(TurnRequest("Mach mir was Schönes", "k1", __import__("conftest").ALEX),
+                                                  provider=llm, situation=situation))
+    assert result.retracted and "nicht ausgeführt" in result.text and "läuft jetzt" not in result.text

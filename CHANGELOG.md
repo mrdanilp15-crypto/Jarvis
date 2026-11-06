@@ -1,5 +1,13 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.14.1 – 2026-11-06
+
+### Behoben
+- **„Spiele Antenne Bayern“** startet jetzt den Sender (auch ohne das Wort „Radio“; ebenso 1Live, Bayern 3, SWR3, WDR 2,
+  NDR 2, Deutschlandfunk, Sunshine Live u. a.). „Spiel Bob Marley“ bleibt Musik, kein Radio.
+- Erfundene Werkzeug-Aufrufe des Sprachmodells („(Tool-Aufruf: media.play_radio) … läuft jetzt“) werden erkannt, zurückgezogen
+  und durch eine ehrliche Meldung ersetzt; die Werkzeugauswahl kennt Sendernamen.
+
 ## Jarvis-Modul 2.14.0 – 2026-11-06
 
 ### Neu

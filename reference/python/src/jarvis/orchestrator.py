@@ -140,6 +140,8 @@ class TurnResult:
 
 
 # Protokolle: Schritte, die nicht passen (Dialoge, Kamera), und solche, deren Ergebnis JARVIS vorliest
+FAKE_CALL = re.compile(r"tool[- ]?aufruf|tool_call|function_call|\b(?:home|pc|media|info|system|timer|reminder|calendar|mail|memory|"
+                       r"lists|automation|web|assistant|knowledge|message)\.[a-z_]{3,}\b", re.I)
 WRONG = re.compile(r"^(?:das (?:war|ist) (?:falsch|nicht richtig|quatsch|unsinn|nicht gut)|das stimmt nicht|"
                    r"melde (?:den|diesen) fehler|merk dir den fehler|fehler melden)$")
 PROTOCOL_UNSUITABLE = {"incomplete", "mail_dialog", "vision", "refuse_password"}
@@ -536,6 +538,12 @@ class Orchestrator:
             session.transcript.append(response.assistant_turn)
             if not response.tool_calls:
                 result.text = response.text
+                if not result.actions and FAKE_CALL.search(result.text):  # „(Tool-Aufruf: media.play_radio) … läuft jetzt“
+                    log.warning("Modellantwort mit erfundenem Werkzeugaufruf verworfen", extra={"correlation_id": req.correlation_id})
+                    result.text, result.retracted = self.style.system_text("fake_call"), True
+                    session.transcript[-1] = AssistantTurn(text=result.text, tool_calls=[], provider="system")
+                    result.stop_reason = response.stop_reason
+                    return result
                 known = sources + json.dumps([a.result for a in result.actions], ensure_ascii=False, default=str)
                 if invented_links(result.text, known):  # kleine lokale Modelle „finden“ gern Treffer, die es nicht gibt
                     log.warning("Modellantwort mit erfundenen Links verworfen", extra={"correlation_id": req.correlation_id})

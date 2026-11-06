@@ -565,6 +565,12 @@ CONVERT = [
 ]
 RADIO_BROWSER = re.compile(r"^(?:spiel|spiele|mach|mache|starte|start|hör|höre)\s+(?:das\s+)?(?:radio|den sender|sender)\s+"
                            r"(?P<station>.+?)(?:\s+(?:an|ab|hier|am pc|im browser|auf dem pc))?$")
+# Bekannte Sender, die man ohne das Wort „Radio“ nennt: „Spiele Antenne Bayern“, „Hör Deutschlandfunk“ (nicht „Bob“ allein –
+# „Spiel Bob Marley“ meint Musik)
+STATIONS = (r"(?:(?:rock )?antenne(?: \w+)?|1 ?live|eins ?live|bayern ?[1-4]|swr ?[1-4]|wdr ?[1-5]|ndr ?[1-3]|deutschlandfunk(?: \w+)?|dlf|"
+            r"sunshine live|charivari|radio ffn|hitradio(?: \w+)?|ffh|n-?joy|big fm|planet radio|klassik radio|egofm)")
+RADIO_STATION = re.compile(rf"^(?:spiel|spiele|hör|höre|starte|start|schalt|schalte)\s+(?:mir\s+)?(?:den sender\s+)?(?P<station>{STATIONS})"
+                           r"(?:\s+(?:an|ein|ab|hier|am pc|im browser|auf dem pc))?$")
 RADIO_STOP = re.compile(r"^(?:radio|musik) (?:aus|stopp|stoppen|beenden)$|^(?:schalte|schalt|mach) (?:das )?radio aus$|^stopp(?:e)? (?:das )?radio$")
 FOCUS = re.compile(r"^(?:(?:starte|start) (?:einen )?)?(?:fokus(?:modus)?|konzentration)(?: für| mit)? ?(?P<n>\d{1,3}) ?minuten?$|^pomodoro(?: starten)?$")
 
@@ -633,6 +639,8 @@ def _calc(simple: str) -> FastPathMatch | None:
 def _media(simple: str) -> FastPathMatch | None:
     if RADIO_STOP.match(simple):
         return FastPathMatch("media.radio_stop", {}, 0.95, "radio_stop")
+    if (m := RADIO_STATION.match(simple)) and not re.search(r"\b(?:in der|im|in dem|ins|auf dem|auf der|in die|in den)\b", m["station"]):
+        return FastPathMatch("media.radio", {"station": m["station"].strip()}, 0.93, "radio_browser")
     if (m := RADIO_BROWSER.match(simple)) and not re.search(r"\b(?:in der|im|in dem|ins|auf dem|auf der|in die|in den)\b", m["station"]):
         return FastPathMatch("media.radio", {"station": m["station"].strip()}, 0.93, "radio_browser")
     if m := FOCUS.match(simple):
