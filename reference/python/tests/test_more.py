@@ -199,3 +199,12 @@ def test_radio_does_not_feed_the_open_microphone():
 
     js = (Path(jarvis.__file__).parent / "web" / "jarvis.js").read_text(encoding="utf-8")
     assert "radio?.duck(next" in js and "!radio?.playing()" in js  # leiser beim Zuhören, kein offenes Zuhören bei Radio
+
+
+def test_radio_volume_is_handled_in_the_browser():
+    from pathlib import Path
+
+    import jarvis
+
+    js = (Path(jarvis.__file__).parent / "web" / "jarvis.js").read_text(encoding="utf-8")
+    assert "radio?.command(text)" in js and 'aria-label", "Lautstärke"' in js  # Regler und „Lauter/Leiser“ ohne Server

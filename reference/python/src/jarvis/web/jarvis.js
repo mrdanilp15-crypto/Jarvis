@@ -1071,11 +1071,37 @@
       const bars = el("span", "bars");
       for (let i = 0; i < 5; i += 1) bars.append(el("i"));
       row.append(bars, el("b", "", data.station ?? "Radio"), button("Stopp", "btn small", () => this.stop()));
-      card.append(row);
+      const slider = el("input", "volume");
+      slider.type = "range"; slider.min = "0"; slider.max = "100"; slider.value = String(Math.round(this.level * 100));
+      slider.setAttribute("aria-label", "Lautstärke");
+      slider.addEventListener("input", () => this.setLevel(Number(slider.value) / 100));
+      this.slider = slider;
+      audio.volume = this.level;
+      card.append(row, slider);
       cards.show("radio", card, 0);
     },
     playing() { return Boolean(this.audio && !this.audio.paused); },
-    duck(on) { if (this.audio) this.audio.volume = on ? 0.15 : 1; },
+    level: Math.min(1, Math.max(0.05, Number(store.get("radioVolume", 0.8)) || 0.8)),
+    duck(on) { if (this.audio) this.audio.volume = on ? this.level * 0.2 : this.level; },
+    setLevel(value) {
+      this.level = Math.min(1, Math.max(0, value));
+      if (this.level > 0) store.set("radioVolume", this.level);
+      if (this.audio) this.audio.volume = this.level;
+      if (this.slider) this.slider.value = String(Math.round(this.level * 100));
+      return `Radio auf ${Math.round(this.level * 100)} Prozent.`;
+    },
+    // „Lauter“, „Leiser“, „Lautstärke auf 30 Prozent“, „Ton aus“ – nur solange das Radio im Browser läuft
+    command(text) {
+      if (!this.playing()) return null;
+      const said = text.toLowerCase().replace(/[.,!?]/g, " ").replace(/\b(?:jarvis|bitte|mal)\b/g, " ").replace(/\s+/g, " ").trim();
+      const percent = said.match(/^(?:(?:stell|mach|setz|dreh)\s+)?(?:die\s+)?(?:lautstärke|radio)\s+(?:auf|bei)\s+(\d{1,3})\s*(?:prozent|%)?$/);
+      if (percent) return this.setLevel(Number(percent[1]) / 100);
+      if (/^(?:mach |dreh )?(?:es |das |das radio )?(?:etwas |ein bisschen |ein wenig )?lauter$|^lautstärke (?:hoch|erhöhen|rauf)$/.test(said)) return this.setLevel(this.level + 0.15);
+      if (/^(?:mach |dreh )?(?:es |das |das radio )?(?:etwas |ein bisschen |ein wenig )?leiser$|^lautstärke (?:runter|verringern)$/.test(said)) return this.setLevel(this.level - 0.15);
+      if (/^(?:mach |dreh )?(?:es |das radio )?viel lauter$|^volle lautstärke$|^maximale lautstärke$/.test(said)) return this.setLevel(1);
+      if (/^(?:mach |dreh )?(?:es |das radio )?viel leiser$|^halbe lautstärke$/.test(said)) return this.setLevel(said.startsWith("halbe") ? 0.5 : this.level - 0.35);
+      return null;
+    },
     stop(quiet) {
       if (this.audio) { this.audio.pause(); this.audio.removeAttribute("src"); this.audio.load(); this.audio = null; }
       if (!quiet) cards.remove("radio");
@@ -1713,6 +1739,13 @@
     const text = raw.trim();
     if (!text) return;
     if (turn) { els.status.textContent = "Einen Moment, ich antworte noch auf die letzte Frage …"; return; }
+    const radioReply = radio?.command(text);
+    if (radioReply) {  // Lautstärke des Browser-Radios: ohne Umweg über den Server
+      addMessage("user", text);
+      addMessage("jarvis", radioReply);
+      if (spoken) tts.speak(radioReply);
+      return;
+    }
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       addSystem("Keine Verbindung zum Server – ich versuche es weiter.", true);
       return;

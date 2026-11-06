@@ -1,5 +1,12 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.14.5 – 2026-11-06
+
+### Neu
+- **Radio-Lautstärke:** Regler in der Radio-Karte sowie „Lauter“, „Leiser“, „Lautstärke auf 30 Prozent“, „Halbe“ und
+  „Volle Lautstärke“ – solange das Radio im Browser läuft, direkt im Browser (kein Umweg über den Server). Die
+  Einstellung bleibt gespeichert; beim Zuhören wird das Radio weiterhin kurz auf ein Fünftel dieser Lautstärke gesenkt.
+
 ## Jarvis-Modul 2.14.4 – 2026-11-06
 
 ### Behoben

@@ -985,6 +985,7 @@ dialog textarea { resize: vertical; font-family: var(--font-ui); line-height: 1.
 .card.list .empty { color: var(--muted); margin: 4px 0; }
 .card.radio { --accent: #ff7ac6; }
 .card.radio .now { display: flex; gap: 12px; align-items: center; }
+.card.radio .volume { width: 100%; margin-top: 12px; accent-color: var(--accent); }
 .card.radio .now b { flex: 1; font-family: var(--font-hud); letter-spacing: 0.06em; font-size: 16px; }
 .bars { display: flex; gap: 3px; align-items: flex-end; height: 22px; }
 .bars i { width: 4px; background: var(--accent); border-radius: 2px; height: 30%; animation: eq 0.9s ease-in-out infinite alternate; }
