@@ -1030,14 +1030,39 @@
     audio: null,
     play(data) {
       this.stop(true);
-      if (!/^https?:\/\//.test(data.url ?? "")) return;
-      if (location.protocol === "https:" && data.url.startsWith("http:")) {
-        addSystem("Dieser Sender sendet unverschlüsselt – im Heimnetz-HTTPS kann der Browser ihn nicht abspielen. Am PC (http://127.0.0.1:8080) geht es.", true);
+      const urls = [data.url, ...(data.alternatives ?? [])].filter((u) => /^https?:\/\//.test(u ?? ""));
+      const usable = location.protocol === "https:" ? urls.filter((u) => u.startsWith("https:")) : urls;
+      if (!usable.length) {
+        addSystem(urls.length
+          ? "Dieser Sender sendet unverschlüsselt – im Heimnetz-HTTPS kann der Browser ihn nicht abspielen. Am PC (http://127.0.0.1:8080) geht es."
+          : "Für diesen Sender gibt es keine Abspiel-Adresse.", true);
         return;
       }
-      this.audio = new Audio(data.url);
-      this.audio.play().catch(() => addSystem("Der Browser hat die Wiedergabe blockiert – bitte einmal auf die Seite klicken und es noch einmal sagen.", true));
+      const audio = new Audio();
+      this.audio = audio;
+      let index = 0;
+      const next = (why) => {
+        if (this.audio !== audio) return;
+        index += 1;
+        if (index >= usable.length) {
+          addSystem(`Der Sender „${data.station ?? "Radio"}“ lässt sich im Browser nicht abspielen (${why}).`, true);
+          this.stop();
+          return;
+        }
+        audio.src = usable[index];
+        audio.play().catch((error) => failed(error));
+      };
+      const failed = (error) => {
+        if (error?.name === "NotAllowedError") {
+          addSystem("Der Browser hat die Wiedergabe blockiert – tippen Sie auf „Abspielen“ in der Radio-Karte.", true);
+          this.card?.append(button("Abspielen", "btn small", () => audio.play().catch(() => {})));
+        } else if (error?.name !== "AbortError") next(error?.name ?? "Fehler");
+      };
+      audio.addEventListener("error", () => next("Format nicht unterstützt"));
+      audio.src = usable[0];
+      audio.play().catch(failed);
       const card = el("section", "card show radio");
+      this.card = card;
       card.append(el("p", "kicker", "Radio"));
       const row = el("div", "now");
       const bars = el("span", "bars");
@@ -1047,7 +1072,7 @@
       cards.show("radio", card, 0);
     },
     stop(quiet) {
-      if (this.audio) { this.audio.pause(); this.audio.src = ""; this.audio = null; }
+      if (this.audio) { this.audio.pause(); this.audio.removeAttribute("src"); this.audio.load(); this.audio = null; }
       if (!quiet) cards.remove("radio");
     },
   };

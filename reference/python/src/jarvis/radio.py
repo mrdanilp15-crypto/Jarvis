@@ -18,7 +18,7 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9äöüß]+", "", text.lower())
 
 
-async def find_station(name: str, *, client: Any = None) -> dict[str, str]:
+async def find_station(name: str, *, client: Any = None) -> dict[str, Any]:
     """„Radio Bob“ -> {"name": "RADIO BOB!", "url": "https://…"} – bevorzugt deutsche Sender mit vielen Stimmen."""
     import httpx
 
@@ -46,13 +46,23 @@ async def find_station(name: str, *, client: Any = None) -> dict[str, str]:
         raise JarvisError("JRV-NFD-001", f"Kein Sender {wanted}",
                           user_message=f"Einen Sender namens „{wanted}“ finde ich nicht.")
 
-    def rank(station: dict[str, Any]) -> tuple[int, int, int]:
-        exact = _norm(station.get("name", "")) == _norm(wanted)
-        german = station.get("countrycode") == "DE"
-        return (int(exact), int(german), int(station.get("votes") or 0))
+    def playable(station: dict[str, Any]) -> bool:
+        # Chromium spielt kein HLS (m3u8) und keine Playlisten (m3u/pls) – nur direkte MP3/AAC/OGG-Ströme
+        url = str(station.get("url_resolved") or station.get("url") or "").lower().split("?")[0]
+        return not station.get("hls") and not url.endswith((".m3u8", ".m3u", ".pls", ".asx"))
 
-    best = max(candidates, key=rank)
-    return {"name": str(best.get("name") or wanted).strip(), "url": str(best.get("url_resolved") or best["url"])}
+    def rank(station: dict[str, Any]) -> tuple[int, int, int, int, int]:
+        exact = _norm(station.get("name", "")) == _norm(wanted)
+        url = str(station.get("url_resolved") or station.get("url"))
+        german = station.get("countrycode") == "DE"
+        return (int(playable(station)), int(exact), int(url.startswith("https:")), int(german), int(station.get("votes") or 0))
+
+    ranked = sorted(candidates, key=rank, reverse=True)
+    best = ranked[0]
+    urls = [str(s.get("url_resolved") or s["url"]) for s in ranked if playable(s)]
+    first = str(best.get("url_resolved") or best["url"])
+    alternatives = [u for u in dict.fromkeys(urls) if u != first][:4]
+    return {"name": str(best.get("name") or wanted).strip(), "url": first, "alternatives": alternatives}  # type: ignore[dict-item]
 
 
 def register_radio_capabilities(registry: Any, *, client: Any = None) -> None:
@@ -61,7 +71,7 @@ def register_radio_capabilities(registry: Any, *, client: Any = None) -> None:
 
     async def play(args: dict[str, Any], ctx: InvocationContext) -> Any:
         station = await find_station(args["station"], client=client)
-        return {"station": station["name"], "url": station["url"]}
+        return {"station": station["name"], "url": station["url"], "alternatives": station.get("alternatives", [])}
 
     async def stop(args: dict[str, Any], ctx: InvocationContext) -> Any:
         return {"stopped": True}

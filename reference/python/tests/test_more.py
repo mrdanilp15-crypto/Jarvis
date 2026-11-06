@@ -95,7 +95,7 @@ def test_radio_returns_a_stream_for_the_browser():
     registry = ToolRegistry()
     register_radio_capabilities(registry, client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     assert asyncio.run(registry.get("media.radio").handler({"station": "bob"}, CTX)) == {
-        "station": "RADIO BOB!", "url": "https://stream.example/bob.mp3"}
+        "station": "RADIO BOB!", "url": "https://stream.example/bob.mp3", "alternatives": []}
 
 
 def test_model_compare_scores_tool_choice(orchestrator):
@@ -168,3 +168,16 @@ def test_invented_tool_calls_are_retracted(orchestrator, situation):
     result = asyncio.run(orchestrator.handle_turn(TurnRequest("Mach mir was Schönes", "k1", ALEX),
                                                   provider=llm, situation=situation))
     assert result.retracted and "nicht ausgeführt" in result.text and "läuft jetzt" not in result.text
+
+
+def test_radio_prefers_direct_streams_and_offers_alternatives():
+    import httpx
+
+    from jarvis.radio import find_station
+
+    stations = [{"name": "ANTENNE BAYERN", "url_resolved": "https://a/live.m3u8", "hls": 1, "votes": 9000, "countrycode": "DE"},
+                {"name": "ANTENNE BAYERN", "url_resolved": "http://b/stream.mp3", "votes": 500, "countrycode": "DE"},
+                {"name": "ANTENNE BAYERN", "url_resolved": "https://c/stream.aac", "votes": 100, "countrycode": "DE"}]
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=stations)))
+    found = asyncio.run(find_station("Antenne Bayern", client=client))
+    assert found["url"] == "https://c/stream.aac" and found["alternatives"] == ["http://b/stream.mp3"]

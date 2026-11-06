@@ -1,5 +1,12 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.14.2 – 2026-11-06
+
+### Behoben
+- **Radio ohne Ton:** Der Sender wurde erkannt, aber die Wiedergabe scheiterte still. Jetzt werden nur direkte Ströme
+  (kein HLS/Playlist) gewählt, https bevorzugt, bei einem Fehler automatisch die nächste Adresse probiert, und die
+  Meldung nennt den echten Grund. Bei echter Autoplay-Sperre erscheint ein „Abspielen“-Knopf.
+
 ## Jarvis-Modul 2.14.1 – 2026-11-06
 
 ### Behoben
