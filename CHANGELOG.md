@@ -1,5 +1,12 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.14.3 – 2026-11-06
+
+### Behoben
+- **Radio „Format nicht unterstützt“:** Die Content-Security-Policy der Oberfläche erlaubte keine fremden Audio-Quellen
+  (`media-src` fehlte, damit galt `default-src 'self'`) – jeder Sender-Strom wurde blockiert. Jetzt freigegeben;
+  bei einem echten Medienfehler nennt die Meldung den Fehlercode.
+
 ## Jarvis-Modul 2.14.2 – 2026-11-06
 
 ### Behoben

@@ -1058,7 +1058,7 @@
           this.card?.append(button("Abspielen", "btn small", () => audio.play().catch(() => {})));
         } else if (error?.name !== "AbortError") next(error?.name ?? "Fehler");
       };
-      audio.addEventListener("error", () => next("Format nicht unterstützt"));
+      audio.addEventListener("error", () => next(`Medienfehler ${audio.error?.code ?? "?"}`));
       audio.src = usable[0];
       audio.play().catch(failed);
       const card = el("section", "card show radio");

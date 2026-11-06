@@ -181,3 +181,12 @@ def test_radio_prefers_direct_streams_and_offers_alternatives():
     client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=stations)))
     found = asyncio.run(find_station("Antenne Bayern", client=client))
     assert found["url"] == "https://c/stream.aac" and found["alternatives"] == ["http://b/stream.mp3"]
+
+
+def test_page_may_load_radio_streams():
+    from pathlib import Path
+
+    import jarvis
+
+    html = (Path(jarvis.__file__).parent / "web" / "index.html").read_text(encoding="utf-8")
+    assert "media-src 'self' https:" in html  # ohne diese Freigabe blockiert die Seite jeden Sender-Strom
