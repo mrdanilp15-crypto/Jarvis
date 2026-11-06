@@ -165,6 +165,6 @@ def test_invented_tool_calls_are_retracted(orchestrator, situation):
 
     orchestrator.style = JarvisStyle()
     llm = ScriptedProvider([say("Sehr wohl. (Tool-Aufruf: media.play_radio) Die Sendung läuft jetzt.")])
-    result = asyncio.run(orchestrator.handle_turn(TurnRequest("Mach mir was Schönes", "k1", __import__("conftest").ALEX),
+    result = asyncio.run(orchestrator.handle_turn(TurnRequest("Mach mir was Schönes", "k1", ALEX),
                                                   provider=llm, situation=situation))
     assert result.retracted and "nicht ausgeführt" in result.text and "läuft jetzt" not in result.text
