@@ -63,6 +63,7 @@ class Container:
     speech: Any = None  # lokale Spracherkennung (voice.local.LocalSpeech) – None: nur Browser-Erkennung
     vision: Any = None  # Bildmodell (vision.VisionService) für „Was siehst du?“
     learner: Any = None  # gelernte Routinen (patterns.PatternLearner)
+    feedback: Any = None  # Fehlerberichte („Das war falsch“, feedback.FeedbackStore)
     protocols: Any = None  # Protokolle („Protokoll Gute Nacht“, protocols.ProtocolStore)
     calendar: Any = None  # Kalender (agenda.CalendarService) – für den nächsten Termin in der Begrüßung
     devices: Any = None  # gekoppelte Raumgeräte (devices.DeviceRegistry)
@@ -90,6 +91,17 @@ class Container:
         if provider is self.router.cloud:
             self.router.cloud_breaker.record_success()
         return result
+
+
+def health_state(container: Any) -> dict[str, Any]:
+    """Zustand der Bausteine – für /v1/system/health und den Selbsttest."""
+    return {
+        "local_llm": container.llm_status,
+        "pc_agent": "connected" if container.agents and container.agents.connected else "disconnected",
+        "smart_home": _home_health(container.smarthome),
+        "stt": f"local:{container.speech.state}" if container.speech is not None else "browser",
+        "tts": getattr(container.tts, "label", "configured") if container.tts is not None else "off",
+    }
 
 
 def turn_to_json(result: TurnResult) -> dict[str, Any]:
@@ -121,6 +133,14 @@ class ProtocolIn(BaseModel):
     triggers: list[str] = Field(default_factory=list, max_length=5, description="Eigene Auslöser („Ich gehe schlafen“)")
     steps: list[str] = Field(min_length=1, max_length=12, description="Je Schritt ein Sofortbefehl, wie gesprochen")
     schedule: dict[str, str] | None = Field(default=None, description='Von selbst starten: {"time": "07:00", "days": "daily|weekdays|weekend"}')
+
+
+class FeedbackIn(BaseModel):
+    said: str = Field(min_length=1, max_length=500)
+    reply: str = Field(default="", max_length=1500)
+    route: str = Field(default="", max_length=60)
+    tools: list[str] = Field(default_factory=list, max_length=10)
+    note: str = Field(default="", max_length=300)
 
 
 class DeviceIn(BaseModel):
@@ -340,6 +360,26 @@ def create_app(container: Container) -> FastAPI:
         if found is None:
             raise JarvisError("JRV-NFD-001", f"Vorschlag {suggestion_id} unbekannt")
         return {"suggestion": found.to_json()}
+
+    @app.post("/v1/feedback", tags=["Einstellungen"])
+    async def add_feedback(body: FeedbackIn, who: Principal = Depends(principal)) -> dict:
+        """Fehlerbericht zu einer Antwort („Das war falsch“) – lokal gespeichert."""
+        if container.feedback is None:
+            raise JarvisError("JRV-NFD-001", "Fehlerberichte sind nicht eingerichtet")
+        container.feedback.add(said=body.said, reply=body.reply, route=body.route, tools=body.tools, note=body.note,
+                               actor=who.actor)
+        return {"saved": True}
+
+    @app.get("/v1/feedback", tags=["Einstellungen"])
+    async def read_feedback(who: Principal = Depends(household_adult)) -> dict:
+        store = container.feedback
+        return {"count": len(store.recent(200)) if store else 0, "report": store.report(15) if store else ""}
+
+    @app.delete("/v1/feedback", tags=["Einstellungen"])
+    async def clear_feedback(who: Principal = Depends(household_adult)) -> dict:
+        if container.feedback is not None:
+            container.feedback.clear()
+        return {"cleared": True}
 
     def protocol_store() -> Any:
         if container.protocols is None:

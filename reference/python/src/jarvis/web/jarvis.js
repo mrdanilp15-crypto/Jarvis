@@ -20,7 +20,8 @@
     protoList: $("#proto-list"), protoNew: $("#proto-new"), protoEdit: $("#proto-edit"), protoName: $("#proto-name"),
     protoTriggers: $("#proto-triggers"), protoSteps: $("#proto-steps"), protoSave: $("#proto-save"),
     protoCancel: $("#proto-cancel"), protoTime: $("#proto-time"), protoDays: $("#proto-days"), protoError: $("#proto-error"),
-    optBoot: $("#opt-boot"), optBarge: $("#opt-barge"),
+    optBoot: $("#opt-boot"), optBarge: $("#opt-barge"), fbCopy: $("#fb-copy"), fbState: $("#fb-state"),
+    backupNow: $("#backup-now"),
     homeRemove: $("#home-remove"), roomChip: $("#room-chip"), devNow: $("#dev-now"), devError: $("#dev-error"),
     devSetup: $("#dev-setup"), devName: $("#dev-name"), devRoom: $("#dev-room"), devRooms: $("#dev-rooms"),
     devAdd: $("#dev-add"), devPair: $("#dev-pair"), devQr: $("#dev-qr"), devLink: $("#dev-link"), devCopy: $("#dev-copy"),
@@ -758,6 +759,14 @@
   };
   window.jarvisPresence = presence;  // für Tests
   els.camChip.addEventListener("click", () => openSettings("general"));
+  els.fbCopy.addEventListener("click", async () => {
+    try {
+      const { count, report } = await api("GET", "/v1/feedback");
+      await navigator.clipboard.writeText(report);
+      els.fbState.textContent = count ? `${count} Fehlerbericht(e) kopiert – jetzt einfügen und weitergeben.` : "Noch keine Fehler gemeldet.";
+    } catch (err) { els.fbState.textContent = err.status === 403 ? "Nur Erwachsene des Haushalts." : "Kopieren nicht möglich – bitte erlauben."; }
+  });
+  els.backupNow.addEventListener("click", () => { els.settings.close(); sendText("Sicher meine Daten", false); });
   els.optBarge.addEventListener("change", () => {
     settings.barge = els.optBarge.checked;
     store.set("barge", settings.barge);
@@ -994,6 +1003,54 @@
     cards.show("agenda", card, 150000);
   }
 
+  // Selbsttest: Ampel je Baustein, dazu das Mikrofon (wird hier im Browser gemessen)
+  const LIGHT = { ok: "✓", warn: "!", fail: "✕", off: "–" };
+  async function micCheck() {
+    if (!navigator.mediaDevices?.getUserMedia) return { id: "mic", label: "Mikrofon", state: "warn", detail: "kein Zugriff möglich", hint: "Chrome oder Edge verwenden." };
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const context = new AudioContext();
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      context.createMediaStreamSource(stream).connect(analyser);
+      const samples = new Uint8Array(analyser.fftSize);
+      let peak = 0;
+      const until = performance.now() + 1500;
+      while (performance.now() < until) {
+        analyser.getByteTimeDomainData(samples);
+        peak = Math.max(peak, ...samples.map((s) => Math.abs(s - 128) / 128));
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      context.close().catch(() => {});
+      return peak < 0.01 ? { id: "mic", label: "Mikrofon", state: "warn", detail: "kein Signal", hint: "Mikrofon in Windows prüfen (Einstellungen → Datenschutz → Mikrofon, Eingabegerät, Stummschaltung)." }
+        : { id: "mic", label: "Mikrofon", state: "ok", detail: `Pegel ${Math.round(peak * 100)} %` };
+    } catch {
+      return { id: "mic", label: "Mikrofon", state: "fail", detail: "blockiert", hint: "Links in der Adressleiste das Mikrofon erlauben." };
+    } finally { stream?.getTracks().forEach((t) => t.stop()); }
+  }
+  async function showSelftest(data) {
+    const checks = [...(data.checks ?? [])];
+    const card = el("section", "card show selftest");
+    card.append(el("p", "kicker", "Selbsttest"));
+    const list = el("ol", "checks");
+    card.append(list);
+    const row = (c, i) => {
+      const li = el("li", `check-row ${c.state}`);
+      li.style.animationDelay = `${i * 0.12}s`;
+      li.append(el("span", "light", LIGHT[c.state] ?? "–"), el("b", "", c.label), el("span", "detail", c.detail ?? ""));
+      if (c.hint) li.append(el("small", "hint", c.hint));
+      return li;
+    };
+    checks.forEach((c, i) => list.append(row(c, i)));
+    const pending = el("li", "check-row pending");
+    pending.append(el("span", "light", "…"), el("b", "", "Mikrofon"), el("span", "detail", "höre kurz zu – sprechen Sie ein paar Worte"));
+    list.append(pending);
+    cards.show("selftest", card, 180000);
+    const mic = await micCheck();
+    pending.replaceWith(row(mic, checks.length));
+  }
+
   // -- Systemmonitor: Balken für Prozessor, Speicher, Laufwerke, Grafikkarte ----------------------------------------
   function showSysmon(data) {
     const card = el("section", "card sysmon");
@@ -1093,6 +1150,7 @@
       else if (action.capability === "info.wikipedia" && data.found) showKnowledge(data);
       else if (action.capability === "timer.start" && data.id) timers.add(data);
       else if (action.capability === "system.monitor") showSysmon(data);
+      else if (action.capability === "system.selftest") showSelftest(data);
       else if (action.capability === "web.search" && data.results?.length) showSearch(data);
       else if (action.capability === "info.news" && data.headlines?.length) showNews(data);
       else if (action.capability === "info.stock") showStock(data);
@@ -1555,7 +1613,7 @@
     const item = addMessage("jarvis", "");
     item.classList.add("pending");
     turn = {
-      spoken, item, body: item.querySelector(".body"), streamed: "", muted: false,
+      spoken, item, said: text, body: item.querySelector(".body"), streamed: "", muted: false,
       slowTimer: setTimeout(() => {
         if (state === "thinking") setState("thinking", "Das Sprachmodell rechnet noch – beim ersten Mal kann das eine Weile dauern …");
       }, 12000),
@@ -1609,6 +1667,7 @@
       addConfirmation(current.item, result.pending_confirmation, waiting?.action_id);
     }
     showResults(result, current.item);  // Wetter, Nachgeschlagenes, Timer als Karten
+    if (finalText && result.route !== "conversation") addFlag(current, finalText, result);
     if (barge.pendingCommand) {  // mitten in der Antwort unterbrochen: „Jarvis, wie spät ist es?“
       const command = barge.pendingCommand;
       barge.pendingCommand = null;
@@ -1619,6 +1678,20 @@
     expectReply = Boolean(result.awaiting_reply) && current.spoken && canListen;
     scrollLog();
     if (!tts.busy) onSpeechDone();
+  }
+
+  // „Das war falsch“: kleiner Knopf unter der Antwort – speichert Satz, Antwort, Weg und Werkzeuge lokal für den Fehlerbericht
+  function addFlag(current, answer, result) {
+    const flag = button("⚑ falsch", "flag", async () => {
+      flag.disabled = true;
+      try {
+        await api("POST", "/v1/feedback", { said: current.said, reply: answer, route: result.route ?? "",
+          tools: (result.actions ?? []).map((a) => a.capability).slice(0, 10) });
+        flag.textContent = "✓ gemeldet";
+      } catch { flag.textContent = "nicht möglich"; }
+    });
+    flag.title = "Diese Antwort war falsch – für den Fehlerbericht merken";
+    current.item.append(flag);
   }
 
   function failTurn(message) {

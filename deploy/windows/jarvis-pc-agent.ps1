@@ -16,7 +16,7 @@ $jarvisHome = Join-Path $env:LOCALAPPDATA 'JARVIS'
 $logFile = Join-Path $jarvisHome 'pc-agent.log'
 $config = Get-Content -Raw -Encoding UTF8 (Join-Path $jarvisHome 'config.json') | ConvertFrom-Json
 
-$agentVersion = '2.9.1'
+$agentVersion = '2.13.0'
 $mutex = New-Object System.Threading.Mutex($false, 'Local\JarvisPcAgent')
 try { $owned = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }   # Vorgänger beendet
 if (-not $owned) { exit 0 }   # läuft bereits
@@ -303,6 +303,10 @@ public static class JarvisNative {
     public static string Title(IntPtr hWnd) { var text = new StringBuilder(512); GetWindowText(hWnd, text, 512); return text.ToString(); }
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg,
+        UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);
+    // Hell/Dunkel: Programme und Taskleiste lesen das Design neu, wenn Windows „ImmersiveColorSet“ meldet
+    public static void ThemeChanged() { UIntPtr r; SendMessageTimeout((IntPtr)0xFFFF, 0x1A, UIntPtr.Zero, "ImmersiveColorSet", 2, 5000, out r); }
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
@@ -405,6 +409,38 @@ function Get-ProcessNames([string]$name, [string]$target) {
     if ($target -match '([^\\/]+)\.exe$') { $names += $Matches[1].ToLower() }
     $names += $key.Replace(' ', '')
     return $names
+}
+
+# Fenster verwalten (Windows-Tastenkürzel), Zwischenablage lesen, Hell-/Dunkelmodus
+$windowCombos = @{ 'show_desktop' = @(0x5B, 0x44); 'snap_left' = @(0x5B, 0x25); 'snap_right' = @(0x5B, 0x27)
+                   'maximize' = @(0x5B, 0x26); 'minimize' = @(0x5B, 0x28); 'switch' = @(0x12, 0x09); 'task_view' = @(0x5B, 0x09) }
+
+function Invoke-Window([string]$name) {
+    if (-not $windowCombos.ContainsKey($name)) { throw "Unbekannte Fensteraktion '$name'." }
+    $down = @($windowCombos[$name])
+    $up = @($down); [array]::Reverse($up)
+    foreach ($key in $down) { [JarvisNative]::keybd_event([byte]$key, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 20 }
+    foreach ($key in $up) { [JarvisNative]::keybd_event([byte]$key, 0, 2, [UIntPtr]::Zero) }
+    return @{ done = $name }
+}
+
+function Get-ClipboardText {
+    $text = ''
+    try { $text = [string](Get-Clipboard -Raw -ErrorAction Stop) } catch { $text = '' }
+    $text = ($text -replace '\s+', ' ').Trim()
+    if ($text.Length -gt 400) { $text = $text.Substring(0, 400) }
+    return @{ text = $text; empty = ($text.Length -eq 0) }
+}
+
+function Set-Theme([string]$mode) {
+    $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+    $light = [int](Get-ItemProperty -Path $path -Name AppsUseLightTheme -ErrorAction SilentlyContinue).AppsUseLightTheme
+    $new = if ($mode -eq 'dark') { 0 } elseif ($mode -eq 'light') { 1 } else { 1 - $light }
+    foreach ($name in @('AppsUseLightTheme', 'SystemUsesLightTheme')) {
+        Set-ItemProperty -Path $path -Name $name -Value $new -Type DWord -ErrorAction Stop
+    }
+    [JarvisNative]::ThemeChanged()
+    return @{ theme = $(if ($new -eq 0) { 'dark' } else { 'light' }) }
 }
 
 function Assert-TypingAllowed {
@@ -722,6 +758,9 @@ function Invoke-Action([string]$action, $arguments) {
         'notify' { return Show-Notification ([string]$arguments.title) ([string]$arguments.text) }
         'system_info' { return Get-SystemInfo }
         'system_action' { return Invoke-SystemAction ([string]$arguments.name) }
+        'window' { return Invoke-Window ([string]$arguments.action) }
+        'clipboard_read' { return Get-ClipboardText }
+        'theme' { return Set-Theme ([string]$arguments.mode) }
         default { throw "Unbekannte Aktion '$action'." }
     }
 }
@@ -759,7 +798,7 @@ while ($true) {
             start_apps = @(Get-StartAppNames); folders = @($folders.Keys)
             actions = @('open_url', 'open_app', 'open_folder', 'search_files', 'find_files', 'open_file', 'app_search',
                         'close_app', 'type_text', 'press_key', 'click', 'compose_mail', 'notify', 'system_info',
-                        'system_action')
+                        'system_action', 'window', 'clipboard_read', 'theme')
         }
         $script:appsChanged = $false
         Write-Log 'Mit JARVIS verbunden'

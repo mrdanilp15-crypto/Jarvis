@@ -150,6 +150,14 @@
           <option value="aus">aus – ruhige Anzeige (für langsame Rechner)</option>
         </select>
       </label>
+      <div class="field">Fehler und Sicherung
+        <div class="train">
+          <button class="btn" type="button" id="fb-copy">Fehlerbericht kopieren</button>
+          <button class="btn" type="button" id="backup-now">Daten jetzt sichern</button>
+        </div>
+        <p class="hint" id="fb-state" aria-live="polite">Unter jeder Antwort steht „⚑ falsch“. Das merkt sich die Antwort; der
+          Bericht zeigt, was schiefging. „Daten sichern“ legt eine ZIP in Dokumente\Jarvis-Sicherung (ohne Passwörter und Schlüssel).</p>
+      </div>
       <label class="check"><input type="checkbox" id="opt-boot">
         <span>Start-Sequenz: beim Öffnen von JARVIS Systemcheck und Begrüßung mit Wetter und Terminen</span></label>
       <label class="check"><input type="checkbox" id="opt-presence">

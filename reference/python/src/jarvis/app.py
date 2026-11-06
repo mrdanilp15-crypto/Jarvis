@@ -51,7 +51,12 @@ from .skills import register_assistant_capabilities
 from .timers import Alarm, AlarmScheduler, Notifier, register_timer_capabilities
 from .persona import Persona
 from .policy import PolicyContext, PolicyEngine, Principal
-from .tools import ToolRegistry
+from .backup import make_backup
+from .feedback import FeedbackStore
+from .rules import RuleService, register_rule_capabilities
+from .selftest import run_selftest
+from .tools import Capability, InvocationContext, ToolRegistry
+from .userdocs import DocIndex, knowledge_folder, register_knowledge_capabilities
 from .watchers import WatchService, register_watch_capabilities
 from .websearch import WebSearch, register_web_capabilities
 
@@ -388,6 +393,73 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
         await tell(who.actor, result.text, kind="protocol", card=result.card)
 
     background.append(orchestrator.protocols.run_scheduled(lambda: datetime.now(tz), run_scheduled))
+
+    # Fehlerberichte, Selbsttest, Sicherung, Anrede, Protokolle per Sprache, eigenes Wissen, Wenn-dann-Regeln
+    orchestrator.feedback = container.feedback = FeedbackStore(data_dir / "feedback.jsonl")
+    profile_path = data_dir / "profile.json"
+    try:
+        saved_address = json.loads(profile_path.read_text(encoding="utf-8")).get("address")
+        if saved_address:
+            orchestrator.style.address = saved_address
+    except (OSError, ValueError):
+        pass
+
+    async def weather_now() -> Any:
+        cap = registry.get("info.weather")
+        if cap is None:
+            raise JarvisError("JRV-NFD-001", "kein Wetterdienst")
+        return await cap.handler({"days": 2}, InvocationContext(correlation_id="rules", actor="system:rules"))
+
+    async def selftest(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        from .api import health_state
+
+        async def health() -> dict[str, Any]:
+            return health_state(container)
+
+        checks = await run_selftest(provider=container.router.local, health=health, weather=weather_now, data_dir=data_dir)
+        return {"checks": checks}
+
+    async def backup(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        path, count = make_backup(data_dir)
+        return {"path": str(path), "files": count}
+
+    async def set_address(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        name = re.sub(r"\s+", " ", args["name"]).strip()[:20]
+        orchestrator.style.address = name
+        profile_path.write_text(json.dumps({"address": name}, ensure_ascii=False), encoding="utf-8")
+        return {"name": name}
+
+    async def protocol_create(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        ok, skipped = [], []
+        for step in args["steps"]:
+            (ok if orchestrator.fast_path and orchestrator.fast_path.match(step) else skipped).append(step)
+        if not ok:
+            raise JarvisError("JRV-VAL-002", "Kein Schritt verstanden",
+                              user_message="Keinen dieser Schritte verstehe ich als Befehl – bitte so, wie Sie ihn sagen "
+                                           "würden, etwa „Alle Lichter aus“.")
+        protocol = orchestrator.protocols.save(None, args["name"], [], ok)
+        return {"name": protocol.name, "steps": len(ok), "skipped": skipped}
+
+    def simple_cap(name: str, domain: str, description: str, schema: dict[str, Any], handler: Any, risk: str = "R1") -> None:
+        registry.register(Capability(name=name, domain=domain, risk_class=risk, side_effects="reversible",
+                                     description=description, input_schema=schema, handler=handler, timeout_s=90.0))
+
+    empty = {"type": "object", "additionalProperties": False, "properties": {}}
+    simple_cap("system.selftest", "system", "Prüft sich selbst: Sprachmodell-Tempo, Grafikkarte, Bausteine, Speicher.", empty, selftest, "R0")
+    simple_cap("system.backup", "system", "Sichert Gedächtnis, Protokolle, Beobachter und Regeln als ZIP (ohne Schlüssel).", empty, backup)
+    simple_cap("assistant.set_address", "assistant", "Ändert die Anrede, z. B. „Boss“ statt „Sir“.",
+               {"type": "object", "additionalProperties": False, "required": ["name"],
+                "properties": {"name": {"type": "string", "minLength": 2, "maxLength": 20}}}, set_address, "R0")
+    simple_cap("automation.protocol_create", "automation", "Legt ein Protokoll an: Name und Schritte (je ein Sofortbefehl).",
+               {"type": "object", "additionalProperties": False, "required": ["name", "steps"], "properties": {
+                   "name": {"type": "string", "maxLength": 40},
+                   "steps": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string", "maxLength": 120}}}},
+               protocol_create, "R0")
+    register_knowledge_capabilities(registry, DocIndex(knowledge_folder()))
+    rules = RuleService(data_dir / "rules.json", tell, lambda: weather_now(),
+                        online=lambda actor: bool(notifier.listeners.get(actor)))
+    register_rule_capabilities(registry, rules)
+    background.append(rules.run(lambda: datetime.now(tz)))
     container.devices = devices
     container.calendar = calendar
     background.append(run_routines(learner, run_routine, learn))

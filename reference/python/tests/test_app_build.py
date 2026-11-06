@@ -36,7 +36,7 @@ def test_without_api_key_cloud_is_disabled(config_path, monkeypatch):
     # Smart Home (sucht Home Assistant), Timer-Planer und Vorwärmen des lokalen Modells (In-Memory-Bus)
     assert [job.__qualname__ for job in background] == ["SmartHome.run", "AlarmScheduler.run",
                                                          "build.<locals>.warm_up_local_model", "WatchService.run",
-                                                         "ProtocolStore.run_scheduled", "run_routines"]
+                                                         "ProtocolStore.run_scheduled", "RuleService.run", "run_routines"]
     for job in background:
         job.close()
     assert container.router.local.num_ctx == 8192 and container.router.local.keep_alive == "24h"

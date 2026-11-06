@@ -220,6 +220,10 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Sehen | „Was siehst du?“, „Was halte ich in der Hand?“, „Lies mir das Etikett vor“ – ein Einzelbild, Kamera danach aus, Bild bleibt auf dem Rechner | Kamera, Bildmodell (lädt JARVIS selbst) |
 | Anwesenheit | Zahnrad → Allgemein → „Anwesenheit über die Kamera“: JARVIS merkt, wenn Sie nach einer Abwesenheit (10–60 min) zurückkommen, und begrüßt Sie („Willkommen zurück, Sir. Ihr nächster Termin: …“). Nur Bewegung, keine Gesichtserkennung, Bilder bleiben im Browser | Webcam |
 | Protokolle | „Protokoll Gute Nacht“, „Ich gehe schlafen“, „Briefing“ – mehrere Befehle nacheinander mit Abhak-Anzeige; eigene unter Zahnrad → Protokolle | – |
+| Selbsttest, Fehlerbericht | „Prüf dich“ misst Tempo, Grafikkarte, Bausteine und Mikrofon; „⚑ falsch“ unter jeder Antwort | – |
+| Eigenes Wissen | „Such in meinen Notizen nach der Kaution“ – durchsucht Dokumente\Jarvis-Wissen lokal (TXT, MD, DOCX, PDF) | – |
+| Regeln, Sicherung, Anrede | „Wenn es morgen regnet, erinner mich um 8“; „Sicher meine Daten“; „Nenn mich Boss“; „Lern ein Protokoll …“ | – |
+| Fenster, Zwischenablage, Dunkelmodus | „Alle Fenster minimieren“, „Fenster links andocken“, „Lies vor, was ich kopiert habe“, „Dunkelmodus an“ | PC-Agent |
 | Beobachter, Zeitpläne | „Sag Bescheid, wenn der Akku unter 15 Prozent fällt / der Download fertig ist / Handbrake fertig ist“; Protokolle mit Uhrzeit starten von selbst (Zahnrad → Protokolle) | JARVIS-PC läuft |
 | Unterbrechen | „Jarvis, stopp“ mitten im Satz; „Jarvis, …“ unterbricht und fragt gleich Neues | Mikrofon |
 | Raum-Satelliten | Altes Tablet oder Handy als JARVIS in Küche, Bad, Flur: Zahnrad → Geräte → Raum wählen → „Koppeln“ → QR-Code mit dem Tablet scannen. Es hört auf „Jarvis“, bleibt an, und „Licht an“ meint seinen Raum | Tablet mit Chrome (Android) bzw. Safari (iPad), Ladegerät, selbes WLAN |

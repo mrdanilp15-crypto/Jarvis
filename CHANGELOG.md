@@ -1,5 +1,28 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.13.0 – 2026-11-06
+
+### Neu
+- **„⚑ falsch“ und „Das war falsch“:** Unter jeder Antwort ein Knopf, dazu der Sprachbefehl. Er merkt sich Satz, Antwort,
+  Weg (Sofortbefehl oder Modell) und Werkzeuge in `data/feedback.jsonl`. Zahnrad → Allgemein → „Fehlerbericht kopieren“.
+- **Selbsttest:** „Jarvis, prüf dich“ oder „Warum bist du so langsam?“ misst die Antwortzeit des Modells, ob es auf der
+  Grafikkarte läuft, Spracherkennung, Stimme, PC-Steuerung, Smart Home, Internet, Speicherplatz und das Mikrofon – als
+  Ampel mit Hinweis, was zu tun ist.
+- **Wenn-dann-Regeln:** „Wenn es morgen regnet, erinner mich um 8 Uhr an den Schirm“, „Wenn es morgen friert, sag mir
+  Bescheid“, „Wenn ich nach 23 Uhr noch am PC bin, sag es mir“. Einmal täglich geprüft, ohne Sprachmodell.
+  „Welche Regeln habe ich?“ und „Lösche alle Regeln“ verwalten sie.
+- **Eigenes Wissen:** Notizen, Word- und PDF-Dateien im Ordner Dokumente\Jarvis-Wissen (oder `JARVIS_KNOWLEDGE_DIR`) werden
+  lokal durchsucht: „Such in meinen Notizen nach der Kaution“, „Was steht in meinen Unterlagen über …“. Die Antwort sind
+  die Textstellen selbst, nichts Erfundenes.
+- **Sicherung:** „Sicher meine Daten“ oder Zahnrad → „Daten jetzt sichern“ packt Gedächtnis, Protokolle, Beobachter,
+  Regeln, Termine und Fehlerberichte in eine ZIP (Dokumente\Jarvis-Sicherung, die letzten zehn bleiben) – ohne Tokens
+  und Schlüssel.
+- **Anrede:** „Nenn mich Boss“ statt „Sir“; bleibt gespeichert.
+- **Protokolle per Sprache:** „Lern ein Protokoll Feierabend: Alle Lichter aus, Bildschirm sperren“. Nicht verstandene
+  Schritte werden genannt und weggelassen.
+- **PC (Agent 2.13.0):** „Alle Fenster minimieren“ / „Zeig den Desktop“, „Fenster links/rechts andocken“, „Fenster
+  maximieren“, „Wechsel das Fenster“, „Lies mir vor, was ich kopiert habe“, „Dunkelmodus an/aus“, „Wechsle in den
+  Hellmodus“.
 ## Jarvis-Modul 2.12.1 – 2026-11-05
 
 ### Behoben

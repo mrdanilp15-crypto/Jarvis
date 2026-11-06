@@ -27,6 +27,7 @@ from .fastpath import (
     conversation_intent,
     correction_term,
     incomplete_search,
+    normalize_utterance,
     selection_reply,
 )
 from .knowledge import OFFLINE, Lookup, Topic, followup, knowledge_question, lead, mentions, sources_block, vague_query
@@ -139,6 +140,8 @@ class TurnResult:
 
 
 # Protokolle: Schritte, die nicht passen (Dialoge, Kamera), und solche, deren Ergebnis JARVIS vorliest
+WRONG = re.compile(r"^(?:das (?:war|ist) (?:falsch|nicht richtig|quatsch|unsinn|nicht gut)|das stimmt nicht|"
+                   r"melde (?:den|diesen) fehler|merk dir den fehler|fehler melden)$")
 PROTOCOL_UNSUITABLE = {"incomplete", "mail_dialog", "vision", "refuse_password"}
 PROTOCOL_SPOKEN = ("info.", "assistant.", "calendar.list", "timer.list", "mail.list", "system.status", "system.monitor")
 _URL = re.compile(r"https?://[^\s)\]>\"'<]+")
@@ -192,6 +195,7 @@ class Session:
     recent_terms: list[str] = field(default_factory=list)  # zuletzt allein geschriebene Begriffe („ARTERIION“)
     topic: Topic | None = None  # worüber gerade gesprochen wird („Erzähl mir mehr“, „Das ist ein Künstler“)
     mail: MailDraft | None = None  # E-Mail im Entstehen: die nächsten Sätze sind Empfänger, Betreff, Text
+    last_turn: tuple[str, str, str, list[str]] | None = None  # (Satz, Antwort, Weg, Werkzeuge) – für „Das war falsch“
     last_domains: frozenset[str] = frozenset()  # Werkzeugbereiche der letzten Runde (für Anschlusssätze, toolgate.py)
 
 
@@ -284,6 +288,7 @@ class Orchestrator:
         # Wen meint „an Mama“ bzw. „max punkt mustermann at gmx punkt de“? (Kontakte aus der Konfiguration)
         self.recipient_resolver = recipient_resolver or resolve_recipient
         self.protocols: Any = None  # protocols.ProtocolStore – „Protokoll Gute Nacht“
+        self.feedback: Any = None  # feedback.FeedbackStore – „Das war falsch“
         self._night_noted: dict[str, Any] = {}  # actor -> Datum der letzten nächtlichen Bemerkung
 
     # ------------------------------------------------------------------
@@ -311,6 +316,8 @@ class Orchestrator:
             result.text = f"{result.text} {remark}"
         result.text = self.style.finalize(result.text)
         session = self.sessions.get(req.session_id)
+        if session is not None and not result.retracted:
+            session.last_turn = (req.text, result.text, result.route, [a.capability for a in result.actions])
         result.awaiting_reply = bool(session and (session.expect or session.mail or
                                                   (session.offer and session.offer.affirm)))
         if session is not None and result.text and not result.route.startswith("llm"):
@@ -343,6 +350,14 @@ class Orchestrator:
             reply = confirmation_reply(req.text)
             if reply is not None:
                 return await self._resolve_by_voice(pending, req, approve=reply)
+
+        if self.feedback is not None and WRONG.match(normalize_utterance(req.text)):
+            previous = session.last_turn
+            if previous is None:
+                return TurnResult(self.style.feedback_text("nothing"), route="conversation")
+            self.feedback.add(said=previous[0], reply=previous[1], route=previous[2], tools=previous[3],
+                              actor=req.principal.actor)
+            return TurnResult(self.style.feedback_text("saved"), route="conversation")
 
         # Protokoll („Protokoll Gute Nacht“, eigene Auslöser): mehrere Sofortbefehle nacheinander
         if self.protocols is not None and (found := self.protocols.match(req.text)) is not None:

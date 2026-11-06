@@ -409,6 +409,39 @@ paths:
       operationId: deleteClaudeKey
       responses:
         "200": { description: Entfernt }
+  /v1/feedback:
+    get:
+      tags: [Einstellungen]
+      summary: Fehlerbericht als Text („⚑ falsch“ / „Das war falsch“) – nur Erwachsene
+      operationId: readFeedback
+      responses:
+        "200": { description: "Anzahl und lesbarer Bericht" }
+        "403": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [Einstellungen]
+      summary: Eine Antwort als falsch melden (lokal gespeichert)
+      operationId: addFeedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [said]
+              properties:
+                said: { type: string, maxLength: 500 }
+                reply: { type: string, maxLength: 1500 }
+                route: { type: string, maxLength: 60 }
+                tools: { type: array, maxItems: 10, items: { type: string } }
+                note: { type: string, maxLength: 300 }
+      responses:
+        "200": { description: Gespeichert }
+    delete:
+      tags: [Einstellungen]
+      summary: Fehlerberichte löschen
+      operationId: clearFeedback
+      responses:
+        "200": { description: Gelöscht }
   /v1/startup:
     get:
       tags: [System]

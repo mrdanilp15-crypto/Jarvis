@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.12.1"
+STYLE_VERSION = "2.13.0"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -586,6 +586,13 @@ class PlainStyle:
         """Einmal pro Nacht (1–5 Uhr) eine Bemerkung zur Uhrzeit – höflich, trocken, nie belehrend."""
         return ""
 
+    def feedback_text(self, kind: str) -> str:
+        sir = f", {self.address}" if self.address else ""
+        if kind == "nothing":
+            return f"Dazu habe ich noch nichts gesagt{sir}, das ich melden könnte."
+        return (f"Notiert{sir}. Unter Einstellungen → Allgemein → „Fehlerbericht“ können Sie ihn kopieren und weitergeben, "
+                "damit der Fehler behoben wird.")
+
     # -- Start-Sequenz -----------------------------------------------------------------------------------------
     def startup_text(self, now: datetime, problems: list[str], weather: dict[str, Any] | None = None,
                      next_event: dict[str, Any] | None = None, events_today: int | None = None) -> str:
@@ -995,6 +1002,41 @@ class JarvisStyle(PlainStyle):
             return "", self.weather_text(result, slots)
         if capability == "info.news" and isinstance(result, dict):
             return "", self.news_text(result)
+        if capability == "system.selftest" and isinstance(result, dict):
+            from .selftest import summary_text
+
+            return "", summary_text(result.get("checks") or [], self.address)
+        if capability == "system.backup" and isinstance(result, dict):
+            return very_well, f"Gesichert: {result.get('files', 0)} Dateien in {result.get('path', '')}."
+        if capability == "assistant.set_address" and isinstance(result, dict):
+            return very_well, f"Ab jetzt nenne ich Sie {verbatim(result.get('name', ''))}."
+        if capability == "automation.protocol_create" and isinstance(result, dict):
+            text = f"Protokoll „{verbatim(result.get('name', ''))}“ mit {result.get('steps', 0)} Schritten ist angelegt."
+            if result.get("skipped"):
+                text += " Nicht verstanden und weggelassen: " + "; ".join(f"„{verbatim(s)}“" for s in result["skipped"]) + "."
+            return very_well, text + f" Sagen Sie „Protokoll {verbatim(result.get('name', ''))}“, um es zu starten."
+        if capability == "knowledge.search" and isinstance(result, dict):
+            hits = result.get("hits") or []
+            if not result.get("files"):
+                return "", f"In Ihrem Wissensordner liegt noch nichts. Legen Sie Notizen, Word- oder PDF-Dateien in {result.get('folder')}."
+            if not hits:
+                return "", f"Dazu finde ich in Ihren {result['files']} Dateien nichts."
+            first = hits[0]
+            more = f" Weitere Treffer stehen in {', '.join(sorted({h['file'] for h in hits[1:]}))}." if len(hits) > 1 else ""
+            return "", f"In „{verbatim(first['file'])}“ steht: {verbatim(first['text'])}{more}"
+        if capability in ("automation.rule_add",) and isinstance(result, dict):
+            return very_well, f"Ich melde mich, sobald {result.get('describe', 'es soweit ist')}."
+        if capability == "automation.rule_list" and isinstance(result, dict):
+            items = result.get("rules") or []
+            return "", ("Ich melde mich, sobald " + "; sobald ".join(items) + ".") if items else "Es gibt keine Regeln."
+        if capability == "automation.rule_cancel" and isinstance(result, dict):
+            n = result.get("cancelled", 0)
+            return very_well, f"{n} Regeln gelöscht." if n else "Es gab keine Regeln."
+        if capability == "pc.clipboard_read" and isinstance(result, dict):
+            text = (result.get("text") or "").strip()
+            return "", f"In der Zwischenablage steht: {verbatim(text)}" if text else "Die Zwischenablage ist leer."
+        if capability == "pc.theme" and isinstance(result, dict):
+            return very_well, "Der Dunkelmodus ist an." if result.get("theme") == "dark" else "Der Hellmodus ist an."
         if capability == "automation.watch" and isinstance(result, dict):
             return very_well, f"Ich sage Bescheid, sobald {result.get('describe', 'es soweit ist')}."
         if capability == "automation.watch_list" and isinstance(result, dict):

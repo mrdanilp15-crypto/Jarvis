@@ -297,6 +297,15 @@ def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
         name = args["app"].strip()
         return await hub.invoke("close_app", {"app": hub.find_app(name) or name})
 
+    async def window(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        return await hub.invoke("window", {"action": args["action"]})
+
+    async def clipboard_read(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        return await hub.invoke("clipboard_read", {})
+
+    async def theme(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        return await hub.invoke("theme", {"mode": args["mode"]})
+
     async def type_text(args: dict[str, Any], ctx: InvocationContext) -> Any:
         return await hub.invoke("type_text", {"text": args["text"], "enter": bool(args.get("enter"))})
 
@@ -406,6 +415,27 @@ def register_pc_capabilities(registry: ToolRegistry, hub: AgentHub, *,
             "app": {"type": "string", "minLength": 2, "maxLength": 80, "pattern": "^[^<>|\"*?\\\\/\\u0000-\\u001f]+$"},
         }},
         handler=close_app,
+    ))
+    registry.register(Capability(
+        name="pc.window", domain="pc", risk_class="R1", side_effects="reversible", timeout_s=10.0,
+        description="Fenster verwalten (Windows-Tastenkürzel): show_desktop (alles minimieren), snap_left/snap_right "
+                    "(links/rechts andocken), maximize, minimize, switch (zum nächsten Fenster), task_view.",
+        input_schema={"type": "object", "additionalProperties": False, "required": ["action"], "properties": {
+            "action": {"enum": ["show_desktop", "snap_left", "snap_right", "maximize", "minimize", "switch", "task_view"]}}},
+        handler=window,
+    ))
+    registry.register(Capability(
+        name="pc.clipboard_read", domain="pc", risk_class="R1", output_trust="untrusted", timeout_s=10.0,
+        description="Liest den Text der Zwischenablage des PCs (höchstens 400 Zeichen) – zum Vorlesen.",
+        input_schema={"type": "object", "additionalProperties": False, "properties": {}},
+        handler=clipboard_read,
+    ))
+    registry.register(Capability(
+        name="pc.theme", domain="pc", risk_class="R1", side_effects="reversible", timeout_s=10.0,
+        description="Windows-Farbmodus: dark (Dunkelmodus), light (Hellmodus) oder toggle (wechseln).",
+        input_schema={"type": "object", "additionalProperties": False, "required": ["mode"], "properties": {
+            "mode": {"enum": ["dark", "light", "toggle"]}}},
+        handler=theme,
     ))
     registry.register(Capability(
         name="pc.type_text", domain="pc", risk_class="R2", side_effects="reversible", timeout_s=15.0,

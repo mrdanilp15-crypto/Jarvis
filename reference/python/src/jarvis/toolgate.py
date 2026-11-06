@@ -28,12 +28,13 @@ KEYWORDS: dict[str, str] = {
     "pc": r"öffne|öffnen|starte|schließ|beende|datei|ordner|programm|app\b|fenster|bildschirm|tippe|schreib|klick|taste|"
           r"drück|browser|explorer|chrome|edge|spotify|youtube|steam|word|excel|lauter|leiser|stumm|musik|pause|nächster titel|"
           r"download|dokument|foto|bild\b|sperr|zeig",
-    "system": r"akku|prozessor|cpu|arbeitsspeicher|ram\b|festplatte|laufwerk|grafikkarte|gpu|auslastung|systemmonitor|"
+    "system": r"prüf dich|selbsttest|sicherung|backup|daten sichern|akku|prozessor|cpu|arbeitsspeicher|ram\b|festplatte|laufwerk|grafikkarte|gpu|auslastung|systemmonitor|"
               r"neustart|herunterfahren|ausschalten|temp-|papierkorb|aufräumen|updates?",
     "automation": r"beobacht|bescheid|protokoll|routine|automati|wenn .* dann",
     "message": r"durchsage|sag (?:in|im|allen)|richte aus",
     "vision": r"kamera|siehst|sehen|schau mal|was ist das|auf dem bild|halte ich",
     "stocks": r"aktie|börse|kurs\b",
+    "knowledge": r"notiz|dokument|unterlagen|vertrag|meine pdf|mein wissen|rechnung|kaution|miete",
 }
 _COMPILED = {domain: re.compile(pattern) for domain, pattern in KEYWORDS.items()}
 _QUESTION = re.compile(r"\?|^(?:wie|was|wer|wann|wo|warum|wieso|weshalb|welche[rsmn]?|gibt es|kennst du|weißt du)\b")

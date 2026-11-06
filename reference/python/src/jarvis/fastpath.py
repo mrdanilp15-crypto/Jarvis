@@ -491,6 +491,93 @@ def _watch(simple: str) -> FastPathMatch | None:
     return None
 
 
+# Weitere Sofortbefehle: Selbsttest, Sicherung, Anrede, Protokoll per Sprache, eigenes Wissen, Wenn-dann-Regeln, Fenster,
+# Zwischenablage, Dunkelmodus
+SELFTEST = re.compile(r"^(?:prüf|prüfe|check|checke|teste) dich(?: mal)?(?: selbst)?$|^(?:selbsttest|selbstdiagnose|systemcheck|"
+                      r"diagnose)$|^mach (?:einen |mal einen )?(?:selbsttest|systemcheck)$|^warum bist du (?:so )?langsam$|"
+                      r"^bist du (?:kaputt|in ordnung)$|^alles in ordnung bei dir$")
+BACKUP = re.compile(r"^(?:sicher|sichere|speicher|speichere)(?: mir)? (?:meine |die |alle )?(?:daten|einstellungen)(?: ab)?$|"
+                    r"^(?:mach|erstell|erstelle)(?: mir)?(?: eine| ein)? (?:sicherung|backup)$|^backup$|^sicherung$")
+ADDRESS = re.compile(r"^(?:nenn|nenne|ruf|rufe|sprich) (?:mich|mich bitte)\s+(?:ab jetzt\s+)?(?:mit\s+)?(?:bitte\s+)?"
+                     r"(?P<name>[a-zäöüß][a-zäöüß -]{1,19})$")
+_NOT_NAMES = {"an", "zurück", "doch", "nicht", "bitte", "mal", "gleich", "später", "morgen", "heute", "wieder"}
+PROTOCOL_CREATE = re.compile(r"^(?:lern|lerne|leg|lege|erstell|erstelle)\s+(?:mir\s+)?(?:ein\s+)?protokoll\s+(?:an\s+)?"
+                             r"(?P<name>[\wäöüß ]{2,30}?)\s*[:,]\s*(?P<steps>.+)$", re.I)
+KNOWLEDGE = [
+    re.compile(r"^(?:such|suche|schau|schaue|sieh|sieh nach)\s+in\s+(?:meinem?|meinen|den|dem)\s+(?:wissen|notizen|dokumenten|"
+               r"unterlagen)\s+(?:nach\s+)?(?P<q>.+)$"),
+    re.compile(r"^was steht in (?:meinen|den|meinem) (?:notizen|dokumenten|unterlagen|wissen)\s+(?:über|zu|von|bei)\s+(?P<q>.+)$"),
+    re.compile(r"^frag (?:meine|die) (?:dokumente|notizen|unterlagen)[:,]?\s+(?P<q>.+)$"),
+]
+RULE_RAIN = re.compile(r"^wenn es (?:heute |morgen )?(?:regnet|regen gibt|regnen wird)\s*,?\s*(?:sag mir bescheid|erinner mich|"
+                       r"warn mich|meld dich|sag bescheid)(?: um (?P<h>\d{1,2})(?::(?P<m>\d{2}))? uhr)?(?: an den schirm)?$")
+RULE_FROST = re.compile(r"^wenn es (?:heute |morgen )?(?:friert|frost gibt|unter null geht|unter 0 grad (?:geht|fällt))\s*,?\s*"
+                        r"(?:sag mir bescheid|erinner mich|warn mich|meld dich|sag bescheid)(?: um (?P<h>\d{1,2})(?::(?P<m>\d{2}))? uhr)?$")
+RULE_LATE = re.compile(r"^wenn ich nach (?P<h>\d{1,2})(?::(?P<m>\d{2}))? uhr noch (?:am pc|am rechner|hier|wach|online) bin\s*,?\s*"
+                       r"(?:sag|sag es|warn|erinner|meld)(?: es)?(?: mir| mich)?(?: bescheid)?$")
+RULE_LIST = re.compile(r"^welche (?:regeln|wenn dann regeln|wenn-dann-regeln) (?:habe ich|gibt es|laufen)$|^zeig (?:mir )?(?:meine )?regeln$")
+RULE_CANCEL = re.compile(r"^(?:lösche|lösch|beende|entferne) (?:alle )?(?:meine )?(?:regeln|wenn dann regeln|wenn-dann-regeln)$")
+WINDOW = [
+    ("show_desktop", re.compile(r"^(?:zeig(?:e)? (?:mir )?den desktop|alle fenster (?:minimieren|verkleinern)|desktop anzeigen|"
+                                r"schreibtisch anzeigen)$")),
+    ("snap_left", re.compile(r"^(?:das )?fenster (?:nach )?links (?:andocken|anordnen|schieben)$|^(?:dock|docke) (?:das )?fenster links(?: an)?$")),
+    ("snap_right", re.compile(r"^(?:das )?fenster (?:nach )?rechts (?:andocken|anordnen|schieben)$|^(?:dock|docke) (?:das )?fenster rechts(?: an)?$")),
+    ("maximize", re.compile(r"^(?:das )?fenster (?:maximieren|vergrößern|groß machen)$")),
+    ("minimize", re.compile(r"^(?:das )?fenster (?:minimieren|verkleinern)$")),
+    ("switch", re.compile(r"^(?:wechsel|wechsle) (?:das |zum nächsten )?fenster$|^nächstes fenster$")),
+    ("task_view", re.compile(r"^(?:zeig|zeige) (?:mir )?(?:alle )?(?:offenen )?(?:fenster|programme)$|^fensterübersicht$")),
+]
+CLIPBOARD = re.compile(r"^(?:lies|lese) (?:mir )?(?:vor,? )?was ich kopiert habe(?: vor)?$|^was habe ich (?:gerade )?kopiert$|"
+                       r"^(?:lies|lese) (?:mir )?die zwischenablage(?: vor)?$|^was steht in der zwischenablage$")
+THEME = re.compile(r"^(?:(?P<a>dunkelmodus|dark mode|dunklen modus|hellmodus|light mode|hellen modus)(?: (?P<s>an|aus|ein))?|"
+                   r"(?:wechsel|wechsle|schalt|schalte|geh|stell)(?: um)? (?:in den|auf den|auf|zum) (?P<b>dunkelmodus|dunklen modus|"
+                   r"hellmodus|hellen modus|dark mode|light mode))$")
+
+
+def _clock(h: str | None, m: str | None, default: str) -> str:
+    return f"{int(h):02d}:{m or '00'}" if h and int(h) < 24 and (not m or int(m) < 60) else default
+
+
+def _extras(simple: str, raw: str) -> FastPathMatch | None:
+    if SELFTEST.match(simple):
+        return FastPathMatch("system.selftest", {}, 0.95, "selftest")
+    if BACKUP.match(simple):
+        return FastPathMatch("system.backup", {}, 0.95, "backup")
+    if (m := ADDRESS.match(simple)) and m["name"].strip() not in _NOT_NAMES:
+        return FastPathMatch("assistant.set_address", {"name": m["name"].strip().title()}, 0.9, "address")
+    if m := PROTOCOL_CREATE.match(raw):
+        steps = [s.strip(" .") for s in re.split(r"\s*(?:,|;|\bund dann\b|\bdanach\b|\bdann\b|\bund\b)\s*", m["steps"]) if s.strip(" .")]
+        if steps:
+            return FastPathMatch("automation.protocol_create", {"name": m["name"].strip().title(), "steps": steps[:12]},
+                                 0.92, "protocol_create")
+    for pattern in KNOWLEDGE:
+        if m := pattern.match(simple):
+            return FastPathMatch("knowledge.search", {"query": m["q"].strip()}, 0.94, "knowledge", {"query": m["q"].strip()})
+    if m := RULE_RAIN.match(simple):
+        return FastPathMatch("automation.rule_add", {"kind": "rain", **({"at": _clock(m["h"], m["m"], "20:00")} if m["h"] else {})}, 0.94, "rule")
+    if m := RULE_FROST.match(simple):
+        return FastPathMatch("automation.rule_add", {"kind": "frost", **({"at": _clock(m["h"], m["m"], "20:00")} if m["h"] else {})}, 0.94, "rule")
+    if m := RULE_LATE.match(simple):
+        return FastPathMatch("automation.rule_add", {"kind": "late", "at": _clock(m["h"], m["m"], "23:00")}, 0.94, "rule")
+    if RULE_LIST.match(simple):
+        return FastPathMatch("automation.rule_list", {}, 0.95, "rule_list")
+    if RULE_CANCEL.match(simple):
+        return FastPathMatch("automation.rule_cancel", {}, 0.95, "rule_cancel")
+    for action, pattern in WINDOW:
+        if pattern.match(simple):
+            return FastPathMatch("pc.window", {"action": action}, 0.94, "window", {"action": action})
+    if CLIPBOARD.match(simple):
+        return FastPathMatch("pc.clipboard_read", {}, 0.94, "clipboard")
+    if m := THEME.match(simple):
+        word = m["a"] or m["b"]
+        dark = word in ("dunkelmodus", "dark mode", "dunklen modus")
+        if m["s"] == "aus":
+            dark = not dark
+        mode = "dark" if dark else "light"
+        return FastPathMatch("pc.theme", {"mode": mode}, 0.94, "theme", {"mode": mode})
+    return None
+
+
 # Durchsagen: „Sag in der Küche, dass das Essen fertig ist“, „Durchsage an alle: Abfahrt in fünf Minuten“
 _ROOM = r"(?P<room>(?:in|im|ins|an|für)\s+(?:der\s+|dem\s+|die\s+|den\s+|das\s+)?[\wäöüß-]+|an\s+alle|allen|überall)"
 ANNOUNCE = [
@@ -755,7 +842,7 @@ class FastPath:
                 return FastPathMatch("home.set_light", {"on": on}, 0.9, "light_unavailable")
         simple = normalize_utterance(text)
         raw = re.sub(r"\s+", " ", _PREFIX.sub("", text.strip())).strip()
-        if found := _watch(simple):
+        if found := _watch(simple) or _extras(simple, raw):
             return found
         for pattern in ANNOUNCE:
             if (m := pattern.match(raw)) and len(m["text"].split()) >= 2:
