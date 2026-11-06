@@ -1,5 +1,13 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.14.6 – 2026-11-06
+
+### Behoben
+- **Senderwechsel:** „Bayern 3.“, „Für Sender Bayern 3“, „Wechsle zu Bayern 3“, „Schalt auf Antenne Bayern“, „Mach Bayern 3 an“
+  wechseln den Sender direkt (auch als Antwort auf „Welchen Sender möchten Sie hören?“). Vorher behauptete das Sprachmodell
+  „Antenne Bayern 3 wird gestartet“, ohne dass etwas passierte.
+- Behauptet das Sprachmodell, Radio/Musik zu starten, ohne dass ein Befehl lief, wird die Antwort zurückgezogen.
+
 ## Jarvis-Modul 2.14.5 – 2026-11-06
 
 ### Neu

@@ -208,3 +208,33 @@ def test_radio_volume_is_handled_in_the_browser():
 
     js = (Path(jarvis.__file__).parent / "web" / "jarvis.js").read_text(encoding="utf-8")
     assert "radio?.command(text)" in js and 'aria-label", "Lautstärke"' in js  # Regler und „Lauter/Leiser“ ohne Server
+
+
+@pytest.mark.parametrize("text, station", [
+    ("Bayern 3.", "bayern 3"), ("Für Sender Bayern 3.", "bayern 3"), ("Wechsle zu Bayern 3", "bayern 3"),
+    ("Schalt auf Antenne Bayern", "antenne bayern"), ("Mach Bayern 3 an", "bayern 3"), ("Radio Antenne Bayern", "antenne bayern"),
+])
+def test_station_names_work_as_answers(text, station):
+    found = FastPath({}).match(text)
+    assert found.capability == "media.radio" and found.arguments == {"station": station}
+
+
+@pytest.mark.parametrize("text", ["Mach das Licht an", "Mach Musik an", "Schalt auf Kanal 5", "Bayern gewinnt heute", "Wechsle das Thema"])
+def test_other_phrases_are_not_stations(text):
+    found = FastPath({}).match(text)
+    assert found is None or found.capability != "media.radio"
+
+
+def test_claimed_playback_without_action_is_retracted(orchestrator, situation):
+    from jarvis.orchestrator import TurnRequest
+    from jarvis.style import JarvisStyle
+    from jarvis.testing import say
+
+    from conftest import ALEX
+
+    orchestrator.style = JarvisStyle()
+    llm = ScriptedProvider([say("Antenne Bayern 3 wird gestartet, Sir.")])
+    result = asyncio.run(orchestrator.handle_turn(TurnRequest("Erzähl mir was", "k2", ALEX), provider=llm, situation=situation))
+    assert result.retracted and "gestartet" not in result.text
+    llm = ScriptedProvider([say("Der Timer wird gestartet, Sir.")])
+    assert not asyncio.run(orchestrator.handle_turn(TurnRequest("Erzähl mir was", "k3", ALEX), provider=llm, situation=situation)).retracted

@@ -142,6 +142,10 @@ class TurnResult:
 # Protokolle: Schritte, die nicht passen (Dialoge, Kamera), und solche, deren Ergebnis JARVIS vorliest
 FAKE_CALL = re.compile(r"tool[- ]?aufruf|tool_call|function_call|\b(?:home|pc|media|info|system|timer|reminder|calendar|mail|memory|"
                        r"lists|automation|web|assistant|knowledge|message)\.[a-z_]{3,}\b", re.I)
+# „Antenne Bayern 3 wird gestartet“, obwohl nichts gestartet wurde – nur Radio/Musik, damit normale Sätze unberührt bleiben
+CLAIMS_PLAYING = re.compile(r"(?=.*\b(?:sender|radio|antenne|musik|bayern|song|lied)\b)(?=.*(?:\b(?:wird|wurde|ist) (?:jetzt |nun )?"
+                            r"(?:gestartet|abgespielt|gespielt|eingeschaltet|aktiv)\b|\bläuft (?:jetzt|nun)\b|"
+                            r"\bich (?:spiele|starte) (?:jetzt |nun )?(?:den |das |die )?\w))", re.I | re.S)
 WRONG = re.compile(r"^(?:das (?:war|ist) (?:falsch|nicht richtig|quatsch|unsinn|nicht gut)|das stimmt nicht|"
                    r"melde (?:den|diesen) fehler|merk dir den fehler|fehler melden)$")
 PROTOCOL_UNSUITABLE = {"incomplete", "mail_dialog", "vision", "refuse_password"}
@@ -538,7 +542,7 @@ class Orchestrator:
             session.transcript.append(response.assistant_turn)
             if not response.tool_calls:
                 result.text = response.text
-                if not result.actions and FAKE_CALL.search(result.text):  # „(Tool-Aufruf: media.play_radio) … läuft jetzt“
+                if not result.actions and (FAKE_CALL.search(result.text) or CLAIMS_PLAYING.search(result.text)):  # „(Tool-Aufruf: media.play_radio) … läuft jetzt“
                     log.warning("Modellantwort mit erfundenem Werkzeugaufruf verworfen", extra={"correlation_id": req.correlation_id})
                     result.text, result.retracted = self.style.system_text("fake_call"), True
                     session.transcript[-1] = AssistantTurn(text=result.text, tool_calls=[], provider="system")

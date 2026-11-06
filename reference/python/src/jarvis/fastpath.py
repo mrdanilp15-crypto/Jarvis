@@ -569,8 +569,9 @@ RADIO_BROWSER = re.compile(r"^(?:spiel|spiele|mach|mache|starte|start|hör|höre
 # „Spiel Bob Marley“ meint Musik)
 STATIONS = (r"(?:(?:rock )?antenne(?: \w+)?|1 ?live|eins ?live|bayern ?[1-4]|swr ?[1-4]|wdr ?[1-5]|ndr ?[1-3]|deutschlandfunk(?: \w+)?|dlf|"
             r"sunshine live|charivari|radio ffn|hitradio(?: \w+)?|ffh|n-?joy|big fm|planet radio|klassik radio|egofm)")
-RADIO_STATION = re.compile(rf"^(?:spiel|spiele|hör|höre|starte|start|schalt|schalte)\s+(?:mir\s+)?(?:den sender\s+)?(?P<station>{STATIONS})"
-                           r"(?:\s+(?:an|ein|ab|hier|am pc|im browser|auf dem pc))?$")
+RADIO_STATION = re.compile(rf"^(?:(?:spiel|spiele|hör|höre|starte|start|schalt|schalte|wechsel|wechsle|mach|mache)\s+)?(?:(?:mir|bitte)\s+)?"
+                           rf"(?:(?:auf|zu|zum|für)\s+)?(?:(?:den\s+)?sender\s+|das\s+radio\s+|radio\s+)?(?P<station>{STATIONS})"
+                           r"(?:\s+(?:an|ein|ab|hier|am pc|im browser|auf dem pc))?$")  # auch nur „Bayern 3.“ als Antwort auf „Welchen Sender?“
 RADIO_STOP = re.compile(r"^(?:radio|musik) (?:aus|stopp|stoppen|beenden)$|^(?:schalte|schalt|mach) (?:das )?radio aus$|^stopp(?:e)? (?:das )?radio$")
 FOCUS = re.compile(r"^(?:(?:starte|start) (?:einen )?)?(?:fokus(?:modus)?|konzentration)(?: für| mit)? ?(?P<n>\d{1,3}) ?minuten?$|^pomodoro(?: starten)?$")
 
