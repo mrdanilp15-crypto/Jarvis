@@ -1,0 +1,63 @@
+{
+  "id": "org.example.weather",
+  "name": "Wetter (Open-Meteo)",
+  "version": "1.0.0",
+  "description": "Aktuelles Wetter und Vorhersage über die freie Open-Meteo-API – ohne API-Schlüssel.",
+  "author": "JARVIS Referenz",
+  "license": "MIT",
+  "jarvis_api": ">=1.0 <2.0",
+  "runtime": {
+    "type": "node",
+    "command": ["node", "server.mjs"],
+    "transport": "http",
+    "port": 7310
+  },
+  "capabilities": [
+    {
+      "name": "info.weather",
+      "domain": "info",
+      "description": "Liefert aktuelles Wetter (Temperatur, Wind, Niederschlag) und eine Vorhersage für die nächsten Stunden an einem Ort (Koordinaten; Standard: Zuhause).",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
+          "longitude": { "type": "number", "minimum": -180, "maximum": 180 },
+          "hours": { "type": "integer", "minimum": 1, "maximum": 48, "default": 12 }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["current", "hourly"],
+        "properties": {
+          "current": { "type": "object" },
+          "hourly": { "type": "array" },
+          "rain_expected_within_min": { "type": ["integer", "null"] }
+        }
+      },
+      "risk_class": "R0",
+      "side_effects": "none",
+      "output_trust": "trusted",
+      "timeout_ms": 5000,
+      "idempotent": true
+    }
+  ],
+  "events": {
+    "subscribe": [],
+    "publish": ["jarvis.info.weather_alert"]
+  },
+  "permissions": {
+    "network": { "allow_hosts": ["api.open-meteo.com"] },
+    "memory": "none",
+    "user_data": "none"
+  },
+  "config_schema": {
+    "type": "object",
+    "required": ["home_latitude", "home_longitude"],
+    "properties": {
+      "home_latitude": { "type": "number" },
+      "home_longitude": { "type": "number" },
+      "alert_poll_minutes": { "type": "integer", "minimum": 5, "default": 15 }
+    }
+  }
+}

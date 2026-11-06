@@ -1,0 +1,6 @@
+{
+  "action_id": "act_Q2w8Er5T",
+  "capability": "home.lock",
+  "status": "pending_confirmation",
+  "decision": { "effect": "confirm", "risk_class": "R3", "method": "app_biometric", "reason": "R3 erfordert immer eine starke Bestätigung", "rule_id": "risk.R3" }
+}

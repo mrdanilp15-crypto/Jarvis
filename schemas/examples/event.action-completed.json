@@ -1,0 +1,24 @@
+{
+  "specversion": "1.0",
+  "id": "evt_01J8Z3K5A1B2C3D4E5F6G7H8J9",
+  "source": "/core/orchestrator",
+  "type": "jarvis.action.completed",
+  "subject": "light.kueche",
+  "time": "2026-09-26T19:42:05.412Z",
+  "correlationid": "cor_4b9e2d",
+  "causationid": "evt_01J8Z3K4QW5V6X7Y8Z9A0B1C2D",
+  "actor": "user:alex",
+  "trust": "household",
+  "data": {
+    "action_id": "act_7Hk2Lm9Q",
+    "capability": "home.set_light",
+    "status": "succeeded",
+    "decision": { "effect": "allow", "risk_class": "R1", "rule_id": "role.adult.default" },
+    "result": { "entity_ids": ["light.kueche"], "state": "on", "brightness_pct": 40 },
+    "verification": { "verified": true, "expected": { "brightness_pct": 40 }, "observed": { "brightness_pct": 39 } },
+    "undo": { "capability": "home.set_light", "arguments": { "entity_ids": ["light.kueche"], "on": false } },
+    "started_at": "2026-09-26T19:42:05.301Z",
+    "finished_at": "2026-09-26T19:42:05.410Z",
+    "duration_ms": 109
+  }
+}

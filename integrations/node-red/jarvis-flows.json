@@ -1,0 +1,333 @@
+[
+  {
+    "id": "tab_jarvis",
+    "type": "tab",
+    "label": "JARVIS",
+    "disabled": false,
+    "info": "Beispiel-Flows für die JARVIS-Integration (siehe docs/06-integrationsplan.md)."
+  },
+  {
+    "id": "tls_jarvis",
+    "type": "tls-config",
+    "name": "JARVIS CA",
+    "cert": "",
+    "key": "",
+    "ca": "/data/certs/ca.crt",
+    "certname": "",
+    "keyname": "",
+    "caname": "",
+    "servername": "mosquitto",
+    "verifyservercert": true,
+    "alpnprotocol": ""
+  },
+  {
+    "id": "broker_jarvis",
+    "type": "mqtt-broker",
+    "name": "Mosquitto (JARVIS)",
+    "broker": "mosquitto",
+    "port": "8883",
+    "tls": "tls_jarvis",
+    "clientid": "nodered",
+    "autoConnect": true,
+    "usetls": true,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "birthTopic": "",
+    "closeTopic": "",
+    "willTopic": "",
+    "sessionExpiry": ""
+  },
+  {
+    "id": "c_actions",
+    "type": "comment",
+    "z": "tab_jarvis",
+    "name": "1) Abgeschlossene JARVIS-Aktionen mitschreiben",
+    "info": "",
+    "x": 230,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "in_actions",
+    "type": "mqtt in",
+    "z": "tab_jarvis",
+    "name": "action.completed",
+    "topic": "jarvis/v1/event/action.completed",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "broker_jarvis",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 160,
+    "y": 80,
+    "wires": [
+      [
+        "fn_summary"
+      ]
+    ]
+  },
+  {
+    "id": "fn_summary",
+    "type": "function",
+    "z": "tab_jarvis",
+    "name": "Kurzfassung",
+    "func": "const d = msg.payload.data;\nmsg.payload = `${d.capability} -> ${d.status} (${d.decision.risk_class}) von ${msg.payload.actor}`;\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 380,
+    "y": 80,
+    "wires": [
+      [
+        "dbg_actions"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_actions",
+    "type": "debug",
+    "z": "tab_jarvis",
+    "name": "Aktionen",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "payload",
+    "statusType": "auto",
+    "x": 580,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "c_washer",
+    "type": "comment",
+    "z": "tab_jarvis",
+    "name": "2) Waschmaschine fertig -> Event an JARVIS (Proaktiv-Engine)",
+    "info": "",
+    "x": 270,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "in_washer",
+    "type": "mqtt in",
+    "z": "tab_jarvis",
+    "name": "Steckdose Waschmaschine",
+    "topic": "zigbee2mqtt/steckdose_waschmaschine",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "broker_jarvis",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 170,
+    "y": 200,
+    "wires": [
+      [
+        "fn_washer"
+      ]
+    ]
+  },
+  {
+    "id": "fn_washer",
+    "type": "function",
+    "z": "tab_jarvis",
+    "name": "Leistungsabfall erkennen",
+    "func": "// Fertig = Leistung fällt nach Laufphase (> 50 W) für eine Messung unter 3 W\nconst running = context.get('running') || false;\nconst power = Number(msg.payload.power);\nif (power > 50) { context.set('running', true); return null; }\nif (!running || power >= 3) return null;\ncontext.set('running', false);\nmsg.url = env.get('JARVIS_CORE_URL') + '/v1/events';\nmsg.headers = { authorization: 'Bearer ' + env.get('JARVIS_TOKEN'), 'content-type': 'application/json' };\nmsg.payload = {\n  specversion: '1.0', source: '/nodered/waschmaschine', type: 'jarvis.home.appliance_finished',\n  subject: 'switch.steckdose_waschmaschine', data: { appliance: 'waschmaschine' }\n};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 410,
+    "y": 200,
+    "wires": [
+      [
+        "http_event"
+      ]
+    ]
+  },
+  {
+    "id": "http_event",
+    "type": "http request",
+    "z": "tab_jarvis",
+    "name": "POST /v1/events",
+    "method": "POST",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 630,
+    "y": 200,
+    "wires": [
+      [
+        "dbg_event"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_event",
+    "type": "debug",
+    "z": "tab_jarvis",
+    "name": "Antwort",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "statusCode",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 820,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "c_cmd",
+    "type": "comment",
+    "z": "tab_jarvis",
+    "name": "3) Kommandos von JARVIS (Capability garden.irrigation)",
+    "info": "",
+    "x": 250,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "in_cmd",
+    "type": "mqtt in",
+    "z": "tab_jarvis",
+    "name": "jarvis/v1/cmd/nodered",
+    "topic": "jarvis/v1/cmd/nodered",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "broker_jarvis",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 160,
+    "y": 320,
+    "wires": [
+      [
+        "sw_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "sw_cmd",
+    "type": "switch",
+    "z": "tab_jarvis",
+    "name": "Kommando",
+    "property": "payload.command",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "eq",
+        "v": "irrigation_start",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "irrigation_stop",
+        "vt": "str"
+      },
+      {
+        "t": "else"
+      }
+    ],
+    "checkall": "false",
+    "repair": false,
+    "outputs": 3,
+    "x": 360,
+    "y": 320,
+    "wires": [
+      [
+        "fn_valve"
+      ],
+      [
+        "fn_valve"
+      ],
+      [
+        "fn_ack"
+      ]
+    ]
+  },
+  {
+    "id": "fn_valve",
+    "type": "function",
+    "z": "tab_jarvis",
+    "name": "Ventil setzen + Quittung",
+    "func": "const start = msg.payload.command === 'irrigation_start';\nconst minutes = Math.min(Number(msg.payload.minutes || 10), 30); // Sicherheitsgrenze\nconst valve = { topic: 'zigbee2mqtt/ventil_garten/set',\n  payload: start ? { state: 'ON', on_time: minutes * 60 } : { state: 'OFF' } };\nconst ack = { topic: 'jarvis/v1/state/nodered/ack',\n  payload: { request_id: msg.payload.request_id, ok: true, command: msg.payload.command } };\nreturn [valve, ack];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 580,
+    "y": 300,
+    "wires": [
+      [
+        "out_mqtt"
+      ],
+      [
+        "out_mqtt"
+      ]
+    ]
+  },
+  {
+    "id": "fn_ack",
+    "type": "function",
+    "z": "tab_jarvis",
+    "name": "Unbekanntes Kommando",
+    "func": "msg.topic = 'jarvis/v1/state/nodered/ack';\nmsg.payload = { request_id: msg.payload.request_id, ok: false, error: 'unknown_command' };\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 580,
+    "y": 360,
+    "wires": [
+      [
+        "out_mqtt"
+      ]
+    ]
+  },
+  {
+    "id": "out_mqtt",
+    "type": "mqtt out",
+    "z": "tab_jarvis",
+    "name": "MQTT",
+    "topic": "",
+    "qos": "1",
+    "retain": "false",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "broker_jarvis",
+    "x": 790,
+    "y": 320,
+    "wires": []
+  }
+]

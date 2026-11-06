@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.jarvis.local/v1/action-result.schema.json",
+  "title": "ActionResult",
+  "description": "Status und Ergebnis einer Aktion inklusive Policy-Entscheidung und Verifikation.",
+  "type": "object",
+  "required": ["action_id", "capability", "status", "decision"],
+  "properties": {
+    "action_id": { "type": "string", "pattern": "^act_[A-Za-z0-9]{6,40}$" },
+    "capability": { "type": "string" },
+    "status": {
+      "enum": ["pending_confirmation", "approved", "rejected", "denied", "executing", "succeeded", "failed", "cancelled", "timed_out", "compensated"]
+    },
+    "decision": {
+      "type": "object",
+      "required": ["effect", "risk_class"],
+      "properties": {
+        "effect": { "enum": ["allow", "confirm", "deny"] },
+        "risk_class": { "enum": ["R0", "R1", "R2", "R3", "R4"] },
+        "reason": { "type": "string" },
+        "rule_id": { "type": "string" },
+        "method": { "enum": ["none", "voice", "app", "app_biometric", "pin"] }
+      },
+      "additionalProperties": false
+    },
+    "result": { "description": "Capability-spezifisches Ergebnis." },
+    "error": { "$ref": "error.schema.json" },
+    "verification": {
+      "type": "object",
+      "required": ["verified"],
+      "properties": {
+        "verified": { "type": "boolean" },
+        "expected": {},
+        "observed": {},
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "undo": {
+      "type": "object",
+      "description": "Kompensationsaktion für R1/R2 (\"Mach das rückgängig\").",
+      "required": ["capability", "arguments"],
+      "properties": {
+        "capability": { "type": "string" },
+        "arguments": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "duration_ms": { "type": "integer", "minimum": 0 }
+  },
+  "additionalProperties": false
+}

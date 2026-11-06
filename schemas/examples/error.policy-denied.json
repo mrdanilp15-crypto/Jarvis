@@ -1,0 +1,12 @@
+{
+  "type": "https://docs.jarvis.local/errors/policy-denied",
+  "title": "Aktion nicht erlaubt",
+  "status": 403,
+  "detail": "Capability home.alarm mit state=disarmed ist für Trust-Stufe guest nicht zulässig.",
+  "instance": "/v1/actions/act_M4n5B6v7",
+  "code": "JRV-POL-002",
+  "category": "policy",
+  "retryable": false,
+  "correlation_id": "cor_77aa",
+  "user_message": "Das darf ich im Gastmodus leider nicht tun."
+}

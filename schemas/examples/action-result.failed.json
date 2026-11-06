@@ -1,0 +1,21 @@
+{
+  "action_id": "act_Z9y8X7w6",
+  "capability": "home.set_climate",
+  "status": "failed",
+  "decision": { "effect": "allow", "risk_class": "R2", "rule_id": "role.adult.default" },
+  "error": {
+    "type": "https://docs.jarvis.local/errors/device-unavailable",
+    "title": "Gerät nicht erreichbar",
+    "status": 503,
+    "detail": "climate.buero ist seit 14 Minuten 'unavailable' (Zigbee-Router offline).",
+    "code": "JRV-DEV-001",
+    "category": "device",
+    "retryable": true,
+    "retry_after_ms": 30000,
+    "correlation_id": "cor_c33d",
+    "user_message": "Das Thermostat im Büro antwortet gerade nicht."
+  },
+  "started_at": "2026-09-26T06:30:00Z",
+  "finished_at": "2026-09-26T06:30:05Z",
+  "duration_ms": 5012
+}

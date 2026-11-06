@@ -1,0 +1,10 @@
+# NVIDIA-Grafikkarte für Ollama – vielfach schnellere Antworten.
+# start.sh aktiviert diese Datei automatisch, wenn es eine NVIDIA-Karte findet (COMPOSE_FILE in deploy/.env).
+# Voraussetzung: aktueller NVIDIA-Treiber; Windows: Docker Desktop mit WSL-2-Backend;
+# Linux: NVIDIA Container Toolkit. Manuell: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]

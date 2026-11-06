@@ -1,0 +1,100 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  artifacts:
+    name: Schemas, Beispiele, Konfiguration, OpenAPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema pyyaml openapi-spec-validator
+      - run: python tools/validate.py
+
+  python:
+    name: Python-Referenz (Tests + Demo)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: reference/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+      - run: python -m jarvis.demo
+
+  node:
+    name: Node-Referenz
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: reference/node
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: |
+          for f in jarvis-client.mjs webhook-relay.mjs mqtt-device-adapter.mjs plugin-weather/server.mjs; do
+            node --check "$f"
+          done
+          node --input-type=module --check < ../web/voice-widget.js
+          node --check ../python/src/jarvis/web/jarvis.js
+      - run: node --test
+
+  database:
+    name: Datenbankschema (PostgreSQL 16 + pgvector)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: jarvis
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: ci
+      PGDATABASE: jarvis
+    steps:
+      - uses: actions/checkout@v4
+      - run: psql -v ON_ERROR_STOP=1 -f db/schema.sql
+      - name: Audit-Hash-Kette prüfen
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "INSERT INTO jarvis.audit_log (actor, event, details) VALUES ('user:ci', 'policy.decision', '{}'), ('user:ci', 'action.executed', '{}');"
+          psql -v ON_ERROR_STOP=1 -tAc "SELECT jarvis.audit_log_verify() IS NULL" | grep -qx t
+
+  compose:
+    name: docker-compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: POSTGRES_PASSWORD=ci docker compose -f deploy/docker-compose.yml config -q
+      - run: POSTGRES_PASSWORD=ci docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.gpu.yml config -q
+      - run: bash -n deploy/start.sh
+      - name: Windows-Skripte (Autostart) parsen
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in Get-ChildItem deploy/windows/*.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            foreach ($e in $errors) { Write-Host "::error file=$($file.Name)::$($e.Message)"; $failed = $true }
+            $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+            if ($bytes[0] -ne 0xEF) { Write-Host "::error file=$($file.Name)::UTF-8-BOM fehlt (PowerShell 5.1 liest Umlaute sonst falsch)"; $failed = $true }
+          }
+          if ($failed) { exit 1 }

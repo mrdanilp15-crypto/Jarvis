@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.jarvis.local/v1/persona.schema.json",
+  "title": "Persona",
+  "description": "Konfigurierbare Persönlichkeit. Beeinflusst ausschließlich Ton, Stil und Stimme – niemals Policy-Entscheidungen oder den Inhalt von Warnungen.",
+  "type": "object",
+  "required": ["id", "name", "enabled", "language", "style", "voice"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+    "name": { "type": "string" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$", "description": "Version des Stil-Moduls (SemVer)." },
+    "enabled": { "type": "boolean" },
+    "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+    "address": {
+      "type": "object",
+      "description": "Anrede des Nutzers.",
+      "properties": {
+        "default": { "type": "string", "description": "z. B. Sir, Ma'am, oder leer für Vornamen." },
+        "per_user": { "type": "object", "additionalProperties": { "type": "string" } },
+        "formal_pronoun": { "type": "boolean", "description": "Deutsch: Siezen (true) oder Duzen (false)." },
+        "frequency": { "enum": ["never", "sparse", "often"], "default": "sparse" }
+      },
+      "additionalProperties": false
+    },
+    "style": {
+      "type": "object",
+      "required": ["formality", "verbosity", "humor", "warmth"],
+      "properties": {
+        "formality": { "type": "number", "minimum": 0, "maximum": 1 },
+        "verbosity": { "type": "number", "minimum": 0, "maximum": 1, "description": "0 = knapp, 1 = ausführlich." },
+        "humor": { "type": "number", "minimum": 0, "maximum": 1, "description": "0 = keiner, 0.3 = subtil, 1 = häufig." },
+        "warmth": { "type": "number", "minimum": 0, "maximum": 1 },
+        "proactivity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "british_register": { "type": "boolean" },
+        "emoji": { "type": "boolean" },
+        "max_status_words": { "type": "integer", "minimum": 1, "maximum": 40 },
+        "max_voice_sentences": { "type": "integer", "minimum": 1, "maximum": 10 }
+      },
+      "additionalProperties": false
+    },
+    "lexicon": {
+      "type": "object",
+      "properties": {
+        "acknowledgements": { "type": "array", "items": { "type": "string" } },
+        "preferred_phrases": { "type": "array", "items": { "type": "string" } },
+        "avoid_phrases": { "type": "array", "items": { "type": "string" } },
+        "mandatory_phrases": { "type": "array", "items": { "type": "string" }, "description": "Pflicht-Bausteine der Stil-Engine." },
+        "replace": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Zusätzliche Ersetzungen für den Freitext-Filter (Wort -> Ersatz)." }
+      },
+      "additionalProperties": false
+    },
+    "humor_rules": {
+      "type": "object",
+      "properties": {
+        "never_during": { "type": "array", "items": { "enum": ["warning", "error", "security", "health", "grief", "confirmation"] } },
+        "max_per_hour": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "voice": {
+      "type": "object",
+      "required": ["engine", "voice_id"],
+      "properties": {
+        "engine": { "enum": ["piper", "xtts", "cloud"] },
+        "voice_id": { "type": "string" },
+        "speaking_rate": { "type": "number", "minimum": 0.5, "maximum": 2 },
+        "pitch_semitones": { "type": "number", "minimum": -12, "maximum": 12 },
+        "sentence_pause_ms": { "type": "integer", "minimum": 0, "maximum": 2000 },
+        "volume_night": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "system_prompt_fragment": { "type": "string", "description": "Wird hinter den Sicherheitsregeln in den Systemprompt eingefügt." }
+  },
+  "additionalProperties": false
+}

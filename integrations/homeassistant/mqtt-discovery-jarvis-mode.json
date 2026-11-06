@@ -1,0 +1,19 @@
+{
+  "name": "JARVIS Modus",
+  "unique_id": "jarvis_mode_select",
+  "command_topic": "jarvis/v1/cmd/core/mode",
+  "state_topic": "jarvis/v1/state/core/mode",
+  "options": ["normal", "night", "away", "guest", "party", "vacation"],
+  "availability_topic": "jarvis/v1/status",
+  "availability_template": "{{ value_json.state }}",
+  "payload_available": "online",
+  "payload_not_available": "offline",
+  "icon": "mdi:robot",
+  "device": {
+    "identifiers": ["jarvis_core"],
+    "name": "JARVIS",
+    "manufacturer": "JARVIS Referenz",
+    "model": "jarvis-core",
+    "sw_version": "0.1.0"
+  }
+}

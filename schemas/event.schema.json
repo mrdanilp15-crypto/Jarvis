@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.jarvis.local/v1/event.schema.json",
+  "title": "JarvisEvent",
+  "description": "CloudEvents-1.0-kompatibler Event-Umschlag mit JARVIS-Erweiterungsattributen. Alle Eingaben, Zustandsänderungen und Ergebnisse laufen in diesem Format über den Event-Bus.",
+  "type": "object",
+  "required": ["specversion", "id", "source", "type", "time", "trust", "data"],
+  "properties": {
+    "specversion": { "const": "1.0" },
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Eindeutige Event-ID (z. B. ULID mit Präfix evt_)." },
+    "source": { "type": "string", "minLength": 1, "description": "URI-Referenz der erzeugenden Komponente, z. B. /voice/satellite/wohnzimmer oder /connector/homeassistant." },
+    "type": {
+      "type": "string",
+      "pattern": "^jarvis(\\.[a-z][a-z0-9_]*){2,4}$",
+      "description": "Event-Typ im Format jarvis.<bereich>.<ereignis>, z. B. jarvis.input.utterance."
+    },
+    "subject": { "type": "string", "description": "Betroffenes Objekt, z. B. light.kueche oder conversation/c_123." },
+    "time": { "type": "string", "format": "date-time" },
+    "datacontenttype": { "type": "string", "default": "application/json" },
+    "dataschema": { "type": "string", "format": "uri" },
+    "correlationid": { "type": "string", "description": "Verbindet alle Events eines Vorgangs (Turn, Automationslauf)." },
+    "causationid": { "type": "string", "description": "ID des Events, das dieses Event direkt ausgelöst hat." },
+    "actor": {
+      "type": "string",
+      "pattern": "^(user|automation|system|plugin|service|guest):[A-Za-z0-9_.@-]+$",
+      "description": "Wer handelt, z. B. user:alex, automation:aut_42, plugin:org.example.weather."
+    },
+    "trust": {
+      "enum": ["system", "trusted_user", "household", "guest", "external_untrusted"],
+      "description": "Vertrauensstufe der Quelle; Ausgangspunkt jeder Policy-Entscheidung."
+    },
+    "priority": { "enum": ["low", "normal", "high", "critical"], "default": "normal" },
+    "expiresat": { "type": "string", "format": "date-time", "description": "Nach diesem Zeitpunkt darf das Event verworfen werden." },
+    "data": {}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "jarvis.input.utterance" } } },
+      "then": { "properties": { "data": { "$ref": "#/$defs/UtteranceData" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "jarvis.input.text" } } },
+      "then": { "properties": { "data": { "$ref": "#/$defs/TextInputData" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "jarvis.sensor.state_changed" } } },
+      "then": { "properties": { "data": { "$ref": "#/$defs/StateChangedData" } } }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["jarvis.action.completed", "jarvis.action.failed"] } } },
+      "then": { "properties": { "data": { "$ref": "action-result.schema.json" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "jarvis.proactive.suggestion" } } },
+      "then": { "properties": { "data": { "$ref": "#/$defs/SuggestionData" } } }
+    }
+  ],
+  "$defs": {
+    "UtteranceData": {
+      "type": "object",
+      "required": ["text", "language", "session_id"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+        "session_id": { "type": "string" },
+        "stt_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "speaker": {
+          "type": "object",
+          "required": ["user_id", "confidence"],
+          "properties": {
+            "user_id": { "type": ["string", "null"] },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "device_id": { "type": "string" },
+        "area": { "type": "string" },
+        "audio_ref": { "type": "string", "description": "Optionale Referenz auf gespeichertes Audio (nur bei aktivierter Aufzeichnung)." }
+      },
+      "additionalProperties": false
+    },
+    "TextInputData": {
+      "type": "object",
+      "required": ["text", "session_id"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 32000 },
+        "session_id": { "type": "string" },
+        "language": { "type": "string" },
+        "channel": { "enum": ["app", "desktop", "web", "telegram", "matrix", "signal", "api"] },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["file_id", "media_type"],
+            "properties": {
+              "file_id": { "type": "string" },
+              "media_type": { "type": "string" },
+              "name": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "StateChangedData": {
+      "type": "object",
+      "required": ["entity_id", "new_state"],
+      "properties": {
+        "entity_id": { "type": "string", "pattern": "^[a-z_]+\\.[a-z0-9_]+$" },
+        "old_state": { "$ref": "#/$defs/EntityState" },
+        "new_state": { "$ref": "#/$defs/EntityState" },
+        "area": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "EntityState": {
+      "type": ["object", "null"],
+      "required": ["state"],
+      "properties": {
+        "state": { "type": "string" },
+        "attributes": { "type": "object" },
+        "last_changed": { "type": "string", "format": "date-time" }
+      }
+    },
+    "SuggestionData": {
+      "type": "object",
+      "required": ["suggestion_id", "kind", "message", "score"],
+      "properties": {
+        "suggestion_id": { "type": "string" },
+        "kind": { "enum": ["reminder", "warning", "optimization", "automation", "information"] },
+        "message": { "type": "string" },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "proposed_action": { "$ref": "action.schema.json" },
+        "channels": { "type": "array", "items": { "enum": ["voice", "push", "dashboard", "text"] } },
+        "target_user": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

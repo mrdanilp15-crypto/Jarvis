@@ -1,0 +1,13 @@
+{
+  "id": "mem_8Tr3Yu1P",
+  "user_id": null,
+  "kind": "episodic",
+  "content": "Am 24.09.2026 wurde die Heizungspumpe im Keller getauscht; der Techniker empfahl, den Druck nach zwei Wochen zu prüfen.",
+  "importance": 0.8,
+  "confidence": 1.0,
+  "sensitivity": "public",
+  "source": { "type": "conversation", "ref": "conversation/c_812#turn-3" },
+  "tags": ["heizung", "wartung"],
+  "created_at": "2026-09-24T17:05:00Z",
+  "access_count": 0
+}
