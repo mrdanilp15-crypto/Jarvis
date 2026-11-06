@@ -534,11 +534,128 @@ THEME = re.compile(r"^(?:(?P<a>dunkelmodus|dark mode|dunklen modus|hellmodus|lig
                    r"hellmodus|hellen modus|dark mode|light mode))$")
 
 
+# Listen, Rechnen, Einheiten, Währung, Radio im Browser, Fokus
+_LISTS = r"(?:einkaufsliste|einkaufszettel|liste|todo-liste|to-do-liste|todoliste|todo liste|aufgabenliste|aufgaben)"
+_DET = r"(?:die\s+|der\s+|meine\s+|meiner\s+|meinen\s+|deine\s+)?"
+LIST_ADD = [
+    re.compile(rf"^(?:setz|setze|schreib|schreibe|pack|packe|tu|tue|füg|füge|nimm)\s+(?P<items>.+?)\s+(?:auf|in|zu|zur)\s+{_DET}"
+               rf"(?P<list>{_LISTS})(?:\s+hinzu)?$"),
+    re.compile(r"^(?:neue aufgabe|aufgabe|to-do|todo)[:,]?\s+(?P<items>.+)$"),
+    re.compile(r"^(?:ich muss|wir müssen) (?:noch )?(?P<items>.+?) (?:kaufen|besorgen|einkaufen)$"),
+]
+LIST_SHOW = [
+    re.compile(rf"^(?:was|welche)\s+(?:steht|stehen|ist|sind)\s+(?:alles\s+)?(?:auf|in)\s+{_DET}(?P<list>{_LISTS})$"),
+    re.compile(rf"^(?:zeig|zeige|lies|lese)(?:\s+mir)?\s+{_DET}(?P<list>{_LISTS})(?:\s+vor)?$"),
+]
+LIST_REMOVE = [
+    re.compile(rf"^(?:streich|streiche|lösch|lösche|entferne|nimm)\s+(?P<item>.+?)\s+(?:von|aus|auf)\s+{_DET}(?P<list>{_LISTS})"
+               r"(?:\s+(?:ab|runter|weg|raus))?$"),
+    re.compile(r"^hak(?:e)?\s+(?P<item>.+?)\s+ab$"),
+]
+LIST_CLEAR = re.compile(rf"^(?:leere|leer|lösche|lösch)\s+{_DET}(?P<list>{_LISTS})$")
+PERCENT = re.compile(r"^(?:was|wie viel|wieviel) (?:sind|ist) (?P<pct>[\d.,]+) ?(?:prozent|%) (?:von|aus|auf) (?P<of>[\d.,]+)(?: [a-zäöüß]+)?$")
+CALC = re.compile(r"^(?:(?:was|wie viel|wieviel) (?:ist|sind|macht|ergibt)|rechne|berechne) (?P<expr>.+)$")
+CONVERT = [
+    re.compile(r"^(?:wie viele?|wieviele?) (?P<to>[a-zäöüß/°]+(?: [a-zäöüß]+)?) (?:sind|ist|entspricht|hat) (?P<amount>[\d.,]+) ?"
+               r"(?P<from>[a-zäöüß/°]+(?: celsius| fahrenheit| dollar| kronen| lira)?)$"),
+    re.compile(r"^(?:rechne )?(?P<amount>[\d.,]+) ?(?P<from>[a-zäöüß/°]+(?: celsius| fahrenheit| dollar| kronen| lira)?) "
+               r"(?:in|nach|zu) (?P<to>[a-zäöüß/°]+(?: celsius| fahrenheit| dollar| kronen| lira)?)(?: um)?$"),
+    re.compile(r"^(?:wie viel|wieviel) (?:sind|ist) (?P<amount>[\d.,]+) ?(?P<from>[a-zäöüß/°]+(?: celsius| fahrenheit| dollar)?) "
+               r"in (?P<to>[a-zäöüß/°]+(?: celsius| fahrenheit| dollar)?)$"),
+]
+RADIO_BROWSER = re.compile(r"^(?:spiel|spiele|mach|mache|starte|start|hör|höre)\s+(?:das\s+)?(?:radio|den sender|sender)\s+"
+                           r"(?P<station>.+?)(?:\s+(?:an|ab|hier|am pc|im browser|auf dem pc))?$")
+RADIO_STOP = re.compile(r"^(?:radio|musik) (?:aus|stopp|stoppen|beenden)$|^(?:schalte|schalt|mach) (?:das )?radio aus$|^stopp(?:e)? (?:das )?radio$")
+FOCUS = re.compile(r"^(?:(?:starte|start) (?:einen )?)?(?:fokus(?:modus)?|konzentration)(?: für| mit)? ?(?P<n>\d{1,3}) ?minuten?$|^pomodoro(?: starten)?$")
+
+
+def _num(text: str) -> float | None:
+    text = text.strip()
+    try:
+        if "," in text:
+            return float(text.replace(".", "").replace(",", "."))
+        if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", text):
+            return float(text.replace(".", ""))
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _lists(simple: str) -> FastPathMatch | None:
+    from .lists import split_items
+
+    for pattern in LIST_ADD:
+        if m := pattern.match(simple):
+            key = "todo" if "aufgabe" in simple or "to-do" in simple or simple.startswith("todo") else (m.groupdict().get("list") or "")
+            items = split_items(m["items"])
+            if items and not re.search(r"\b(?:mich|dich|ihn|sie|es)\b", m["items"]):
+                return FastPathMatch("lists.add", {"list": "todo" if "todo" in key or "to-do" in key or "aufgabe" in key else "einkauf",
+                                                   "items": items[:10]}, 0.93, "list_add")
+    for pattern in LIST_SHOW:
+        if m := pattern.match(simple):
+            return FastPathMatch("lists.show", {"list": _list_key(m["list"])}, 0.95, "list_show")
+    for pattern in LIST_REMOVE:
+        if m := pattern.match(simple):
+            return FastPathMatch("lists.remove", {"list": _list_key(m.groupdict().get("list")), "item": m["item"].strip()}, 0.93, "list_remove")
+    if m := LIST_CLEAR.match(simple):
+        return FastPathMatch("lists.clear", {"list": _list_key(m["list"])}, 0.93, "list_clear")
+    return None
+
+
+def _list_key(spoken: str | None) -> str:
+    return "todo" if re.search(r"todo|to-do|aufgabe", spoken or "") else "einkauf"
+
+
+def _calc(simple: str) -> FastPathMatch | None:
+    from .calc import CURRENCIES, TEMPS, UNITS, spoken_to_expression
+
+    if m := PERCENT.match(simple):
+        pct, of = _num(m["pct"]), _num(m["of"])
+        if pct is not None and of is not None:
+            return FastPathMatch("info.calc", {"mode": "percent", "pct": pct, "of": of}, 0.95, "calc")
+    for pattern in CONVERT:
+        if m := pattern.match(simple):
+            amount, source, target = _num(m["amount"]), m["from"].strip(), m["to"].strip()
+            if amount is None:
+                continue
+            if source in CURRENCIES and target in CURRENCIES:
+                return FastPathMatch("info.calc", {"mode": "currency", "amount": amount, "from": source, "to": target}, 0.95, "calc")
+            if (source in UNITS or source in TEMPS) and (target in UNITS or target in TEMPS):
+                return FastPathMatch("info.calc", {"mode": "convert", "amount": amount, "from": source, "to": target}, 0.95, "calc")
+    if m := re.match(r"^(?:was ist )?(?:die )?(?P<expr>wurzel (?:aus|von) [\d.,]+)$", simple):
+        return FastPathMatch("info.calc", {"mode": "calc", "expression": m["expr"]}, 0.93, "calc")
+    if (m := CALC.match(simple)) and re.search(r"\d", m["expr"]) and re.search(r"[+\-*/:×x^]|plus|minus|mal|durch|hoch|wurzel", m["expr"]):
+        if spoken_to_expression(m["expr"]):
+            return FastPathMatch("info.calc", {"mode": "calc", "expression": m["expr"].strip()}, 0.93, "calc")
+    return None
+
+
+def _media(simple: str) -> FastPathMatch | None:
+    if RADIO_STOP.match(simple):
+        return FastPathMatch("media.radio_stop", {}, 0.95, "radio_stop")
+    if (m := RADIO_BROWSER.match(simple)) and not re.search(r"\b(?:in der|im|in dem|ins|auf dem|auf der|in die|in den)\b", m["station"]):
+        return FastPathMatch("media.radio", {"station": m["station"].strip()}, 0.93, "radio_browser")
+    if m := FOCUS.match(simple):
+        minutes = int(m["n"]) if m["n"] else 25
+        if 1 <= minutes <= 180:
+            return FastPathMatch("timer.start", {"duration_s": minutes * 60, "label": "Fokus"}, 0.93, "timer", {"seconds": minutes * 60})
+    return None
+
+
 def _clock(h: str | None, m: str | None, default: str) -> str:
     return f"{int(h):02d}:{m or '00'}" if h and int(h) < 24 and (not m or int(m) < 60) else default
 
 
+MODEL_COMPARE = re.compile(r"^(?:vergleich|vergleiche|teste|test) (?:meine |die |alle )?(?:modelle|ki modelle|sprachmodelle)$|"
+                           r"^(?:welches|welche) (?:modell|ki modell|sprachmodell) (?:ist|wäre) (?:das )?(?:beste|am besten|richtige)(?: für mich)?$|"
+                           r"^modellvergleich$")
+
+
 def _extras(simple: str, raw: str) -> FastPathMatch | None:
+    if found := _lists(simple) or _calc(simple) or _media(simple):
+        return found
+    if MODEL_COMPARE.match(simple):
+        return FastPathMatch("system.model_compare", {}, 0.95, "model_compare")
     if SELFTEST.match(simple):
         return FastPathMatch("system.selftest", {}, 0.95, "selftest")
     if BACKUP.match(simple):

@@ -509,6 +509,9 @@ class Orchestrator:
         if req.allowed_domains is not None:
             wanted &= req.allowed_domains
         tools = self.registry.tool_specs(wanted)
+        if situation.channel == "voice":  # gesprochen: knapp bleiben
+            system = SystemPrompt(system.static, system.dynamic + "\n<voice>Sprachausgabe: antworte in höchstens zwei, drei "
+                                  "kurzen Sätzen, ohne Aufzählung.</voice>")
         if not tools:  # reines Gespräch: nichts ausführen, nichts erfinden
             system = SystemPrompt(system.static, system.dynamic + "\n<tools>In dieser Runde stehen dir keine Werkzeuge zur "
                                   "Verfügung. Antworte nur mit Worten: Behaupte nie, etwas getan, nachgeschlagen, aufgelistet "

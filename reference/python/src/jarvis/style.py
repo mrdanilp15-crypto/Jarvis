@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .persona import Persona
 from .voice.pipeline import SentenceSegmenter
 
-STYLE_VERSION = "2.13.0"
+STYLE_VERSION = "2.14.0"
 
 WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober",
@@ -186,6 +186,12 @@ def format_number(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:.1f}".rstrip("0").rstrip(".").replace(".", ",")
     return str(value)
+
+
+def num_de(value: float, digits: int = 2) -> str:
+    """Zahl mit deutschem Komma und höchstens ``digits`` Nachkommastellen: 43,26 · 1.250 · 7."""
+    text = f"{value:,.{digits}f}".rstrip("0").rstrip(".")
+    return text.replace(",", "§").replace(".", ",").replace("§", ".")
 
 
 def _gb(value: Any) -> str:
@@ -585,6 +591,41 @@ class PlainStyle:
     def night_remark(self, now: datetime, *, going_to_bed: bool = False) -> str:
         """Einmal pro Nacht (1–5 Uhr) eine Bemerkung zur Uhrzeit – höflich, trocken, nie belehrend."""
         return ""
+
+    def list_text(self, capability: str, result: dict[str, Any]) -> tuple[str, str]:
+        name = result.get("name", "Liste")
+        article = "der" if name == "Einkaufsliste" else "der"
+        items = result.get("items") or []
+        very_well = self.phrase("very_well")
+        if capability == "lists.add":
+            added, known = result.get("added") or [], result.get("known") or []
+            parts = []
+            if added:
+                parts.append(f"{', '.join(verbatim(a[:1].upper() + a[1:]) for a in added)} steht jetzt auf {article} {name}.")
+            if known:
+                parts.append(f"{', '.join(verbatim(k) for k in known)} stand schon drauf.")
+            return very_well, " ".join(parts) or "Da war nichts zu notieren."
+        if capability == "lists.remove":
+            if result.get("removed"):
+                return very_well, f"{verbatim(result['removed'])} ist von {article} {name} gestrichen."
+            return "", f"{verbatim(result.get('wanted', ''))} steht nicht auf {article} {name}."
+        if capability == "lists.clear":
+            return very_well, f"{article.capitalize()} {name} ist leer."
+        if not items:
+            return "", f"{article.capitalize()} {name} ist leer."
+        return "", f"Auf {article} {name} stehen {len(items)} Einträge: {', '.join(verbatim(i) for i in items)}."
+
+    def calc_text(self, r: dict[str, Any]) -> str:
+        value = r.get("value", 0)
+        if r.get("mode") == "percent":
+            return f"{num_de(r['pct'])} Prozent von {num_de(r['of'])} sind {num_de(value)}."
+        if r.get("mode") == "currency":
+            day = r.get("date", "")
+            when = f" (Kurs vom {day[8:10]}.{day[5:7]}.)" if len(day) == 10 else ""
+            return f"{num_de(r['amount'])} {r['from']} sind rund {num_de(value)} {r['to']}{when}."
+        if r.get("mode") == "convert":
+            return f"{num_de(r['amount'])} {r['from']} sind {num_de(value)} {r['to']}."
+        return f"Das macht {num_de(value, 4)}."
 
     def feedback_text(self, kind: str) -> str:
         sir = f", {self.address}" if self.address else ""
@@ -1002,6 +1043,22 @@ class JarvisStyle(PlainStyle):
             return "", self.weather_text(result, slots)
         if capability == "info.news" and isinstance(result, dict):
             return "", self.news_text(result)
+        if capability.startswith("lists.") and isinstance(result, dict):
+            return self.list_text(capability, result)
+        if capability == "info.calc" and isinstance(result, dict):
+            return "", self.calc_text(result)
+        if capability == "media.radio" and isinstance(result, dict):
+            return very_well, f"Ich spiele {verbatim(result.get('station', 'das Radio'))}."
+        if capability == "media.radio_stop":
+            return very_well, "Das Radio ist aus."
+        if capability == "system.model_compare" and isinstance(result, dict):
+            rows = result.get("models") or []
+            if not rows:
+                return "", "Ich finde keine installierten Modelle zum Vergleichen."
+            best = rows[0]
+            speed = f" bei {num_de(best['seconds'], 1)} Sekunden je Antwort" if best.get("seconds") is not None else ""
+            return "", (f"Am besten schneidet {verbatim(best['model'])} ab: {best['correct']} von {best['total']} Aufgaben "
+                        f"richtig{speed}. Die Tabelle zeigt alle.")
         if capability == "system.selftest" and isinstance(result, dict):
             from .selftest import summary_text
 

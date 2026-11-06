@@ -48,7 +48,8 @@ def local_addresses() -> list[str]:
     out = []
     for address in sorted(found):
         ip = ipaddress.ip_address(address)
-        if ip.is_private and not ip.is_loopback and ip not in ipaddress.ip_network("172.16.0.0/12"):
+        tailscale = ip in ipaddress.ip_network("100.64.0.0/10")  # Tailscale: privates Netz zwischen den eigenen Geräten
+        if (ip.is_private or tailscale) and not ip.is_loopback and ip not in ipaddress.ip_network("172.16.0.0/12"):
             out.append(address)
     return out
 

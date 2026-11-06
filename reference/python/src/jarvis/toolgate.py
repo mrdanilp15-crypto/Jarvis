@@ -15,7 +15,7 @@ KEYWORDS: dict[str, str] = {
     "home": r"licht|lampe|leucht|heiz|thermostat|rollo|rolläden|rollläden|jalousie|steckdose|szene|schloss|abschließ|tür\b|"
             r"haustür|garage|hell|dunkel|dimm|wohnzimmer|küche|schlafzimmer|bad\b|flur|kinderzimmer|zimmer|radio|lautsprecher|"
             r"sonos|fernseher|grad\b|wärmer|kälter|haus\b|alle lichter",
-    "info": r"wetter|regen|schirm|temperatur|draußen|nachricht|news|schlagzeile|wikipedia|aktie|börse|kurs\b|dax|bitcoin|"
+    "info": r"prozent|rechne|rechnen|umrechn|wie viel (?:sind|ist)|dollar|euro\b|meilen|kilometer|wurzel|wetter|regen|schirm|temperatur|draußen|nachricht|news|schlagzeile|wikipedia|aktie|börse|kurs\b|dax|bitcoin|"
             r"wer (?:ist|war)|was (?:ist|bedeutet|sind)|wie (?:alt|groß|hoch|weit|viel)|wann (?:ist|war|wurde)|wo (?:ist|liegt)|"
             r"hauptstadt|einwohner|erklär",
     "web": r"such|google|recherch|internet|im netz|nachschlag|online|link|webseite|website",
@@ -28,12 +28,14 @@ KEYWORDS: dict[str, str] = {
     "pc": r"öffne|öffnen|starte|schließ|beende|datei|ordner|programm|app\b|fenster|bildschirm|tippe|schreib|klick|taste|"
           r"drück|browser|explorer|chrome|edge|spotify|youtube|steam|word|excel|lauter|leiser|stumm|musik|pause|nächster titel|"
           r"download|dokument|foto|bild\b|sperr|zeig",
-    "system": r"prüf dich|selbsttest|sicherung|backup|daten sichern|akku|prozessor|cpu|arbeitsspeicher|ram\b|festplatte|laufwerk|grafikkarte|gpu|auslastung|systemmonitor|"
+    "system": r"modell|prüf dich|selbsttest|sicherung|backup|daten sichern|akku|prozessor|cpu|arbeitsspeicher|ram\b|festplatte|laufwerk|grafikkarte|gpu|auslastung|systemmonitor|"
               r"neustart|herunterfahren|ausschalten|temp-|papierkorb|aufräumen|updates?",
     "automation": r"beobacht|bescheid|protokoll|routine|automati|wenn .* dann",
     "message": r"durchsage|sag (?:in|im|allen)|richte aus",
     "vision": r"kamera|siehst|sehen|schau mal|was ist das|auf dem bild|halte ich",
     "stocks": r"aktie|börse|kurs\b",
+    "lists": r"einkaufs|liste\b|todo|to-do|aufgabe|kaufen|streich",
+    "media": r"radio|sender\b|musik|hör",
     "knowledge": r"notiz|dokument|unterlagen|vertrag|meine pdf|mein wissen|rechnung|kaution|miete",
 }
 _COMPILED = {domain: re.compile(pattern) for domain, pattern in KEYWORDS.items()}

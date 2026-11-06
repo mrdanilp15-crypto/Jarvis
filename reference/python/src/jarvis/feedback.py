@@ -51,7 +51,10 @@ class FeedbackStore:
         items = self.recent(count)
         if not items:
             return "Keine Fehlerberichte gespeichert."
-        parts = []
+        from collections import Counter
+
+        repeated = [f"{n}× „{said}“" for said, n in Counter(e["said"] for e in self.recent(MAX_KEEP)).most_common(3) if n > 1]
+        parts = ["Mehrfach gemeldet: " + "; ".join(repeated)] if repeated else []
         for i, e in enumerate(items, 1):
             parts.append(f"{i}. [{e['at']}] Weg: {e.get('route') or '?'} · Werkzeuge: {', '.join(e.get('tools') or []) or '–'}\n"
                          f"   Gesagt: {e['said']}\n   Antwort: {e['reply']}" + (f"\n   Hinweis: {e['note']}" if e.get("note") else ""))

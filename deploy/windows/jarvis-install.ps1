@@ -165,7 +165,10 @@ if ($LASTEXITCODE -ne 0) {
     Say 'Gebe JARVIS im Heimnetz frei (Windows fragt einmal nach Administratorrechten) …'
     try {
         $rule = "advfirewall firewall add rule name=`"$ruleName`" dir=in action=allow protocol=TCP localport=8443 profile=private"
+        # Tailscale (kostenloses privates Netz zwischen den eigenen Geräten, Adressen 100.64.x.x) – nur von dort, jedes Profil
+        $tail = "advfirewall firewall add rule name=`"JARVIS Tailscale`" dir=in action=allow protocol=TCP localport=8443 remoteip=100.64.0.0/10"
         Start-Process -FilePath netsh -ArgumentList $rule -Verb RunAs -WindowStyle Hidden -Wait
+        Start-Process -FilePath netsh -ArgumentList $tail -Verb RunAs -WindowStyle Hidden -Wait
     } catch {
         Say 'Freigabe übersprungen – Tablets können JARVIS erst erreichen, wenn Windows den Zugriff erlaubt.'
     }

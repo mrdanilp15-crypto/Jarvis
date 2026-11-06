@@ -53,3 +53,25 @@ async def find_station(name: str, *, client: Any = None) -> dict[str, str]:
 
     best = max(candidates, key=rank)
     return {"name": str(best.get("name") or wanted).strip(), "url": str(best.get("url_resolved") or best["url"])}
+
+
+def register_radio_capabilities(registry: Any, *, client: Any = None) -> None:
+    """Radio direkt im Browser abspielen (ohne Smart Home): die Oberfläche spielt die Adresse ab."""
+    from .tools import Capability, InvocationContext
+
+    async def play(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        station = await find_station(args["station"], client=client)
+        return {"station": station["name"], "url": station["url"]}
+
+    async def stop(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        return {"stopped": True}
+
+    registry.register(Capability(
+        name="media.radio", domain="media", risk_class="R0", side_effects="reversible", timeout_s=20.0,
+        description="Spielt einen Radiosender (z. B. „Radio Bob“, „1Live“) direkt im Browser auf diesem Gerät.",
+        input_schema={"type": "object", "additionalProperties": False, "required": ["station"], "properties": {
+            "station": {"type": "string", "minLength": 2, "maxLength": 80}}}, handler=play))
+    registry.register(Capability(
+        name="media.radio_stop", domain="media", risk_class="R0", side_effects="reversible",
+        description="Beendet das Radio im Browser.", input_schema={"type": "object", "additionalProperties": False,
+                                                                    "properties": {}}, handler=stop))

@@ -1,5 +1,23 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.14.0 – 2026-11-06
+
+### Neu
+- **Listen:** „Setz Milch und Brot auf die Einkaufsliste“, „Schreib Zahnarzt anrufen auf die Todo-Liste“, „Ich muss noch
+  Eier kaufen“, „Was steht auf meiner Einkaufsliste?“, „Streich Milch von der Liste“, „Leere die Einkaufsliste“.
+  Lokal gespeichert, als Karte mit Kästchen.
+- **Rechnen, Einheiten, Währung** ohne Sprachmodell: „Was sind 15 Prozent von 240?“, „Was ist 12 mal 7 plus 3?“,
+  „Wurzel aus 144“, „Wie viele Meilen sind 30 Kilometer?“, „30 Grad Celsius in Fahrenheit“, „Wie viel sind 50 Dollar in
+  Euro?“ (Kurs der Europäischen Zentralbank über frankfurter.dev). Der Rechner wertet nur Zahlen und Rechenzeichen aus.
+- **Radio im Browser** ohne Smart Home: „Spiel Radio Bob“ (mit Raum wie „… im Wohnzimmer“ weiter über Home Assistant),
+  „Radio aus“. Karte mit Sendernamen und Stopp.
+- **Fokus:** „Starte Fokus 25 Minuten“ oder „Pomodoro“ stellt den Timer „Fokus“.
+- **Morgenbriefing** beim ersten Öffnen zwischen 5 und 11 Uhr, einmal pro Tag (abschaltbar im Zahnrad).
+- **Modellvergleich:** „Vergleiche meine Modelle“ lässt alle installierten Ollama-Modelle dieselben sechs Aufgaben lösen
+  (richtiges Werkzeug oder keins) und zeigt eine Tabelle mit Treffern und Tempo. Dauert einige Minuten.
+- **Fehlerbericht** nennt mehrfach gemeldete Sätze zuerst. Sprachantworten sind auf zwei, drei kurze Sätze begrenzt.
+- **Von unterwegs (Tailscale):** Adressen aus dem Tailscale-Netz (100.64.x.x) werden beim Koppeln angeboten, der Installer
+  gibt Port 8443 dafür frei. Anleitung im README.
 ## Jarvis-Modul 2.13.0 – 2026-11-06
 
 ### Neu

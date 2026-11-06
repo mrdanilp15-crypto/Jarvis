@@ -52,6 +52,10 @@ from .timers import Alarm, AlarmScheduler, Notifier, register_timer_capabilities
 from .persona import Persona
 from .policy import PolicyContext, PolicyEngine, Principal
 from .backup import make_backup
+from .calc import register_calc_capabilities
+from .lists import ListStore, register_list_capabilities
+from .modelcompare import compare_models
+from .radio import register_radio_capabilities
 from .feedback import FeedbackStore
 from .rules import RuleService, register_rule_capabilities
 from .selftest import run_selftest
@@ -456,6 +460,25 @@ def build(config_path: Path) -> tuple[Container, list[Coroutine[Any, Any, None]]
                    "steps": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string", "maxLength": 120}}}},
                protocol_create, "R0")
     register_knowledge_capabilities(registry, DocIndex(knowledge_folder()))
+    register_list_capabilities(registry, ListStore(data_dir / "lists.json"))
+    register_calc_capabilities(registry)
+    register_radio_capabilities(registry)
+
+    async def model_compare(args: dict[str, Any], ctx: InvocationContext) -> Any:
+        local = container.router.local
+        if not hasattr(local, "_client"):
+            raise JarvisError("JRV-NFD-001", "kein Ollama", user_message="Der Vergleich geht nur mit Ollama-Modellen.")
+
+        def make(name: str) -> Any:
+            return OllamaProvider(base_url=str(local._client.base_url), model=name, num_ctx=local.num_ctx,
+                                  keep_alive=0, timeout_s=180.0)
+
+        return {"models": await compare_models(local, registry, make)}
+
+    registry.register(Capability(
+        name="system.model_compare", domain="system", risk_class="R0", timeout_s=900.0,
+        description="Vergleicht die installierten lokalen Modelle (Tempo und richtige Werkzeugwahl) – dauert einige Minuten.",
+        input_schema=empty, handler=model_compare))
     rules = RuleService(data_dir / "rules.json", tell, lambda: weather_now(),
                         online=lambda actor: bool(notifier.listeners.get(actor)))
     register_rule_capabilities(registry, rules)

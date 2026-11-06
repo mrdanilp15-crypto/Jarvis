@@ -20,7 +20,7 @@
     protoList: $("#proto-list"), protoNew: $("#proto-new"), protoEdit: $("#proto-edit"), protoName: $("#proto-name"),
     protoTriggers: $("#proto-triggers"), protoSteps: $("#proto-steps"), protoSave: $("#proto-save"),
     protoCancel: $("#proto-cancel"), protoTime: $("#proto-time"), protoDays: $("#proto-days"), protoError: $("#proto-error"),
-    optBoot: $("#opt-boot"), optBarge: $("#opt-barge"), fbCopy: $("#fb-copy"), fbState: $("#fb-state"),
+    optBoot: $("#opt-boot"), optMorning: $("#opt-morning"), optBarge: $("#opt-barge"), fbCopy: $("#fb-copy"), fbState: $("#fb-state"),
     backupNow: $("#backup-now"),
     homeRemove: $("#home-remove"), roomChip: $("#room-chip"), devNow: $("#dev-now"), devError: $("#dev-error"),
     devSetup: $("#dev-setup"), devName: $("#dev-name"), devRoom: $("#dev-room"), devRooms: $("#dev-rooms"),
@@ -78,7 +78,7 @@
     speak: store.get("speak", true), convo: store.get("convo", true), voice: store.get("voice.v2", ""),
     wake: store.get("wake", false), location: store.get("location", ""), effect: store.get("effect", "dezent"),
     fx: store.get("fx", "voll"), stt: store.get("stt.v2", "auto"),
-    boot: store.get("boot", true), barge: store.get("barge", true),
+    boot: store.get("boot", true), morning: store.get("morning", true), barge: store.get("barge", true),
     presence: store.get("presence", false), presenceMinutes: Number(store.get("presence.minutes", 20)) || 20,
   };
   document.body.dataset.fx = settings.fx;
@@ -772,6 +772,10 @@
     store.set("barge", settings.barge);
     if (!settings.barge) barge.stop();
   });
+  els.optMorning.addEventListener("change", () => {
+    settings.morning = els.optMorning.checked;
+    store.set("morning", settings.morning);
+  });
   els.optBoot.addEventListener("change", () => {
     settings.boot = els.optBoot.checked;
     store.set("boot", settings.boot);
@@ -1003,6 +1007,78 @@
     cards.show("agenda", card, 150000);
   }
 
+  // Listen (Einkauf, To-do): als Karte mit Häkchen
+  function showList(data) {
+    const card = el("section", "card show list");
+    card.append(el("p", "kicker", data.name ?? "Liste"));
+    if (!data.items.length) card.append(el("p", "empty", "Leer – nichts zu tun."));
+    else {
+      const ul = el("ul", "items");
+      data.items.forEach((item, i) => {
+        const li = el("li");
+        li.style.animationDelay = `${i * 0.06}s`;
+        li.append(el("span", "box"), el("span", "", item));
+        ul.append(li);
+      });
+      card.append(ul);
+    }
+    cards.show("list", card, 150000);
+  }
+
+  // Radio im Browser: Karte mit Sendernamen und Stopp; der Ton kommt direkt von der Sender-Adresse
+  const radio = {
+    audio: null,
+    play(data) {
+      this.stop(true);
+      if (!/^https?:\/\//.test(data.url ?? "")) return;
+      if (location.protocol === "https:" && data.url.startsWith("http:")) {
+        addSystem("Dieser Sender sendet unverschlüsselt – im Heimnetz-HTTPS kann der Browser ihn nicht abspielen. Am PC (http://127.0.0.1:8080) geht es.", true);
+        return;
+      }
+      this.audio = new Audio(data.url);
+      this.audio.play().catch(() => addSystem("Der Browser hat die Wiedergabe blockiert – bitte einmal auf die Seite klicken und es noch einmal sagen.", true));
+      const card = el("section", "card show radio");
+      card.append(el("p", "kicker", "Radio"));
+      const row = el("div", "now");
+      const bars = el("span", "bars");
+      for (let i = 0; i < 5; i += 1) bars.append(el("i"));
+      row.append(bars, el("b", "", data.station ?? "Radio"), button("Stopp", "btn small", () => this.stop()));
+      card.append(row);
+      cards.show("radio", card, 0);
+    },
+    stop(quiet) {
+      if (this.audio) { this.audio.pause(); this.audio.src = ""; this.audio = null; }
+      if (!quiet) cards.remove("radio");
+    },
+  };
+
+  // Modellvergleich: Tabelle, bestes Modell zuerst
+  function showCompare(data) {
+    const card = el("section", "card show compare");
+    card.append(el("p", "kicker", "Modellvergleich"));
+    const table = el("table");
+    const head = el("tr");
+    ["Modell", "Richtig", "Sekunden"].forEach((h) => head.append(el("th", "", h)));
+    table.append(head);
+    (data.models ?? []).forEach((m, i) => {
+      const tr = el("tr", i === 0 ? "best" : "");
+      tr.append(el("td", "", m.model), el("td", "", `${m.correct} / ${m.total}`), el("td", "", m.seconds === null ? "–" : String(m.seconds)));
+      table.append(tr);
+    });
+    card.append(table, el("p", "facts", "Richtig = rief das passende Werkzeug auf (oder keins, wenn keins nötig war). Das beste Modell stellen Sie unter Zahnrad → KI-Modell ein."));
+    cards.show("compare", card, 300000);
+  }
+
+  // Morgenbriefing beim ersten Öffnen am Morgen (einmal pro Tag)
+  function maybeMorning() {
+    if (!settings.morning || !token) return;
+    const hour = new Date().getHours();
+    const today = new Date().toISOString().slice(0, 10);
+    if (hour < 5 || hour >= 11 || store.get("morning.date", "") === today) return;
+    store.set("morning.date", today);
+    setTimeout(() => { if (!turn) sendText("Protokoll Morgenbriefing", settings.speak); }, 2500);
+  }
+
   // Selbsttest: Ampel je Baustein, dazu das Mikrofon (wird hier im Browser gemessen)
   const LIGHT = { ok: "✓", warn: "!", fail: "✕", off: "–" };
   async function micCheck() {
@@ -1151,6 +1227,10 @@
       else if (action.capability === "timer.start" && data.id) timers.add(data);
       else if (action.capability === "system.monitor") showSysmon(data);
       else if (action.capability === "system.selftest") showSelftest(data);
+      else if (action.capability.startsWith("lists.") && Array.isArray(data.items)) showList(data);
+      else if (action.capability === "media.radio") radio.play(data);
+      else if (action.capability === "media.radio_stop") radio.stop();
+      else if (action.capability === "system.model_compare") showCompare(data);
       else if (action.capability === "web.search" && data.results?.length) showSearch(data);
       else if (action.capability === "info.news" && data.headlines?.length) showNews(data);
       else if (action.capability === "info.stock") showStock(data);
@@ -2690,6 +2770,7 @@
     els.optFx.value = settings.fx;
     els.optPresence.checked = settings.presence;
     els.optBoot.checked = settings.boot;
+    els.optMorning.checked = settings.morning;
     els.optBarge.checked = settings.barge;
     els.optBarge.disabled = !canListen;
     els.optPresenceMin.value = String(settings.presenceMinutes);
@@ -3066,6 +3147,7 @@
       let fresh = true;
       try { fresh = !sessionStorage.getItem("jarvis.booted"); sessionStorage.setItem("jarvis.booted", "1"); } catch { /* privat */ }
       if (fresh && settings.boot && token) this.run();
+      else if (fresh) maybeMorning();
     },
     async run() {
       if (this.running) return;
@@ -3113,6 +3195,7 @@
       setTimeout(() => overlay.remove(), 600);
       this.running = false;
       if (data?.weather?.current) showWeather(data.weather);
+      maybeMorning();
     },
   };
   window.jarvisBoot = bootSequence;  // für Tests

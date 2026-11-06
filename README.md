@@ -220,6 +220,10 @@ Er startet jedes Programm und Spiel aus dem **Windows-Startmenü** per Name, als
 | Sehen | „Was siehst du?“, „Was halte ich in der Hand?“, „Lies mir das Etikett vor“ – ein Einzelbild, Kamera danach aus, Bild bleibt auf dem Rechner | Kamera, Bildmodell (lädt JARVIS selbst) |
 | Anwesenheit | Zahnrad → Allgemein → „Anwesenheit über die Kamera“: JARVIS merkt, wenn Sie nach einer Abwesenheit (10–60 min) zurückkommen, und begrüßt Sie („Willkommen zurück, Sir. Ihr nächster Termin: …“). Nur Bewegung, keine Gesichtserkennung, Bilder bleiben im Browser | Webcam |
 | Protokolle | „Protokoll Gute Nacht“, „Ich gehe schlafen“, „Briefing“ – mehrere Befehle nacheinander mit Abhak-Anzeige; eigene unter Zahnrad → Protokolle | – |
+| Listen | „Setz Milch auf die Einkaufsliste“, „Was steht auf meiner Liste?“, „Streich Milch“ | – |
+| Rechnen | „Was sind 15 Prozent von 240?“, „12 mal 7 plus 3“, „30 km in Meilen“, „50 Dollar in Euro“ | Internet nur für Währungen |
+| Radio, Fokus | „Spiel Radio Bob“ (im Browser, ohne Smart Home), „Radio aus“, „Starte Fokus 25 Minuten“ | Internet |
+| Modellvergleich | „Vergleiche meine Modelle“ – zeigt, welches installierte Modell für Ihre Grafikkarte am besten ist | Ollama |
 | Selbsttest, Fehlerbericht | „Prüf dich“ misst Tempo, Grafikkarte, Bausteine und Mikrofon; „⚑ falsch“ unter jeder Antwort | – |
 | Eigenes Wissen | „Such in meinen Notizen nach der Kaution“ – durchsucht Dokumente\Jarvis-Wissen lokal (TXT, MD, DOCX, PDF) | – |
 | Regeln, Sicherung, Anrede | „Wenn es morgen regnet, erinner mich um 8“; „Sicher meine Daten“; „Nenn mich Boss“; „Lern ein Protokoll …“ | – |
@@ -378,3 +382,14 @@ Wyoming-STT/TTS/Wake-Word, SearXNG und optional Home Assistant und Node-RED; sie
 Konzept vollständig; der Referenzcode deckt die sicherheitskritische Kernlogik ab (Policy-Engine,
 Tool-Validierung, Bestätigungen, Taint-Tracking, Automations-Bedingungen, Memory-Ranking, Event-Schemas) und
 dient als Ausgangspunkt der Implementierung gemäß Roadmap in [Abschnitt 6](docs/06-integrationsplan.md#611-roadmap).
+
+
+## Von unterwegs erreichen (kostenlos, mit Tailscale)
+
+Tailscale verbindet Ihre eigenen Geräte zu einem privaten Netz – ohne Portfreigabe im Router.
+1. Auf dem JARVIS-PC und auf dem Handy die App **Tailscale** installieren (tailscale.com/download) und mit demselben Konto
+   anmelden.
+2. „JARVIS installieren.cmd“ einmal erneut ausführen (gibt Port 8443 für das Tailscale-Netz frei).
+3. In JARVIS: Zahnrad → Geräte → Gerät koppeln. Die Adresse beginnt jetzt mit `https://100.…:8443` – diese im Handy-Browser
+   öffnen (einmal die Zertifikatswarnung bestätigen). Es sind nur Ihre eigenen Tailscale-Geräte zugelassen; jedes Gerät hat
+   zusätzlich seinen eigenen Zugangsschlüssel.
