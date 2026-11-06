@@ -1,5 +1,12 @@
 # Änderungsprotokoll
 
+## Jarvis-Modul 2.14.4 – 2026-11-06
+
+### Behoben
+- **Radio hört sich selbst zu:** Nach „Spiele Antenne Bayern“ hat das Mikrofon das Radioprogramm als Befehle mitgeschrieben.
+  Das Radio wird jetzt leiser, solange JARVIS zuhört, denkt oder spricht, und läuft Radio, öffnet sich nach einer Antwort
+  kein offenes Zuhören mehr – dann reagiert JARVIS nur auf „Jarvis, …“.
+
 ## Jarvis-Modul 2.14.3 – 2026-11-06
 
 ### Behoben

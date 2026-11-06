@@ -111,6 +111,8 @@
     return "Tippen Sie auf den Kreis oder drücken Sie die Leertaste, um zu sprechen.";
   }
 
+  let radio = null;  // wird weiter unten belegt (Radio im Browser)
+
   function setState(next, text) {
     const previous = state;
     state = next;
@@ -119,6 +121,7 @@
     els.status.textContent = text ?? phase ?? (next === "idle" ? idleText() : STATUS[next]);
     if (next === "speaking" && previous !== "speaking") speakingAnimation.start();
     if (next !== "speaking" && previous === "speaking") speakingAnimation.stop();
+    radio?.duck(next !== "idle");  // Radio leiser, solange JARVIS zuhört, denkt oder spricht
     if (next === "idle") wake.schedule();
   }
 
@@ -1026,7 +1029,7 @@
   }
 
   // Radio im Browser: Karte mit Sendernamen und Stopp; der Ton kommt direkt von der Sender-Adresse
-  const radio = {
+  radio = {
     audio: null,
     play(data) {
       this.stop(true);
@@ -1071,6 +1074,8 @@
       card.append(row);
       cards.show("radio", card, 0);
     },
+    playing() { return Boolean(this.audio && !this.audio.paused); },
+    duck(on) { if (this.audio) this.audio.volume = on ? 0.15 : 1; },
     stop(quiet) {
       if (this.audio) { this.audio.pause(); this.audio.removeAttribute("src"); this.audio.load(); this.audio = null; }
       if (!quiet) cards.remove("radio");
@@ -1825,7 +1830,8 @@
     barge.stop();
     if (turn) { setState("thinking"); return; }        // Antwort läuft noch, nächster Satz kommt
     if (!ws || ws.readyState !== WebSocket.OPEN) { setState("offline"); return; }
-    if (((lastTurnSpoken && settings.convo) || expectReply) && (canListen || localVoice.enabled) && state !== "listening") {
+    // Läuft Radio, würde das offene Zuhören das Programm als Befehle mitschreiben – dann nur auf „Jarvis“ warten
+    if (((lastTurnSpoken && settings.convo && !radio?.playing()) || expectReply) && (canListen || localVoice.enabled) && state !== "listening") {
       lastTurnSpoken = false;
       expectReply = false;
       setTimeout(() => { if (state !== "listening" && !turn) startListening(); }, 300);

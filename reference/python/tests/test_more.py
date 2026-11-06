@@ -190,3 +190,12 @@ def test_page_may_load_radio_streams():
 
     html = (Path(jarvis.__file__).parent / "web" / "index.html").read_text(encoding="utf-8")
     assert "media-src 'self' https:" in html  # ohne diese Freigabe blockiert die Seite jeden Sender-Strom
+
+
+def test_radio_does_not_feed_the_open_microphone():
+    from pathlib import Path
+
+    import jarvis
+
+    js = (Path(jarvis.__file__).parent / "web" / "jarvis.js").read_text(encoding="utf-8")
+    assert "radio?.duck(next" in js and "!radio?.playing()" in js  # leiser beim Zuhören, kein offenes Zuhören bei Radio
